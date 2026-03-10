@@ -12,6 +12,11 @@ export interface CharacterProfile {
   personality: string;
   backstory: string;
   appearance: string;
+  clothing?: string;
+  accessories?: string;
+  hairStyle?: string;
+  hairColor?: string;
+  eyeColor?: string;
   voiceName: string;
   voiceSettings: {
     pitch: string;
@@ -83,6 +88,11 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
           personality: { type: Type.STRING },
           backstory: { type: Type.STRING },
           appearance: { type: Type.STRING },
+          clothing: { type: Type.STRING },
+          accessories: { type: Type.STRING },
+          hairStyle: { type: Type.STRING },
+          hairColor: { type: Type.STRING },
+          eyeColor: { type: Type.STRING },
           storyTone: { type: Type.STRING },
           relationship: { type: Type.STRING },
           worldAtmosphere: { type: Type.STRING },
@@ -104,6 +114,11 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
     personality: data.personality || "",
     backstory: data.backstory || "",
     appearance: data.appearance || "",
+    clothing: data.clothing || "",
+    accessories: data.accessories || "",
+    hairStyle: data.hairStyle || "",
+    hairColor: data.hairColor || "",
+    eyeColor: data.eyeColor || "",
     voiceName: "Kore",
     voiceSettings: { pitch: "Normal", speed: "Normal", accent: "None" },
     traits: { friendliness: 50, assertiveness: 50, empathy: 50 },
@@ -119,13 +134,22 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
   };
 }
 
-export async function generateAvatar(appearance: string): Promise<string> {
+export async function generateAvatar(profile: CharacterProfile): Promise<string> {
   const ai = getGenAI();
+  const prompt = `A highly detailed, photorealistic 8k portrait of a character.
+Appearance: ${profile.appearance}
+Clothing: ${profile.clothing || 'appropriate for the character'}
+Accessories: ${profile.accessories || 'none'}
+Hair: ${profile.hairStyle || 'natural'} in ${profile.hairColor || 'natural color'}
+Eyes: ${profile.eyeColor || 'natural color'}
+Style: Cinematic lighting, professional photography, sharp focus, intricate textures, realistic skin and fabric rendering. 
+The character should be the central focus, looking towards the camera.`;
+
   const response = await withRetry(() => ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
       parts: [
-        { text: `A portrait of a character with this appearance: ${appearance}` }
+        { text: prompt }
       ]
     }
   }));
@@ -141,7 +165,7 @@ export async function generateAvatar(appearance: string): Promise<string> {
 export async function refineField(field: string, profile: CharacterProfile): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Refine the ${field} for this character: ${JSON.stringify(profile)}`
   }));
   return response.text || "";
@@ -150,7 +174,7 @@ export async function refineField(field: string, profile: CharacterProfile): Pro
 export async function refineTraits(profile: CharacterProfile): Promise<any> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Suggest traits (0-100) for this character: ${JSON.stringify(profile)}`,
     config: {
       responseMimeType: "application/json",
@@ -189,25 +213,50 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
 `;
   const chat = ai.chats.create({
     model: "gemini-3.1-flash-lite-preview",
-    config: { systemInstruction }
+    config: { systemInstruction },
+    history: history.map(m => ({
+      role: m.role,
+      parts: m.parts
+    }))
   });
   
-  for (const msg of history) {
-    if (msg.role === 'user') {
-      await withRetry(() => chat.sendMessage({ message: msg.parts[0].text }));
-    } else {
-      // We can't easily set model history in chats.create without using history array,
-      // but for simplicity we just send the latest message.
-    }
-  }
   const response = await withRetry(() => chat.sendMessage({ message: userInput }));
   return response.text || "";
+}
+
+export async function* generateTextReplyStream(history: any[], profile: CharacterProfile, userInput: string) {
+  const ai = getGenAI();
+  const systemInstruction = `You are playing the role of the following character. Stay in character at all times. Never break character.
+Name: ${profile.name}
+Personality: ${profile.personality}
+Backstory: ${profile.backstory}
+Appearance: ${profile.appearance}
+Tone: ${profile.storyTone}
+Relationship with player: ${profile.relationship}
+Player Name: ${profile.playerProfile.name}
+Player Description: ${profile.playerProfile.description}
+
+If the player sends a message in the format ((OOC: ...)), treat it as an out-of-character meta-instruction, question, or correction. Respond to it directly as the AI assistant, not as the character, and then continue the roleplay if appropriate. Do not incorporate the OOC content into the story itself.
+`;
+  const chat = ai.chats.create({
+    model: "gemini-3.1-flash-lite-preview",
+    config: { systemInstruction },
+    history: history.map(m => ({
+      role: m.role,
+      parts: m.parts
+    }))
+  });
+  
+  const responseStream = await chat.sendMessageStream({ message: userInput });
+  for await (const chunk of responseStream) {
+    yield chunk.text || "";
+  }
 }
 
 export async function refineInput(input: string, playerProfile: { name: string; description: string }): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `You are assisting in a roleplay. Refine the following user input to be more descriptive, immersive, and in-character for the player.
 Player Character Context:
 Name: ${playerProfile.name}

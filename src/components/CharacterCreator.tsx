@@ -17,6 +17,11 @@ const DEFAULT_PROFILE: CharacterProfile = {
   personality: '',
   backstory: '',
   appearance: '',
+  clothing: '',
+  accessories: '',
+  hairStyle: '',
+  hairColor: '',
+  eyeColor: '',
   voiceName: 'Kore',
   voiceSettings: {
     pitch: 'Normal',
@@ -207,7 +212,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
       const profile = await generateCharacterProfile(idea, appMode);
       setDraftProfile(profile);
       setStep('avatar');
-      const avatarBase64 = await generateAvatar(profile.appearance);
+      const avatarBase64 = await generateAvatar(profile);
       setDraftAvatar(avatarBase64);
       setStep('review');
     } catch (err: any) {
@@ -269,7 +274,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
     setError(null);
     try {
       setStep('avatar');
-      const avatarBase64 = await generateAvatar(detailedProfile.appearance);
+      const avatarBase64 = await generateAvatar(detailedProfile);
       setDraftAvatar(avatarBase64);
       setDraftProfile({ ...detailedProfile, mode: appMode });
       setStep('review');
@@ -509,6 +514,62 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         />
                       </div>
                     ))}
+
+                    <div className="space-y-6 pt-4 border-t border-white/5">
+                      <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Avatar Customization</h4>
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Hair Style</label>
+                          <input 
+                            type="text"
+                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                            value={detailedProfile.hairStyle}
+                            onChange={e => setDetailedProfile({...detailedProfile, hairStyle: e.target.value})}
+                            placeholder="e.g., Long wavy, buzz cut..."
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Hair Color</label>
+                          <input 
+                            type="text"
+                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                            value={detailedProfile.hairColor}
+                            onChange={e => setDetailedProfile({...detailedProfile, hairColor: e.target.value})}
+                            placeholder="e.g., Raven black, silver..."
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Eye Color</label>
+                          <input 
+                            type="text"
+                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                            value={detailedProfile.eyeColor}
+                            onChange={e => setDetailedProfile({...detailedProfile, eyeColor: e.target.value})}
+                            placeholder="e.g., Piercing blue, hazel..."
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Clothing</label>
+                          <input 
+                            type="text"
+                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                            value={detailedProfile.clothing}
+                            onChange={e => setDetailedProfile({...detailedProfile, clothing: e.target.value})}
+                            placeholder="e.g., Leather duster, silk robe..."
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Accessories</label>
+                        <input 
+                          type="text"
+                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                          value={detailedProfile.accessories}
+                          onChange={e => setDetailedProfile({...detailedProfile, accessories: e.target.value})}
+                          placeholder="e.g., Silver monocle, scar on left eye..."
+                        />
+                      </div>
+                    </div>
 
                     {/* Mode Specific Fields */}
                     {appMode === AppMode.SCENARIO && (

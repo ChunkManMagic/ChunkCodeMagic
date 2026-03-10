@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
 import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { CharacterProfile, generateTextReply, getGenAI, refineInput, generateSpeech, AppMode } from '../lib/gemini';
+import { CharacterProfile, getGenAI, refineInput, generateSpeech, AppMode, generateTextReplyStream } from '../lib/gemini';
 import { LiveServerMessage, Modality } from '@google/genai';
 
 interface Message {
@@ -134,13 +134,31 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setEditingMessageId(null);
       setEditInput('');
       setIsTyping(true);
+      
       try {
         const historyForAi = baseMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-        const reply = await generateTextReply(historyForAi, profile, editInput);
-        if (reply) {
-          const aiMessage: Message = { id: Date.now().toString(), role: 'model', text: reply };
-          setMessages(prev => [...prev, aiMessage]);
-          if (isAutoRead) handleReadAloud(reply);
+        const aiMessageId = Date.now().toString();
+        const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
+        setMessages(prev => [...prev, aiMessage]);
+        
+        let fullReply = '';
+        let sentenceBuffer = '';
+        const stream = generateTextReplyStream(historyForAi, profile, editInput);
+        
+        for await (const chunk of stream) {
+          fullReply += chunk;
+          sentenceBuffer += chunk;
+          
+          setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+          
+          if (isAutoRead && /[.!?]\s$/.test(sentenceBuffer)) {
+            handleReadAloud(sentenceBuffer);
+            sentenceBuffer = '';
+          }
+        }
+        
+        if (isAutoRead && sentenceBuffer.trim()) {
+          handleReadAloud(sentenceBuffer);
         }
       } catch (err) {
         console.error(err);
@@ -176,9 +194,30 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setIsTyping(true);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-      const reply = await generateTextReply(history, profile, userMsg.text);
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'model', text: reply }]);
-      if (isAutoRead) handleReadAloud(reply);
+      const aiMessageId = Date.now().toString();
+      const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
+      setMessages(prev => [...prev, aiMessage]);
+      
+      let fullReply = '';
+      let sentenceBuffer = '';
+      const stream = generateTextReplyStream(history, profile, userMsg.text);
+      
+      for await (const chunk of stream) {
+        fullReply += chunk;
+        sentenceBuffer += chunk;
+        
+        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+        
+        // Simple sentence detection: ends with punctuation followed by space
+        if (isAutoRead && /[.!?]\s$/.test(sentenceBuffer)) {
+          handleReadAloud(sentenceBuffer);
+          sentenceBuffer = '';
+        }
+      }
+      
+      if (isAutoRead && sentenceBuffer.trim()) {
+        handleReadAloud(sentenceBuffer);
+      }
     } catch (err) {
       console.error(err);
     } finally {
@@ -186,12 +225,27 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   };
 
+  const [audioQueue, setAudioQueue] = useState<string[]>([]);
+  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
+
+  useEffect(() => {
+    const processQueue = async () => {
+      if (isProcessingQueue || audioQueue.length === 0 || isPlaying) return;
+      setIsProcessingQueue(true);
+      const nextAudio = audioQueue[0];
+      setAudioQueue(prev => prev.slice(1));
+      await playBase64Audio(nextAudio);
+      setIsProcessingQueue(false);
+    };
+    processQueue();
+  }, [audioQueue, isProcessingQueue, isPlaying]);
+
   const handleReadAloud = async (text: string) => {
     try {
       const cleanText = text.replace(/[*#_~`]/g, '').trim();
       if (!cleanText) return;
       const audioBase64 = await generateSpeech(cleanText, profile.voiceName, profile.voiceSettings);
-      playBase64Audio(audioBase64);
+      setAudioQueue(prev => [...prev, audioBase64]);
     } catch (e) { console.error(e); }
   };
 
