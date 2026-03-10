@@ -1,0 +1,7 @@
+{
+  "name": "PersonaForge",
+  "description": "Create fully fleshed-out characters from simple ideas and converse with them via text or live voice chat, featuring AI-generated avatars and Veo animations.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
