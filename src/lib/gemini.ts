@@ -253,16 +253,39 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
   }
 }
 
-export async function refineInput(input: string, playerProfile: { name: string; description: string }): Promise<string> {
+export async function suggestNextAction(history: any[], profile: CharacterProfile): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-3.1-flash-lite-preview",
-    contents: `You are assisting in a roleplay. Refine the following user input to be more descriptive, immersive, and in-character for the player.
+    contents: `You are assisting a player in a roleplay. Based on the current story, character profile, and world context, suggest a compelling next action or dialogue for the player character.
+Character Profile: ${JSON.stringify(profile)}
+World Context: ${profile.worldAtmosphere || 'Not specified'}
+Key Locations: ${profile.keyLocations || 'Not specified'}
+Current Story History: ${JSON.stringify(history.slice(-15))}
+Please return only the suggested text, ready to be used as user input. Make it immersive, descriptive, and perfectly in-character for the player (${profile.playerProfile.name}: ${profile.playerProfile.description}).`
+  }));
+  return response.text?.trim() || "";
+}
+
+export async function refineInput(input: string, profile: CharacterProfile, history: any[]): Promise<string> {
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3.1-flash-lite-preview",
+    contents: `You are assisting in a roleplay. Refine the following user input to be more descriptive, immersive, and in-character for the player, taking into account the current character they are interacting with and the story history.
 Player Character Context:
-Name: ${playerProfile.name}
-Description: ${playerProfile.description}
+Name: ${profile.playerProfile.name}
+Description: ${profile.playerProfile.description}
+
+Interacting With:
+Name: ${profile.name}
+Personality: ${profile.personality}
+Relationship: ${profile.relationship}
+
+Story Context (Recent History):
+${JSON.stringify(history.slice(-5))}
+
 Current User Input: "${input}"
-Please return only the refined input text, maintaining the narrative style.`
+Please return only the refined input text, maintaining the narrative style and ensuring it fits perfectly into the current scene.`
   }));
   return response.text?.trim() || input;
 }

@@ -141,7 +141,7 @@ export default function App() {
   const handleCharacterCreated = (profile: CharacterProfile, avatarBase64: string) => {
     try {
       const newScenario: Scenario = {
-        id: Date.now().toString(),
+        id: crypto.randomUUID(),
         profile,
         avatarBase64,
         lastUpdated: Date.now()
@@ -177,7 +177,7 @@ export default function App() {
   const handleCarryOver = (profile: CharacterProfile, avatarBase64: string) => {
     // Create a new scenario with the same character but new ID (empty messages)
     const newScenario: Scenario = {
-      id: `carryover-${Date.now()}`,
+      id: crypto.randomUUID(),
       profile: {
         ...profile,
         relationship: 'Strangers', // Reset relationship for new scenario

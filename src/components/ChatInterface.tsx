@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
 import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { CharacterProfile, getGenAI, refineInput, generateSpeech, AppMode, generateTextReplyStream } from '../lib/gemini';
+import { CharacterProfile, getGenAI, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction } from '../lib/gemini';
 import { LiveServerMessage, Modality } from '@google/genai';
 
 interface Message {
@@ -50,6 +50,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [input, setInput] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
+  const [isSuggesting, setIsSuggesting] = useState(false);
   const [isAutoRead, setIsAutoRead] = useState(true);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editInput, setEditInput] = useState('');
@@ -93,12 +94,27 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     if (!input.trim() || isRefining) return;
     setIsRefining(true);
     try {
-      const refined = await refineInput(input, profile.playerProfile);
+      const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+      const refined = await refineInput(input, profile, history);
       setInput(refined);
     } catch (err) {
       console.error(err);
     } finally {
       setIsRefining(false);
+    }
+  };
+
+  const handleSuggest = async () => {
+    if (isSuggesting) return;
+    setIsSuggesting(true);
+    try {
+      const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+      const suggestion = await suggestNextAction(history, profile);
+      setInput(suggestion);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsSuggesting(false);
     }
   };
 
@@ -137,7 +153,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       
       try {
         const historyForAi = baseMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-        const aiMessageId = Date.now().toString();
+        const aiMessageId = crypto.randomUUID();
         const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
         setMessages(prev => [...prev, aiMessage]);
         
@@ -176,7 +192,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const handleSendText = async () => {
     if (!input.trim() || isTyping) return;
-    const userMsg: Message = { id: Date.now().toString(), role: 'user', text: input };
+    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', text: input };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     
@@ -194,7 +210,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setIsTyping(true);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-      const aiMessageId = Date.now().toString();
+      const aiMessageId = crypto.randomUUID();
       const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
       setMessages(prev => [...prev, aiMessage]);
       
@@ -326,7 +342,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const toggleLiveMode = async () => {
     if (isLiveMode) {
-      if (liveSession) { try { liveSession.close(); } catch (e) {} }
+      if (liveSession) { 
+        try { 
+          const session = await liveSession;
+          session.close(); 
+        } catch (e) {} 
+      }
       stopAudioCapture();
       setIsLiveMode(false);
       setIsMicActive(false);
@@ -349,9 +370,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           speechConfig: {
             voiceConfig: { prebuiltVoiceConfig: { voiceName: profile.voiceName || "Zephyr" } },
           },
-          systemInstruction: `You are playing the role of the following character. Stay in character at all times. Never break character.
-You MUST narrate your actions in asterisks (e.g., *she smiles*, *he looks away*) just like in a written narrative.
-Provide lengthy, immersive, and interactive responses, similar to a detailed text-based roleplay. Do not be overly concise; prioritize depth, detail, and emotional resonance.
+          systemInstruction: `You are playing the role of the following character in a live voice conversation. Stay in character at all times. Never break character.
+You MUST provide a complete narrative experience. This includes:
+1. NARRATED ACTIONS (THOUGHTS): Narrate your actions, feelings, and environment in asterisks (e.g., *she sighs softly, looking out the window*).
+2. SPOKEN DIALOGUE: Speak your character's words naturally.
+
+IMPORTANT: Ensure that your narrated actions (the text in asterisks) are included in your response so they can be transcribed and shown to the player. The player should see both what you are doing and what you are saying.
+
+Provide lengthy, immersive, and interactive responses. Prioritize depth, detail, and emotional resonance.
+
+Character Details:
 Name: ${profile.name}
 Personality: ${profile.personality}
 Backstory: ${profile.backstory}
@@ -367,24 +395,78 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
             setIsLiveMode(true);
             setLiveSession(sessionPromise);
             startAudioCapture(sessionPromise);
+            
+            // Send conversation history to the live session so it knows what's going on
+            sessionPromise.then((session: any) => {
+              // Get the last 15 messages for deep context
+              const historyTurns = messages.slice(-15).map(m => ({
+                role: m.role,
+                parts: [{ text: m.text }]
+              }));
+              
+              if (historyTurns.length > 0) {
+                // Send history as previous turns
+                session.sendClientContent({ 
+                  turns: historyTurns,
+                  turnComplete: true 
+                });
+                
+                // Also send a small nudge to the model to acknowledge the context and continue
+                // but only if the last message was from the user, otherwise it might double-reply
+                const lastMsg = messages[messages.length - 1];
+                if (lastMsg && lastMsg.role === 'user') {
+                   // Model will likely respond naturally to the last user message once history is processed
+                }
+              }
+            });
           },
           onmessage: async (message: LiveServerMessage) => {
+            // 1. Handle audio output
             const parts = message.serverContent?.modelTurn?.parts || [];
-            let newText = "";
             for (const part of parts) {
-              if (part.inlineData?.data) playAudioStream(part.inlineData.data);
-              if (part.text) newText += part.text;
+              if (part.inlineData?.data) {
+                playAudioStream(part.inlineData.data);
+              }
             }
-            if (newText) {
+
+            // 2. Handle user transcription (what the user said via mic)
+            const userParts = (message.serverContent as any)?.userTurn?.parts || [];
+            let userText = "";
+            for (const part of userParts) {
+              if (part.text) userText += part.text;
+            }
+            if (userText) {
               setMessages(prev => {
                 const lastMessage = prev[prev.length - 1];
-                if (lastMessage && lastMessage.role === 'model') {
-                  return [...prev.slice(0, -1), { ...lastMessage, text: lastMessage.text + newText }];
+                // If the last message is a user message, append to it (streaming transcription)
+                if (lastMessage && lastMessage.role === 'user') {
+                  return [...prev.slice(0, -1), { ...lastMessage, text: lastMessage.text + userText }];
                 } else {
-                  return [...prev, { id: Date.now().toString() + Math.random(), role: 'model', text: newText }];
+                  return [...prev, { id: crypto.randomUUID(), role: 'user', text: userText }];
                 }
               });
             }
+
+            // 3. Handle model transcription (both spoken words and narrated actions)
+            let modelText = "";
+            for (const part of parts) {
+              if (part.text) {
+                modelText += part.text;
+              }
+            }
+
+            if (modelText) {
+              setMessages(prev => {
+                const lastMessage = prev[prev.length - 1];
+                // If the last message is from the model, append to it (streaming transcription)
+                if (lastMessage && lastMessage.role === 'model') {
+                  return [...prev.slice(0, -1), { ...lastMessage, text: lastMessage.text + modelText }];
+                } else {
+                  return [...prev, { id: crypto.randomUUID(), role: 'model', text: modelText }];
+                }
+              });
+            }
+
             if (message.serverContent?.interrupted) {
               nextPlaybackTimeRef.current = 0;
               if (playbackAudioContextRef.current) {
@@ -696,6 +778,16 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
               >
                 {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
                 REFINE
+              </button>
+              <button
+                onClick={handleSuggest}
+                disabled={isSuggesting}
+                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
+                  isSuggesting ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
+                }`}
+              >
+                {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                SUGGEST ACTION
               </button>
               <button
                 onClick={() => setIsAutoRead(!isAutoRead)}

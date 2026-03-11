@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { CharacterProfile, generateAvatar } from '../lib/gemini';
-import { Loader2, RotateCcw } from 'lucide-react';
+import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits } from '../lib/gemini';
+import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2 } from 'lucide-react';
 
 interface CharacterEditorProps {
   profile: CharacterProfile;
@@ -10,10 +10,11 @@ interface CharacterEditorProps {
   onCancel: () => void;
 }
 
-export function CharacterEditor({ profile: initialProfile, avatarBase64: initialAvatar, isInitialReview: _isInitialReview, onSave, onCancel }: CharacterEditorProps) {
+export function CharacterEditor({ profile: initialProfile, avatarBase64: initialAvatar, isInitialReview, onSave, onCancel }: CharacterEditorProps) {
   const [profile, setProfile] = useState<CharacterProfile>(initialProfile);
   const [avatar, setAvatar] = useState<string>(initialAvatar);
   const [isRegenerating, setIsRegenerating] = useState(false);
+  const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
 
   const handleSave = () => {
     onSave(profile, avatar);
@@ -31,23 +32,78 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     }
   };
 
+  const handleRefineField = async (field: keyof CharacterProfile | 'player_name' | 'player_desc') => {
+    setIsRefiningField(field);
+    try {
+      const refined = await refineField(field as any, profile);
+      setProfile(prev => {
+        if (field === 'player_name') return { ...prev, playerProfile: { ...prev.playerProfile, name: refined } };
+        if (field === 'player_desc') return { ...prev, playerProfile: { ...prev.playerProfile, description: refined } };
+        return { ...prev, [field]: refined };
+      });
+    } catch (err) {
+      console.error("Refine field error:", err);
+    } finally {
+      setIsRefiningField(null);
+    }
+  };
+
+  const handleRefineTraits = async () => {
+    setIsRefiningField('traits');
+    try {
+      const refinedTraits = await refineTraits(profile);
+      setProfile(prev => ({ ...prev, traits: refinedTraits }));
+    } catch (err) {
+      console.error("Refine traits error:", err);
+    } finally {
+      setIsRefiningField(null);
+    }
+  };
+
+  const getModeTraits = (mode: AppMode) => {
+    switch (mode) {
+      case AppMode.SCENARIO:
+        return [
+          { id: 'danger', label: 'Danger Level' },
+          { id: 'mystery', label: 'Mystery' },
+          { id: 'supernatural', label: 'Supernatural' }
+        ];
+      case AppMode.GAME:
+        return [
+          { id: 'strictness', label: 'Strictness' },
+          { id: 'generosity', label: 'Generosity' },
+          { id: 'lethality', label: 'Lethality' }
+        ];
+      default:
+        return [
+          { id: 'friendliness', label: 'Friendliness' },
+          { id: 'assertiveness', label: 'Assertiveness' },
+          { id: 'empathy', label: 'Empathy' }
+        ];
+    }
+  };
+
   return (
-    <div className="p-8 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-4xl font-serif text-white">Refine Character</h2>
-        <div className="flex gap-4">
-          <button onClick={onCancel} className="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-medium transition-colors">
+    <div className="p-4 sm:p-8 max-w-6xl mx-auto w-full">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
+        <div>
+          <h2 className="text-3xl sm:text-4xl font-serif text-white">{isInitialReview ? 'Review Character' : 'Customize Character'}</h2>
+          <p className="text-zinc-500 text-sm mt-1">Refine the details of your narrative persona.</p>
+        </div>
+        <div className="flex gap-3 w-full sm:w-auto">
+          <button onClick={onCancel} className="flex-1 sm:flex-none px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors">
             Cancel
           </button>
-          <button onClick={handleSave} className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-medium transition-colors shadow-lg shadow-emerald-900/20">
-            Save & Continue
+          <button onClick={handleSave} className="flex-1 sm:flex-none px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors shadow-lg shadow-emerald-900/20">
+            Save Changes
           </button>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-10">
-        <div className="lg:col-span-1 space-y-6">
-          <div className="relative group aspect-square rounded-[2rem] overflow-hidden border border-white/10 bg-zinc-900 shadow-2xl">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Left Column: Avatar & Visuals */}
+        <div className="lg:col-span-4 space-y-8">
+          <div className="relative group aspect-square rounded-[2.5rem] overflow-hidden border border-white/10 bg-zinc-900 shadow-2xl">
             {avatar ? (
               <img src={avatar} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
             ) : (
@@ -65,66 +121,87 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
             </div>
           </div>
 
+          {/* Avatar Customization */}
           <div className="glass-panel p-6 rounded-[2rem] border border-white/5 space-y-6">
-            <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Avatar Customization</h3>
-            <div className="space-y-4">
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Hair Style</label>
-                <input
-                  type="text"
-                  value={profile.hairStyle || ''}
-                  onChange={(e) => setProfile({ ...profile, hairStyle: e.target.value })}
-                  className="w-full p-3 rounded-xl glass-input text-white text-sm"
-                  placeholder="e.g., Long wavy"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Hair Color</label>
-                <input
-                  type="text"
-                  value={profile.hairColor || ''}
-                  onChange={(e) => setProfile({ ...profile, hairColor: e.target.value })}
-                  className="w-full p-3 rounded-xl glass-input text-white text-sm"
-                  placeholder="e.g., Raven black"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Eye Color</label>
-                <input
-                  type="text"
-                  value={profile.eyeColor || ''}
-                  onChange={(e) => setProfile({ ...profile, eyeColor: e.target.value })}
-                  className="w-full p-3 rounded-xl glass-input text-white text-sm"
-                  placeholder="e.g., Piercing blue"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Clothing</label>
-                <input
-                  type="text"
-                  value={profile.clothing || ''}
-                  onChange={(e) => setProfile({ ...profile, clothing: e.target.value })}
-                  className="w-full p-3 rounded-xl glass-input text-white text-sm"
-                  placeholder="e.g., Leather duster"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Accessories</label>
-                <input
-                  type="text"
-                  value={profile.accessories || ''}
-                  onChange={(e) => setProfile({ ...profile, accessories: e.target.value })}
-                  className="w-full p-3 rounded-xl glass-input text-white text-sm"
-                  placeholder="e.g., Silver monocle"
-                />
-              </div>
+            <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+              <Settings2 className="w-3 h-3" />
+              Visual Details
+            </h3>
+            <div className="grid grid-cols-1 gap-4">
+              {[
+                { label: 'Hair Style', field: 'hairStyle', placeholder: 'e.g., Long wavy' },
+                { label: 'Hair Color', field: 'hairColor', placeholder: 'e.g., Raven black' },
+                { label: 'Eye Color', field: 'eyeColor', placeholder: 'e.g., Piercing blue' },
+                { label: 'Clothing', field: 'clothing', placeholder: 'e.g., Leather duster' },
+                { label: 'Accessories', field: 'accessories', placeholder: 'e.g., Silver monocle' }
+              ].map(item => (
+                <div key={item.field}>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">{item.label}</label>
+                  <input
+                    type="text"
+                    value={(profile as any)[item.field] || ''}
+                    onChange={(e) => setProfile({ ...profile, [item.field]: e.target.value })}
+                    className="w-full p-3 rounded-xl glass-input text-white text-sm focus:ring-2 focus:ring-emerald-500/30 transition-all"
+                    placeholder={item.placeholder}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Voice Settings */}
+          <div className="glass-panel p-6 rounded-[2rem] border border-white/5 space-y-6">
+            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
+              <RotateCcw className="w-3 h-3" />
+              Voice Persona
+            </h3>
+            <div className="grid grid-cols-5 gap-1.5">
+              {['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'].map(v => (
+                <button
+                  key={v}
+                  onClick={() => setProfile({...profile, voiceName: v})}
+                  className={`py-2 rounded-lg text-[9px] font-bold border transition-all ${
+                    profile.voiceName === v ? 'bg-emerald-500 border-emerald-400 text-white' : 'glass-input text-zinc-500 border-transparent hover:border-zinc-700'
+                  }`}
+                >
+                  {v}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: 'Pitch', field: 'pitch' },
+                { label: 'Speed', field: 'speed' },
+                { label: 'Accent', field: 'accent' }
+              ].map(item => (
+                <div key={item.field}>
+                  <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">{item.label}</label>
+                  <input 
+                    type="text" 
+                    className="w-full px-2 py-2 glass-input rounded-lg text-white text-[10px]"
+                    value={(profile.voiceSettings as any)[item.field]}
+                    onChange={e => setProfile({...profile, voiceSettings: {...profile.voiceSettings, [item.field]: e.target.value}})}
+                  />
+                </div>
+              ))}
             </div>
           </div>
         </div>
 
-        <div className="lg:col-span-2 space-y-8">
-          <div className="glass-panel p-8 rounded-[2rem] border border-white/5 space-y-6">
-            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest">Core Identity</h3>
+        {/* Right Column: Narrative & Stats */}
+        <div className="lg:col-span-8 space-y-8">
+          {/* Core Identity */}
+          <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-8">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
+                <Heart className="w-3 h-3" />
+                Core Identity
+              </h3>
+              <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
+                <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">{profile.mode} Mode</span>
+              </div>
+            </div>
+
             <div className="space-y-6">
               <div>
                 <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Name</label>
@@ -132,31 +209,226 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                   type="text"
                   value={profile.name}
                   onChange={(e) => setProfile({ ...profile, name: e.target.value })}
-                  className="w-full p-4 rounded-2xl glass-input text-white text-lg font-medium"
+                  className="w-full p-4 rounded-2xl glass-input text-white text-xl font-medium focus:ring-2 focus:ring-blue-500/30 transition-all"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {[
+                  { label: 'Personality', field: 'personality', rows: 4 },
+                  { label: 'Backstory', field: 'backstory', rows: 4 },
+                  { label: 'Appearance', field: 'appearance', rows: 4 },
+                  { label: 'Relationship', field: 'relationship', rows: 4 }
+                ].map(item => (
+                  <div key={item.field}>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
+                      <button 
+                        onClick={() => handleRefineField(item.field as any)}
+                        disabled={isRefiningField !== null}
+                        className="text-[9px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                      >
+                        {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                        REFINE
+                      </button>
+                    </div>
+                    <textarea
+                      value={(profile as any)[item.field]}
+                      onChange={(e) => setProfile({ ...profile, [item.field]: e.target.value })}
+                      className="w-full p-4 rounded-2xl glass-input text-white text-sm leading-relaxed resize-none focus:ring-2 focus:ring-blue-500/30 transition-all"
+                      rows={item.rows}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* Mode Specific Settings */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+            {/* Traits & Tone */}
+            <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-6">
+              <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+                <Swords className="w-3 h-3" />
+                Traits & Tone
+              </h3>
+              
+              <div className="space-y-6">
+                <div>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Story Tone</label>
+                  <select 
+                    className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                    value={profile.storyTone}
+                    onChange={e => setProfile({...profile, storyTone: e.target.value})}
+                  >
+                    {['Dramatic', 'Gritty', 'Whimsical', 'Horror', 'Romantic', 'Cyberpunk', 'Noir', 'Adventure'].map(t => (
+                      <option key={t} value={t} className="bg-zinc-900">{t}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <div className="flex justify-between items-center mb-3">
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Personality Traits</label>
+                    <button 
+                      onClick={handleRefineTraits}
+                      disabled={isRefiningField !== null}
+                      className="text-[9px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {isRefiningField === 'traits' ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                      REFINE
+                    </button>
+                  </div>
+                  <div className="space-y-4 glass-input p-4 rounded-xl">
+                    {getModeTraits(profile.mode).map(trait => (
+                      <div key={trait.id} className="space-y-1.5">
+                        <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest">
+                          <span className="text-zinc-500">{trait.label}</span>
+                          <span className="text-white">{profile.traits[trait.id] ?? 50}%</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="100" 
+                          value={profile.traits[trait.id] ?? 50}
+                          onChange={e => setProfile({
+                            ...profile, 
+                            traits: { ...profile.traits, [trait.id]: parseInt(e.target.value) }
+                          })}
+                          className="w-full h-1.5 rounded-full appearance-none bg-zinc-800 cursor-pointer accent-emerald-500"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Mode Specific Details */}
+            <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-6">
+              <h3 className="text-xs font-bold text-purple-400 uppercase tracking-widest flex items-center gap-2">
+                <Globe className="w-3 h-3" />
+                {profile.mode} Details
+              </h3>
+
+              <div className="space-y-6">
+                {profile.mode === AppMode.SCENARIO && (
+                  <>
+                    {[
+                      { label: 'World Atmosphere', field: 'worldAtmosphere' },
+                      { label: 'Key Locations', field: 'keyLocations' }
+                    ].map(item => (
+                      <div key={item.field}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
+                          <button 
+                            onClick={() => handleRefineField(item.field as any)}
+                            disabled={isRefiningField !== null}
+                            className="text-[9px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                            REFINE
+                          </button>
+                        </div>
+                        <textarea 
+                          rows={3}
+                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
+                          value={(profile as any)[item.field]}
+                          onChange={e => setProfile({...profile, [item.field]: e.target.value})}
+                        />
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {profile.mode === AppMode.ROLEPLAY && (
+                  <>
+                    {[
+                      { label: 'Character Flaws', field: 'characterFlaws' },
+                      { label: 'Secret Motive', field: 'secretMotive' }
+                    ].map(item => (
+                      <div key={item.field}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
+                          <button 
+                            onClick={() => handleRefineField(item.field as any)}
+                            disabled={isRefiningField !== null}
+                            className="text-[9px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                            REFINE
+                          </button>
+                        </div>
+                        <textarea 
+                          rows={3}
+                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
+                          value={(profile as any)[item.field]}
+                          onChange={e => setProfile({...profile, [item.field]: e.target.value})}
+                        />
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {profile.mode === AppMode.GAME && (
+                  <>
+                    <div>
+                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Game System</label>
+                      <input 
+                        type="text"
+                        className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                        value={profile.gameSystem}
+                        onChange={e => setProfile({...profile, gameSystem: e.target.value})}
+                      />
+                    </div>
+                    <div>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Quest Objective</label>
+                        <button 
+                          onClick={() => handleRefineField('questObjective')}
+                          disabled={isRefiningField !== null}
+                          className="text-[9px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {isRefiningField === 'questObjective' ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                          REFINE
+                        </button>
+                      </div>
+                      <textarea 
+                        rows={3}
+                        className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
+                        value={profile.questObjective}
+                        onChange={e => setProfile({...profile, questObjective: e.target.value})}
+                      />
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Player Profile */}
+          <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-6">
+            <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+              <Settings2 className="w-3 h-3" />
+              Player Persona (You)
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Your Name</label>
+                <input
+                  type="text"
+                  value={profile.playerProfile.name}
+                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...profile.playerProfile, name: e.target.value } })}
+                  className="w-full p-4 rounded-2xl glass-input text-white text-sm focus:ring-2 focus:ring-zinc-500/30 transition-all"
                 />
               </div>
               <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Personality</label>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Your Description</label>
                 <textarea
-                  value={profile.personality}
-                  onChange={(e) => setProfile({ ...profile, personality: e.target.value })}
-                  className="w-full p-4 rounded-2xl glass-input text-white h-32 text-sm leading-relaxed resize-none"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Backstory</label>
-                <textarea
-                  value={profile.backstory}
-                  onChange={(e) => setProfile({ ...profile, backstory: e.target.value })}
-                  className="w-full p-4 rounded-2xl glass-input text-white h-48 text-sm leading-relaxed resize-none"
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">General Appearance</label>
-                <textarea
-                  value={profile.appearance}
-                  onChange={(e) => setProfile({ ...profile, appearance: e.target.value })}
-                  className="w-full p-4 rounded-2xl glass-input text-white h-32 text-sm leading-relaxed resize-none"
+                  value={profile.playerProfile.description}
+                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...profile.playerProfile, description: e.target.value } })}
+                  className="w-full p-4 rounded-2xl glass-input text-white text-sm leading-relaxed resize-none focus:ring-2 focus:ring-zinc-500/30 transition-all"
+                  rows={2}
                 />
               </div>
             </div>
@@ -166,3 +438,4 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     </div>
   );
 }
+
