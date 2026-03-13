@@ -47,7 +47,7 @@ import { CharacterCreator } from './components/CharacterCreator';
 import { ChatInterface } from './components/ChatInterface';
 import { CharacterEditor } from './components/CharacterEditor';
 import { ScenarioLibrary } from './components/ScenarioLibrary';
-import { CharacterProfile, Scenario } from './lib/gemini';
+import { CharacterProfile, Scenario, generateId } from './lib/gemini';
 import { Library } from 'lucide-react';
 
 // Declare global window properties for AI Studio
@@ -62,26 +62,49 @@ declare global {
 
 export default function App() {
   const [hasKey, setHasKey] = useState<boolean | null>(null);
-  const [scenarios, setScenarios] = useState<Scenario[]>(() => {
-    try {
-      const saved = localStorage.getItem('personaforge_scenarios');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      console.error("Failed to parse scenarios from localStorage", e);
-      return [];
-    }
-  });
+  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [isScenariosLoaded, setIsScenariosLoaded] = useState(false);
+  
   const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(() => {
     return localStorage.getItem('personaforge_current_scenario_id');
   });
 
-  // Safety check: If the stored ID doesn't exist in scenarios, reset it to null
-  // to avoid a blank screen.
+  // Load scenarios from IndexedDB
   useEffect(() => {
-    if (currentScenarioId && !scenarios.find(s => s.id === currentScenarioId)) {
+    const loadScenarios = async () => {
+      try {
+        const saved = await get('personaforge_scenarios');
+        if (saved) {
+          setScenarios(saved);
+        } else {
+          // Migration for existing localStorage data
+          const oldLocal = localStorage.getItem('personaforge_scenarios');
+          if (oldLocal) {
+            try {
+              const parsed = JSON.parse(oldLocal);
+              setScenarios(parsed);
+              await set('personaforge_scenarios', parsed);
+              localStorage.removeItem('personaforge_scenarios');
+            } catch (e) {
+              console.error("Failed to migrate scenarios from localStorage", e);
+            }
+          }
+        }
+      } catch (e) {
+        console.error("Failed to load scenarios from IndexedDB", e);
+      } finally {
+        setIsScenariosLoaded(true);
+      }
+    };
+    loadScenarios();
+  }, []);
+
+  // Safety check: wait for scenarios to load before validating ID
+  useEffect(() => {
+    if (isScenariosLoaded && currentScenarioId && !scenarios.find(s => s.id === currentScenarioId)) {
       setCurrentScenarioId(null);
     }
-  }, [scenarios, currentScenarioId]);
+  }, [scenarios, currentScenarioId, isScenariosLoaded]);
 
   const [isCreating, setIsCreating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -97,9 +120,14 @@ export default function App() {
 
   const currentScenario = scenarios.find(s => s.id === currentScenarioId);
 
+  // Save to IndexedDB
   useEffect(() => {
-    localStorage.setItem('personaforge_scenarios', JSON.stringify(scenarios));
-  }, [scenarios]);
+    if (isScenariosLoaded) {
+      set('personaforge_scenarios', scenarios).catch(e => {
+        console.error("Failed to save scenarios to IndexedDB", e);
+      });
+    }
+  }, [scenarios, isScenariosLoaded]);
 
   useEffect(() => {
     if (currentScenarioId) {
@@ -141,7 +169,7 @@ export default function App() {
   const handleCharacterCreated = (profile: CharacterProfile, avatarBase64: string) => {
     try {
       const newScenario: Scenario = {
-        id: crypto.randomUUID(),
+        id: generateId(),
         profile,
         avatarBase64,
         lastUpdated: Date.now()
@@ -177,7 +205,7 @@ export default function App() {
   const handleCarryOver = (profile: CharacterProfile, avatarBase64: string) => {
     // Create a new scenario with the same character but new ID (empty messages)
     const newScenario: Scenario = {
-      id: crypto.randomUUID(),
+      id: generateId(),
       profile: {
         ...profile,
         relationship: 'Strangers', // Reset relationship for new scenario

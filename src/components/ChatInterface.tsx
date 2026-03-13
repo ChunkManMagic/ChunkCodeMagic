@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
-import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { CharacterProfile, getGenAI, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction } from '../lib/gemini';
+import { CharacterProfile, getGenAI, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId } from '../lib/gemini';
 import { LiveServerMessage, Modality } from '@google/genai';
 
 interface Message {
@@ -36,7 +36,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           }
         }
         if (saved) {
-          setMessages(saved);
+          // Deduplicate and ensure IDs are valid
+          const seen = new Set();
+          const clean = saved.filter((m: any) => {
+            if (!m.id || seen.has(m.id)) return false;
+            seen.add(m.id);
+            return true;
+          });
+          setMessages(clean);
         }
       } catch (e) {
         console.error("Failed to load messages", e);
@@ -64,6 +71,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [startTime, setStartTime] = useState(0);
   const [pausedAt, setPausedAt] = useState(0);
+  const [playbackTime, setPlaybackTime] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [liveSession, setLiveSession] = useState<any>(null);
@@ -73,6 +81,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const streamRef = useRef<MediaStream | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+
+  useEffect(() => {
+    let interval: any;
+    if (isPlaying && playbackAudioContextRef.current) {
+      interval = setInterval(() => {
+        const current = playbackAudioContextRef.current!.currentTime - startTime;
+        setPlaybackTime(Math.min(current, audioBuffer?.duration || 0));
+      }, 100);
+    } else {
+      setPlaybackTime(pausedAt);
+    }
+    return () => clearInterval(interval);
+  }, [isPlaying, startTime, pausedAt, audioBuffer]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -153,7 +174,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       
       try {
         const historyForAi = baseMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-        const aiMessageId = crypto.randomUUID();
+        const aiMessageId = generateId();
         const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
         setMessages(prev => [...prev, aiMessage]);
         
@@ -192,7 +213,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const handleSendText = async () => {
     if (!input.trim() || isTyping) return;
-    const userMsg: Message = { id: crypto.randomUUID(), role: 'user', text: input };
+    const userMsg: Message = { id: generateId(), role: 'user', text: input };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     
@@ -210,7 +231,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setIsTyping(true);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-      const aiMessageId = crypto.randomUUID();
+      const aiMessageId = generateId();
       const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
       setMessages(prev => [...prev, aiMessage]);
       
@@ -260,7 +281,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     try {
       const cleanText = text.replace(/[*#_~`]/g, '').trim();
       if (!cleanText) return;
-      const audioBase64 = await generateSpeech(cleanText, profile.voiceName, profile.voiceSettings);
+      const audioBase64 = await generateSpeech(cleanText, profile.voiceName, profile.voiceSettings, profile.storyTone);
       setAudioQueue(prev => [...prev, audioBase64]);
     } catch (e) { console.error(e); }
   };
@@ -338,6 +359,35 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setPausedAt(0);
       startPlayback(audioBuffer, 0);
     }
+  };
+
+  const seekAudio = (time: number) => {
+    if (audioBuffer) {
+      const newTime = Math.max(0, Math.min(time, audioBuffer.duration));
+      stopAudio();
+      setPausedAt(newTime);
+      startPlayback(audioBuffer, newTime);
+    }
+  };
+
+  const skipForward = () => {
+    if (audioBuffer) {
+      const newTime = Math.min((isPlaying ? playbackAudioContextRef.current!.currentTime - startTime : pausedAt) + 5, audioBuffer.duration);
+      seekAudio(newTime);
+    }
+  };
+
+  const skipBackward = () => {
+    if (audioBuffer) {
+      const newTime = Math.max((isPlaying ? playbackAudioContextRef.current!.currentTime - startTime : pausedAt) - 5, 0);
+      seekAudio(newTime);
+    }
+  };
+
+  const formatTime = (time: number) => {
+    const mins = Math.floor(time / 60);
+    const secs = Math.floor(time % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const toggleLiveMode = async () => {
@@ -442,7 +492,7 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
                 if (lastMessage && lastMessage.role === 'user') {
                   return [...prev.slice(0, -1), { ...lastMessage, text: lastMessage.text + userText }];
                 } else {
-                  return [...prev, { id: crypto.randomUUID(), role: 'user', text: userText }];
+                  return [...prev, { id: generateId(), role: 'user', text: userText }];
                 }
               });
             }
@@ -462,7 +512,7 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
                 if (lastMessage && lastMessage.role === 'model') {
                   return [...prev.slice(0, -1), { ...lastMessage, text: lastMessage.text + modelText }];
                 } else {
-                  return [...prev, { id: crypto.randomUUID(), role: 'model', text: modelText }];
+                  return [...prev, { id: generateId(), role: 'model', text: modelText }];
                 }
               });
             }
@@ -501,7 +551,16 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
       sourceRef.current.connect(processorRef.current);
       processorRef.current.connect(audioContextRef.current.destination);
       setIsMicActive(true);
-    } catch (err) { console.error(err); }
+    } catch (err: any) { 
+      console.error("Microphone access error:", err);
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+        alert("Microphone access denied. Please ensure you have granted permission in your browser settings. If you are in an iframe, you may need to open the app in a new tab.");
+      } else {
+        alert("Could not access microphone. Please check your audio settings.");
+      }
+      setIsLiveMode(false);
+      setIsMicActive(false);
+    }
   };
 
   const stopAudioCapture = () => {
@@ -735,20 +794,44 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 exit={{ opacity: 0, y: 20 }}
-                className="absolute bottom-32 left-1/2 -translate-x-1/2 glass-panel px-4 sm:px-6 py-2 sm:py-3 rounded-2xl flex items-center gap-4 sm:gap-6 shadow-2xl border border-emerald-500/20 z-20"
+                className="absolute bottom-32 left-1/2 -translate-x-1/2 glass-panel px-4 sm:px-6 py-3 sm:py-4 rounded-[2rem] flex flex-col gap-3 shadow-2xl border border-emerald-500/20 z-20 w-[90%] max-w-md"
               >
-                <button onClick={rewindAudio} className="text-zinc-400 hover:text-white transition-colors" title="Restart Speech">
-                  <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
-                </button>
-                <button 
-                  onClick={togglePlayPause} 
-                  className="w-8 h-8 sm:w-10 sm:h-10 bg-emerald-600 hover:bg-emerald-500 rounded-full flex items-center justify-center text-white transition-all shadow-lg shadow-emerald-900/20"
-                >
-                  {isPlaying ? <Pause className="w-4 h-4 sm:w-5 sm:h-5" /> : <Play className="w-4 h-4 sm:w-5 sm:h-5 ml-0.5" />}
-                </button>
-                <button onClick={() => { stopAudio(); setAudioBuffer(null); }} className="text-zinc-400 hover:text-red-400 transition-colors" title="Stop">
-                  <CloseIcon className="w-4 h-4 sm:w-5 sm:h-5" />
-                </button>
+                <div className="flex items-center gap-4 sm:gap-6 justify-center">
+                  <button onClick={rewindAudio} className="text-zinc-400 hover:text-white transition-colors" title="Restart">
+                    <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+                  <button onClick={skipBackward} className="text-zinc-400 hover:text-white transition-colors" title="Rewind 5s">
+                    <Rewind className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+                  <button 
+                    onClick={togglePlayPause} 
+                    className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-600 hover:bg-emerald-500 rounded-full flex items-center justify-center text-white transition-all shadow-lg shadow-emerald-900/20"
+                  >
+                    {isPlaying ? <Pause className="w-5 h-5 sm:w-6 sm:h-6" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 ml-0.5" />}
+                  </button>
+                  <button onClick={skipForward} className="text-zinc-400 hover:text-white transition-colors" title="Forward 5s">
+                    <FastForward className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+                  <button onClick={() => { stopAudio(); setAudioBuffer(null); setPausedAt(0); setPlaybackTime(0); }} className="text-zinc-400 hover:text-red-400 transition-colors" title="Close">
+                    <CloseIcon className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+                </div>
+                
+                <div className="space-y-1">
+                  <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                    <span>{formatTime(playbackTime)}</span>
+                    <span>{formatTime(audioBuffer.duration)}</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="0" 
+                    max={audioBuffer.duration} 
+                    step="0.1"
+                    value={playbackTime}
+                    onChange={(e) => seekAudio(parseFloat(e.target.value))}
+                    className="w-full h-1.5 rounded-full appearance-none bg-zinc-800 cursor-pointer accent-emerald-500"
+                  />
+                </div>
               </motion.div>
             )}
           </AnimatePresence>

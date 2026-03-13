@@ -60,6 +60,14 @@ export function getGenAI() {
   return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY });
 }
 
+export function generateId(): string {
+  try {
+    return crypto.randomUUID();
+  } catch (e) {
+    return `id-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  }
+}
+
 async function withRetry<T>(fn: () => Promise<T>, retries = 5, delay = 2000): Promise<T> {
   try {
     return await fn();
@@ -214,10 +222,12 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
   const chat = ai.chats.create({
     model: "gemini-3.1-flash-lite-preview",
     config: { systemInstruction },
-    history: history.map(m => ({
-      role: m.role,
-      parts: m.parts
-    }))
+    history: history
+      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
+      .map(m => ({
+        role: m.role,
+        parts: m.parts
+      }))
   });
   
   const response = await withRetry(() => chat.sendMessage({ message: userInput }));
@@ -241,10 +251,12 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
   const chat = ai.chats.create({
     model: "gemini-3.1-flash-lite-preview",
     config: { systemInstruction },
-    history: history.map(m => ({
-      role: m.role,
-      parts: m.parts
-    }))
+    history: history
+      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
+      .map(m => ({
+        role: m.role,
+        parts: m.parts
+      }))
   });
   
   const responseStream = await chat.sendMessageStream({ message: userInput });
@@ -290,11 +302,18 @@ Please return only the refined input text, maintaining the narrative style and e
   return response.text?.trim() || input;
 }
 
-export async function generateSpeech(text: string, voiceName: string, _voiceSettings: any): Promise<string> {
+export async function generateSpeech(text: string, voiceName: string, voiceSettings: any, tone: string): Promise<string> {
+  if (!text || !text.trim()) return "";
   const ai = getGenAI();
+  
+  // Create a stylistic prompt to make the voice less robotic
+  const prompt = `Say this in a ${tone || 'natural'} tone. 
+Voice Style: ${voiceSettings?.pitch || 'Normal'} pitch, ${voiceSettings?.speed || 'Normal'} speed, ${voiceSettings?.accent || 'No'} accent.
+Text to speak: ${text}`;
+
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
-    contents: [{ parts: [{ text }] }],
+    contents: [{ parts: [{ text: prompt }] }],
     config: {
       responseModalities: ["AUDIO"],
       speechConfig: {
