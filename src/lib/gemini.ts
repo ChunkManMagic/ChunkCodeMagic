@@ -56,6 +56,13 @@ export interface Scenario {
   lastUpdated: number;
 }
 
+export interface CodexEntry {
+  id: string;
+  title: string;
+  content: string;
+  category: 'Lore' | 'Mechanics' | 'Location' | 'Item';
+}
+
 export function getGenAI() {
   return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY });
 }
@@ -85,7 +92,7 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 5, delay = 2000): Pr
 export async function generateCharacterProfile(idea: string, mode: AppMode): Promise<CharacterProfile> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Generate a detailed character profile based on this idea: "${idea}" for a ${mode} mode.`,
     config: {
       responseMimeType: "application/json",
@@ -173,7 +180,7 @@ The character should be the central focus, looking towards the camera.`;
 export async function refineField(field: string, profile: CharacterProfile): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Refine the ${field} for this character: ${JSON.stringify(profile)}`
   }));
   return response.text || "";
@@ -182,7 +189,7 @@ export async function refineField(field: string, profile: CharacterProfile): Pro
 export async function refineTraits(profile: CharacterProfile): Promise<any> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Suggest traits (0-100) for this character: ${JSON.stringify(profile)}`,
     config: {
       responseMimeType: "application/json",
@@ -205,8 +212,13 @@ export async function refineTraits(profile: CharacterProfile): Promise<any> {
   return JSON.parse(response.text || "{}");
 }
 
-export async function generateTextReply(history: any[], profile: CharacterProfile, userInput: string): Promise<string> {
+export async function generateTextReply(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = []): Promise<string> {
   const ai = getGenAI();
+  
+  const codexContext = codexEntries.length > 0 
+    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
+    : '';
+
   const systemInstruction = `You are playing the role of the following character. Stay in character at all times. Never break character.
 Name: ${profile.name}
 Personality: ${profile.personality}
@@ -216,11 +228,11 @@ Tone: ${profile.storyTone}
 Relationship with player: ${profile.relationship}
 Player Name: ${profile.playerProfile.name}
 Player Description: ${profile.playerProfile.description}
-
+${codexContext}
 If the player sends a message in the format ((OOC: ...)), treat it as an out-of-character meta-instruction, question, or correction. Respond to it directly as the AI assistant, not as the character, and then continue the roleplay if appropriate. Do not incorporate the OOC content into the story itself.
 `;
   const chat = ai.chats.create({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     config: { systemInstruction },
     history: history
       .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
@@ -234,8 +246,13 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
   return response.text || "";
 }
 
-export async function* generateTextReplyStream(history: any[], profile: CharacterProfile, userInput: string) {
+export async function* generateTextReplyStream(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = []) {
   const ai = getGenAI();
+  
+  const codexContext = codexEntries.length > 0 
+    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
+    : '';
+
   const systemInstruction = `You are playing the role of the following character. Stay in character at all times. Never break character.
 Name: ${profile.name}
 Personality: ${profile.personality}
@@ -245,11 +262,11 @@ Tone: ${profile.storyTone}
 Relationship with player: ${profile.relationship}
 Player Name: ${profile.playerProfile.name}
 Player Description: ${profile.playerProfile.description}
-
+${codexContext}
 If the player sends a message in the format ((OOC: ...)), treat it as an out-of-character meta-instruction, question, or correction. Respond to it directly as the AI assistant, not as the character, and then continue the roleplay if appropriate. Do not incorporate the OOC content into the story itself.
 `;
   const chat = ai.chats.create({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     config: { systemInstruction },
     history: history
       .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
@@ -268,7 +285,7 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
 export async function suggestNextAction(history: any[], profile: CharacterProfile): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `You are assisting a player in a roleplay. Based on the current story, character profile, and world context, suggest a compelling next action or dialogue for the player character.
 Character Profile: ${JSON.stringify(profile)}
 World Context: ${profile.worldAtmosphere || 'Not specified'}
@@ -282,7 +299,7 @@ Please return only the suggested text, ready to be used as user input. Make it i
 export async function refineInput(input: string, profile: CharacterProfile, history: any[]): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `You are assisting in a roleplay. Refine the following user input to be more descriptive, immersive, and in-character for the player, taking into account the current character they are interacting with and the story history.
 Player Character Context:
 Name: ${profile.playerProfile.name}
@@ -306,10 +323,17 @@ export async function generateSpeech(text: string, voiceName: string, voiceSetti
   if (!text || !text.trim()) return "";
   const ai = getGenAI();
   
-  // Create a stylistic prompt to make the voice less robotic
-  const prompt = `Say this in a ${tone || 'natural'} tone. 
-Voice Style: ${voiceSettings?.pitch || 'Normal'} pitch, ${voiceSettings?.speed || 'Normal'} speed, ${voiceSettings?.accent || 'No'} accent.
-Text to speak: ${text}`;
+  // Cinematic Audiobook Prompt
+  const prompt = `Perform the following text as a cinematic, deep audiobook storyteller. 
+Use a ${tone || 'natural'} tone with rich emotional prosody. 
+Incorporate natural breath pauses and human-like pacing. 
+Avoid all robotic, flat, or whiny artifacts. 
+The delivery should be immersive, professional, and evocative.
+
+Voice Parameters: ${voiceSettings?.pitch || 'Normal'} pitch, ${voiceSettings?.speed || 'Normal'} speed, ${voiceSettings?.accent || 'No'} accent.
+
+Text to perform:
+${text}`;
 
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
@@ -324,6 +348,77 @@ Text to speak: ${text}`;
     },
   }));
   return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
+}
+
+export async function extractCodexEntries(history: any[], profile: CharacterProfile, existingEntries: CodexEntry[]): Promise<Partial<CodexEntry>[]> {
+  const ai = getGenAI();
+  const existingTitles = existingEntries.map(e => e.title).join(', ');
+  
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Analyze the following roleplay history and character profile. Identify any significant new lore, locations, items, or mechanics that should be added to the world codex. 
+Do not suggest entries that already exist: [${existingTitles}]
+
+Character Profile: ${JSON.stringify(profile)}
+History: ${JSON.stringify(history.slice(-20))}
+
+Return a JSON array of new codex entries. Each entry must have:
+- title: A short, clear name
+- content: A concise description (1-3 sentences)
+- category: One of "Lore", "Mechanics", "Location", "Item"`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: {
+          type: Type.OBJECT,
+          properties: {
+            title: { type: Type.STRING },
+            content: { type: Type.STRING },
+            category: { type: Type.STRING, enum: ["Lore", "Mechanics", "Location", "Item"] }
+          },
+          required: ["title", "content", "category"]
+        }
+      }
+    }
+  }));
+  
+  try {
+    return JSON.parse(response.text || "[]");
+  } catch (e) {
+    console.error("Failed to parse extracted codex entries", e);
+    return [];
+  }
+}
+
+export async function refineCodexEntry(entry: Partial<CodexEntry>, profile: CharacterProfile): Promise<Partial<CodexEntry>> {
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Refine this codex entry to be more descriptive, immersive, and consistent with the world of ${profile.name}.
+Current Entry: ${JSON.stringify(entry)}
+World Context: ${profile.worldAtmosphere || 'Not specified'}
+
+Return the refined entry as JSON with the same fields (title, content, category).`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          title: { type: Type.STRING },
+          content: { type: Type.STRING },
+          category: { type: Type.STRING, enum: ["Lore", "Mechanics", "Location", "Item"] }
+        },
+        required: ["title", "content", "category"]
+      }
+    }
+  }));
+  
+  try {
+    return JSON.parse(response.text || JSON.stringify(entry));
+  } catch (e) {
+    return entry;
+  }
 }
 
 export async function generateVeoAnimation() {

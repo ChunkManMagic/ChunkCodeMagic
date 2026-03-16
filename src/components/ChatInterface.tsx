@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
-import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, SkipForward, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind, Book, Plus, Trash2, Settings2, Sliders } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { CharacterProfile, getGenAI, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId } from '../lib/gemini';
-import { LiveServerMessage, Modality } from '@google/genai';
+import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry } from '../lib/gemini';
 
 interface Message {
   id: string;
@@ -18,15 +17,37 @@ interface ChatInterfaceProps {
   scenarioId: string;
   onEditCharacter: () => void;
   onCarryOver: () => void;
+  onUpdateProfile: (profile: CharacterProfile) => void;
 }
 
-export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver }: ChatInterfaceProps) {
+export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [codexEntries, setCodexEntries] = useState<CodexEntry[]>([]);
+  const [showCodex, setShowCodex] = useState(false);
+  const [newCodexEntry, setNewCodexEntry] = useState<Partial<CodexEntry>>({ category: 'Lore' });
+  const [isAddingCodex, setIsAddingCodex] = useState(false);
+  const [isAutoPopulatingCodex, setIsAutoPopulatingCodex] = useState(false);
+  const [isAutoCodexEnabled, setIsAutoCodexEnabled] = useState(false);
+  const [isRefiningCodexEntry, setIsRefiningCodexEntry] = useState(false);
+
+  // Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
+  });
 
   useEffect(() => {
-    const loadMessages = async () => {
+    const loadData = async () => {
       try {
+        // Load Messages
         let saved = await get(`personaforge_messages_${scenarioId}`);
         if (!saved) {
           const localSaved = localStorage.getItem(`personaforge_messages_${scenarioId}`);
@@ -36,7 +57,6 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           }
         }
         if (saved) {
-          // Deduplicate and ensure IDs are valid
           const seen = new Set();
           const clean = saved.filter((m: any) => {
             if (!m.id || seen.has(m.id)) return false;
@@ -45,13 +65,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           });
           setMessages(clean);
         }
+
+        // Load Codex
+        const savedCodex = await get(`personaforge_codex_${scenarioId}`);
+        if (savedCodex) {
+          setCodexEntries(savedCodex);
+        }
       } catch (e) {
-        console.error("Failed to load messages", e);
+        console.error("Failed to load data", e);
       } finally {
         setIsLoaded(true);
       }
     };
-    loadMessages();
+    loadData();
   }, [scenarioId]);
 
   const [input, setInput] = useState('');
@@ -59,10 +85,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [isRefining, setIsRefining] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [isAutoRead, setIsAutoRead] = useState(true);
+  const [playlist, setPlaylist] = useState<string[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [isManualPause, setIsManualPause] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editInput, setEditInput] = useState('');
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
+  const [isInputExpanded, setIsInputExpanded] = useState(false);
+  const [showVoiceSettings, setShowVoiceSettings] = useState(false);
+  const recognitionRef = useRef<any>(null);
   const [showModeDetails, setShowModeDetails] = useState(false);
   
   // Audio State
@@ -74,13 +106,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [playbackTime, setPlaybackTime] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const [liveSession, setLiveSession] = useState<any>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
   const playbackAudioContextRef = useRef<AudioContext | null>(null);
-  const nextPlaybackTimeRef = useRef<number>(0);
-  const streamRef = useRef<MediaStream | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
 
   useEffect(() => {
     let interval: any;
@@ -96,7 +122,6 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   }, [isPlaying, startTime, pausedAt, audioBuffer]);
 
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     if (isLoaded) {
       set(`personaforge_messages_${scenarioId}`, messages).catch(e => {
         console.error("Failed to save messages to IndexedDB", e);
@@ -110,6 +135,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       }
     }
   }, [messages, scenarioId, isLoaded]);
+
+  useEffect(() => {
+    if (isLoaded) {
+      set(`personaforge_codex_${scenarioId}`, codexEntries).catch(e => {
+        console.error("Failed to save codex to IndexedDB", e);
+      });
+    }
+  }, [codexEntries, scenarioId, isLoaded]);
 
   const handleRefine = async () => {
     if (!input.trim() || isRefining) return;
@@ -140,11 +173,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   };
 
   const handleRewind = (messageId: string) => {
-    const index = messages.findIndex(m => m.id === messageId);
-    if (index !== -1) {
-      const newMessages = messages.slice(0, index);
-      setMessages(newMessages);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Rewind Narrative',
+      message: 'Are you sure you want to rewind the story to this point? All subsequent messages will be deleted.',
+      onConfirm: () => {
+        const index = messages.findIndex(m => m.id === messageId);
+        if (index !== -1) {
+          const newMessages = messages.slice(0, index);
+          setMessages(newMessages);
+        }
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   const startEditing = (message: Message) => {
@@ -180,7 +221,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         
         let fullReply = '';
         let sentenceBuffer = '';
-        const stream = generateTextReplyStream(historyForAi, profile, editInput);
+        const stream = generateTextReplyStream(historyForAi, profile, editInput, codexEntries);
         
         for await (const chunk of stream) {
           fullReply += chunk;
@@ -188,7 +229,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           
           setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
           
-          if (isAutoRead && /[.!?]\s$/.test(sentenceBuffer)) {
+          // Wait for at least 1 sentence or a paragraph break for faster playback
+          const sentences = sentenceBuffer.match(/[.!?]\s/g);
+          if (isAutoRead && ((sentences && sentences.length >= 1) || sentenceBuffer.includes('\n\n'))) {
             handleReadAloud(sentenceBuffer);
             sentenceBuffer = '';
           }
@@ -197,6 +240,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         if (isAutoRead && sentenceBuffer.trim()) {
           handleReadAloud(sentenceBuffer);
         }
+        
+        // Auto-populate codex after a model response
+        handleAutoPopulateCodex();
       } catch (err) {
         console.error(err);
       } finally {
@@ -211,23 +257,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   };
 
-  const handleSendText = async () => {
-    if (!input.trim() || isTyping) return;
-    const userMsg: Message = { id: generateId(), role: 'user', text: input };
+  const handleSendText = async (overrideText?: string) => {
+    const textToSend = overrideText || input;
+    if (!textToSend.trim() || isTyping) return;
+    const userMsg: Message = { id: generateId(), role: 'user', text: textToSend };
     setMessages(prev => [...prev, userMsg]);
-    setInput('');
+    if (!overrideText) setInput('');
     
-    if (isLiveMode && liveSession) {
-      try {
-        liveSession.then((session: any) => {
-          session.sendClientContent({ turns: [{ role: 'user', parts: [{ text: userMsg.text }] }], turnComplete: true });
-        }).catch((err: any) => {
-          console.error("Live session message error:", err);
-        });
-      } catch (e) { console.error(e); }
-      return;
-    }
-
     setIsTyping(true);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
@@ -237,7 +273,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       
       let fullReply = '';
       let sentenceBuffer = '';
-      const stream = generateTextReplyStream(history, profile, userMsg.text);
+      const stream = generateTextReplyStream(history, profile, userMsg.text, codexEntries);
       
       for await (const chunk of stream) {
         fullReply += chunk;
@@ -245,8 +281,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         
         setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
         
-        // Simple sentence detection: ends with punctuation followed by space
-        if (isAutoRead && /[.!?]\s$/.test(sentenceBuffer)) {
+        // Wait for at least 1 sentence or a paragraph break for faster playback
+        const sentences = sentenceBuffer.match(/[.!?]\s/g);
+        if (isAutoRead && ((sentences && sentences.length >= 1) || sentenceBuffer.includes('\n\n'))) {
           handleReadAloud(sentenceBuffer);
           sentenceBuffer = '';
         }
@@ -255,6 +292,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       if (isAutoRead && sentenceBuffer.trim()) {
         handleReadAloud(sentenceBuffer);
       }
+
+      // Auto-populate codex after a model response
+      handleAutoPopulateCodex();
     } catch (err) {
       console.error(err);
     } finally {
@@ -262,29 +302,34 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   };
 
-  const [audioQueue, setAudioQueue] = useState<string[]>([]);
-  const [isProcessingQueue, setIsProcessingQueue] = useState(false);
-
-  useEffect(() => {
-    const processQueue = async () => {
-      if (isProcessingQueue || audioQueue.length === 0 || isPlaying) return;
-      setIsProcessingQueue(true);
-      const nextAudio = audioQueue[0];
-      setAudioQueue(prev => prev.slice(1));
-      await playBase64Audio(nextAudio);
-      setIsProcessingQueue(false);
-    };
-    processQueue();
-  }, [audioQueue, isProcessingQueue, isPlaying]);
-
   const handleReadAloud = async (text: string) => {
     try {
       const cleanText = text.replace(/[*#_~`]/g, '').trim();
       if (!cleanText) return;
-      const audioBase64 = await generateSpeech(cleanText, profile.voiceName, profile.voiceSettings, profile.storyTone);
-      setAudioQueue(prev => [...prev, audioBase64]);
+      
+      // Split text into chunks of ~600 characters to ensure pieces are well under 1 minute
+      // and to help mitigate audio artifacts on long playbacks.
+      const chunks = cleanText.match(/[\s\S]{1,600}(?:\.|\?|!|\n|\s|$)/g) || [cleanText];
+      
+      for (const chunk of chunks) {
+        if (!chunk.trim()) continue;
+        const audioBase64 = await generateSpeech(chunk.trim(), profile.voiceName, profile.voiceSettings, profile.storyTone);
+        if (audioBase64) {
+          setPlaylist(prev => {
+            const newPlaylist = [...prev, audioBase64];
+            if (currentIndex === -1) setCurrentIndex(0);
+            return newPlaylist;
+          });
+        }
+      }
     } catch (e) { console.error(e); }
   };
+
+  useEffect(() => {
+    if (currentIndex >= 0 && currentIndex < playlist.length && !isPlaying && !isManualPause) {
+      playBase64Audio(playlist[currentIndex]);
+    }
+  }, [currentIndex, playlist, isManualPause]);
 
   const playBase64Audio = async (base64: string) => {
     try {
@@ -295,7 +340,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
       
       if (!playbackAudioContextRef.current) {
-        playbackAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+        playbackAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
       }
       
       const audioContext = playbackAudioContextRef.current;
@@ -310,7 +355,32 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setAudioBuffer(buffer);
       
       startPlayback(buffer, 0);
-    } catch (e) { console.error(e); }
+    } catch (e) { 
+      console.error(e);
+      handleNextSegment();
+    }
+  };
+
+  const handleNextSegment = () => {
+    if (currentIndex < playlist.length - 1) {
+      setCurrentIndex(prev => prev + 1);
+    } else {
+      // End of playlist
+      stopAudio();
+      setAudioBuffer(null);
+      setPausedAt(0);
+      setPlaybackTime(0);
+      setCurrentIndex(-1);
+      setPlaylist([]);
+    }
+  };
+
+  const handlePrevSegment = () => {
+    if (currentIndex > 0) {
+      setCurrentIndex(prev => prev - 1);
+    } else {
+      rewindAudio();
+    }
   };
 
   const startPlayback = (buffer: AudioBuffer, offset: number) => {
@@ -319,12 +389,32 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     
     const source = audioContext.createBufferSource();
     source.buffer = buffer;
-    source.connect(audioContext.destination);
+    
+    // Create GainNode for ADSR envelope (fade-in/fade-out)
+    const gainNode = audioContext.createGain();
+    
+    // Connect source -> gainNode -> destination
+    source.connect(gainNode);
+    gainNode.connect(audioContext.destination);
+    
+    const startTimeLocal = audioContext.currentTime;
+    const fadeTime = 0.01; // 10ms
+    
+    // Apply rapid linear fade-in
+    gainNode.gain.setValueAtTime(0, startTimeLocal);
+    gainNode.gain.linearRampToValueAtTime(1, startTimeLocal + fadeTime);
+    
+    // Apply rapid linear fade-out at the end of the buffer
+    const duration = buffer.duration - offset;
+    const endTime = startTimeLocal + duration;
+    gainNode.gain.setValueAtTime(1, Math.max(startTimeLocal, endTime - fadeTime));
+    gainNode.gain.linearRampToValueAtTime(0, endTime);
     
     source.onended = () => {
-      if (audioContext.currentTime - startTime >= buffer.duration - offset) {
+      if (audioContext.currentTime - startTime >= buffer.duration - offset - 0.1) {
         setIsPlaying(false);
         setCurrentAudioSource(null);
+        handleNextSegment();
       }
     };
 
@@ -348,7 +438,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         setPausedAt(playbackAudioContextRef.current.currentTime - startTime);
       }
       stopAudio();
+      setIsManualPause(true);
     } else if (audioBuffer) {
+      setIsManualPause(false);
       startPlayback(audioBuffer, pausedAt);
     }
   };
@@ -392,222 +484,145 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const toggleLiveMode = async () => {
     if (isLiveMode) {
-      if (liveSession) { 
-        try { 
-          const session = await liveSession;
-          session.close(); 
-        } catch (e) {} 
-      }
-      stopAudioCapture();
-      setIsLiveMode(false);
-      setIsMicActive(false);
-      setLiveSession(null);
+      stopVoiceMode();
       return;
     }
 
-    // Check for API key
-    if (window.aistudio && !(await window.aistudio.hasSelectedApiKey())) {
-      await window.aistudio.openSelectKey();
-      // Assume key selection was successful and proceed
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert("Your browser does not support speech recognition. Try Chrome or Edge.");
+      return;
     }
 
-    try {
-      const ai = getGenAI();
-      const sessionPromise = ai.live.connect({
-        model: "gemini-2.5-flash-native-audio-preview-09-2025",
-        config: {
-          responseModalities: [Modality.AUDIO],
-          speechConfig: {
-            voiceConfig: { prebuiltVoiceConfig: { voiceName: profile.voiceName || "Zephyr" } },
-          },
-          systemInstruction: `You are playing the role of the following character in a live voice conversation. Stay in character at all times. Never break character.
-You MUST provide a complete narrative experience. This includes:
-1. NARRATED ACTIONS (THOUGHTS): Narrate your actions, feelings, and environment in asterisks (e.g., *she sighs softly, looking out the window*).
-2. SPOKEN DIALOGUE: Speak your character's words naturally.
+    setIsLiveMode(true);
+    setIsAutoRead(true);
+    
+    const recognition = new SpeechRecognition();
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
 
-IMPORTANT: Ensure that your narrated actions (the text in asterisks) are included in your response so they can be transcribed and shown to the player. The player should see both what you are doing and what you are saying.
+    recognition.onstart = () => setIsMicActive(true);
+    recognition.onend = () => {
+      if (isLiveMode) recognition.start(); // Keep listening if mode is active
+      else setIsMicActive(false);
+    };
 
-Provide lengthy, immersive, and interactive responses. Prioritize depth, detail, and emotional resonance.
+    recognition.onresult = (event: any) => {
+      let interimTranscript = '';
+      let finalTranscript = '';
 
-Character Details:
-Name: ${profile.name}
-Personality: ${profile.personality}
-Backstory: ${profile.backstory}
-VOICE: Pitch: ${profile.voiceSettings?.pitch}, Speed: ${profile.voiceSettings?.speed}, Accent: ${profile.voiceSettings?.accent}
-
-If the player sends a message in the format ((OOC: ...)), treat it as an out-of-character meta-instruction, question, or correction. Respond to it directly as the AI assistant, not as the character, and then continue the roleplay if appropriate. Do not incorporate the OOC content into the story itself.
-`,
-          outputAudioTranscription: {},
-          inputAudioTranscription: {},
-        },
-        callbacks: {
-          onopen: () => {
-            setIsLiveMode(true);
-            setLiveSession(sessionPromise);
-            startAudioCapture(sessionPromise);
-            
-            // Send conversation history to the live session so it knows what's going on
-            sessionPromise.then((session: any) => {
-              // Get the last 15 messages for deep context
-              const historyTurns = messages.slice(-15).map(m => ({
-                role: m.role,
-                parts: [{ text: m.text }]
-              }));
-              
-              if (historyTurns.length > 0) {
-                // Send history as previous turns
-                session.sendClientContent({ 
-                  turns: historyTurns,
-                  turnComplete: true 
-                });
-                
-                // Also send a small nudge to the model to acknowledge the context and continue
-                // but only if the last message was from the user, otherwise it might double-reply
-                const lastMsg = messages[messages.length - 1];
-                if (lastMsg && lastMsg.role === 'user') {
-                   // Model will likely respond naturally to the last user message once history is processed
-                }
-              }
-            });
-          },
-          onmessage: async (message: LiveServerMessage) => {
-            // 1. Handle audio output
-            const parts = message.serverContent?.modelTurn?.parts || [];
-            for (const part of parts) {
-              if (part.inlineData?.data) {
-                playAudioStream(part.inlineData.data);
-              }
-            }
-
-            // 2. Handle user transcription (what the user said via mic)
-            const userParts = (message.serverContent as any)?.userTurn?.parts || [];
-            let userText = "";
-            for (const part of userParts) {
-              if (part.text) userText += part.text;
-            }
-            if (userText) {
-              setMessages(prev => {
-                const lastMessage = prev[prev.length - 1];
-                // If the last message is a user message, append to it (streaming transcription)
-                if (lastMessage && lastMessage.role === 'user') {
-                  return [...prev.slice(0, -1), { ...lastMessage, text: lastMessage.text + userText }];
-                } else {
-                  return [...prev, { id: generateId(), role: 'user', text: userText }];
-                }
-              });
-            }
-
-            // 3. Handle model transcription (both spoken words and narrated actions)
-            let modelText = "";
-            for (const part of parts) {
-              if (part.text) {
-                modelText += part.text;
-              }
-            }
-
-            if (modelText) {
-              setMessages(prev => {
-                const lastMessage = prev[prev.length - 1];
-                // If the last message is from the model, append to it (streaming transcription)
-                if (lastMessage && lastMessage.role === 'model') {
-                  return [...prev.slice(0, -1), { ...lastMessage, text: lastMessage.text + modelText }];
-                } else {
-                  return [...prev, { id: generateId(), role: 'model', text: modelText }];
-                }
-              });
-            }
-
-            if (message.serverContent?.interrupted) {
-              nextPlaybackTimeRef.current = 0;
-              if (playbackAudioContextRef.current) {
-                playbackAudioContextRef.current.close();
-                playbackAudioContextRef.current = null;
-              }
-            }
-          },
-          onclose: () => { setIsLiveMode(false); setIsMicActive(false); stopAudioCapture(); },
-          onerror: (err) => { console.error(err); setIsLiveMode(false); setIsMicActive(false); stopAudioCapture(); }
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript;
+        } else {
+          interimTranscript += event.results[i][0].transcript;
         }
-      });
-    } catch (err) { console.error(err); }
-  };
-
-  const startAudioCapture = async (sessionPromise: any) => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      streamRef.current = stream;
-      audioContextRef.current = new AudioContext({ sampleRate: 16000 });
-      sourceRef.current = audioContextRef.current.createMediaStreamSource(stream);
-      processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
-      processorRef.current.onaudioprocess = (e) => {
-        const inputData = e.inputBuffer.getChannelData(0);
-        const pcm16 = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) pcm16[i] = Math.max(-1, Math.min(1, inputData[i])) * 0x7FFF;
-        const base64Data = btoa(String.fromCharCode(...new Uint8Array(pcm16.buffer)));
-        sessionPromise.then((session: any) => {
-          session.sendRealtimeInput({ media: { data: base64Data, mimeType: 'audio/pcm;rate=16000' } });
-        }).catch(console.error);
-      };
-      sourceRef.current.connect(processorRef.current);
-      processorRef.current.connect(audioContextRef.current.destination);
-      setIsMicActive(true);
-    } catch (err: any) { 
-      console.error("Microphone access error:", err);
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-        alert("Microphone access denied. Please ensure you have granted permission in your browser settings. If you are in an iframe, you may need to open the app in a new tab.");
-      } else {
-        alert("Could not access microphone. Please check your audio settings.");
       }
-      setIsLiveMode(false);
-      setIsMicActive(false);
-    }
+
+      if (finalTranscript) {
+        handleSendText(finalTranscript);
+      } else if (interimTranscript) {
+        setInput(interimTranscript);
+      }
+    };
+
+    recognition.onerror = (event: any) => {
+      console.error("Speech recognition error:", event.error);
+      if (event.error === 'not-allowed') {
+        alert("Microphone access denied.");
+        stopVoiceMode();
+      }
+    };
+
+    recognitionRef.current = recognition;
+    recognition.start();
   };
 
-  const stopAudioCapture = () => {
-    if (processorRef.current && sourceRef.current && audioContextRef.current) {
-      sourceRef.current.disconnect();
-      processorRef.current.disconnect();
-      processorRef.current = null;
-      sourceRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
+  const stopVoiceMode = () => {
+    setIsLiveMode(false);
     setIsMicActive(false);
+    if (recognitionRef.current) {
+      recognitionRef.current.onend = null;
+      recognitionRef.current.stop();
+      recognitionRef.current = null;
+    }
   };
 
   const toggleMic = () => {
-    if (isMicActive) stopAudioCapture();
-    else if (liveSession) startAudioCapture(liveSession);
-  };
-
-  const playAudioStream = (base64Audio: string) => {
-    try {
-      if (!playbackAudioContextRef.current) {
-        playbackAudioContextRef.current = new AudioContext({ sampleRate: 24000 });
-        nextPlaybackTimeRef.current = playbackAudioContextRef.current.currentTime;
-      }
-      const audioContext = playbackAudioContextRef.current;
-      const binaryString = atob(base64Audio);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-      const pcm16 = new Int16Array(bytes.buffer);
-      const float32 = new Float32Array(pcm16.length);
-      for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768.0;
-      const buffer = audioContext.createBuffer(1, float32.length, 24000);
-      buffer.getChannelData(0).set(float32);
-      const source = audioContext.createBufferSource();
-      source.buffer = buffer;
-      source.connect(audioContext.destination);
-      const startTime = Math.max(nextPlaybackTimeRef.current, audioContext.currentTime);
-      source.start(startTime);
-      nextPlaybackTimeRef.current = startTime + buffer.duration;
-    } catch (e) {
-      console.error("Audio stream playback error:", e);
+    if (isMicActive) {
+      if (recognitionRef.current) recognitionRef.current.stop();
+      setIsMicActive(false);
+    } else {
+      if (recognitionRef.current) recognitionRef.current.start();
+      setIsMicActive(true);
     }
   };
+
+  const handleAutoPopulateCodex = async (force = false) => {
+    if (isAutoPopulatingCodex || messages.length < 2) return;
+    if (!force && (!isAutoCodexEnabled || messages.length % 3 !== 0)) return;
+    
+    setIsAutoPopulatingCodex(true);
+    try {
+      const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+      const newEntries = await extractCodexEntries(history, profile, codexEntries);
+      
+      if (newEntries.length > 0) {
+        const entriesWithIds: CodexEntry[] = newEntries.map(e => ({
+          ...e,
+          id: generateId(),
+        } as CodexEntry));
+        
+        setCodexEntries(prev => [...prev, ...entriesWithIds]);
+      }
+    } catch (err) {
+      console.error("Auto-populate codex failed", err);
+    } finally {
+      setIsAutoPopulatingCodex(false);
+    }
+  };
+
+  const handleRefineCodexEntry = async () => {
+    if (isRefiningCodexEntry || !newCodexEntry.title || !newCodexEntry.content) return;
+    setIsRefiningCodexEntry(true);
+    try {
+      const refined = await refineCodexEntry(newCodexEntry, profile);
+      setNewCodexEntry(refined);
+    } catch (err) {
+      console.error("Refine codex entry failed", err);
+    } finally {
+      setIsRefiningCodexEntry(false);
+    }
+  };
+
+  const handleAddCodexEntry = () => {
+    if (!newCodexEntry.title || !newCodexEntry.content) return;
+    const entry: CodexEntry = {
+      id: generateId(),
+      title: newCodexEntry.title,
+      content: newCodexEntry.content,
+      category: newCodexEntry.category as any || 'Lore'
+    };
+    setCodexEntries(prev => [...prev, entry]);
+    setNewCodexEntry({ category: 'Lore' });
+    setIsAddingCodex(false);
+  };
+
+  const handleDeleteCodexEntry = (id: string) => {
+    setCodexEntries(prev => prev.filter(e => e.id !== id));
+  };
+
+  const handleUpdateVoice = (updates: Partial<CharacterProfile>) => {
+    onUpdateProfile({ ...profile, ...updates });
+  };
+
+  const voicePresets = [
+    { name: 'Cinematic', pitch: 'Normal', speed: 'Normal', tone: 'Dramatic' },
+    { name: 'Deep Narrator', pitch: 'Low', speed: 'Slow', tone: 'Epic' },
+    { name: 'Fast Action', pitch: 'Normal', speed: 'Fast', tone: 'Intense' },
+    { name: 'Whisper', pitch: 'High', speed: 'Slow', tone: 'Mysterious' },
+  ];
 
   return (
     <div className="flex flex-col h-full max-w-6xl mx-auto glass-panel rounded-[2rem] overflow-hidden shadow-2xl border border-white/5">
@@ -635,6 +650,13 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
           </div>
         </div>
         <div className="flex items-center gap-1 sm:gap-3">
+          <button
+            onClick={() => setShowCodex(!showCodex)}
+            className={`p-2 rounded-xl transition-all ${showCodex ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+            title="World Codex"
+          >
+            <Book className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
           <div className="relative">
             <button
               onClick={() => setShowModeDetails(!showModeDetails)}
@@ -706,17 +728,136 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
             <Edit3 className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           <button
+            onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+            className={`p-2 rounded-xl transition-all ${
+              showVoiceSettings ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-500 hover:text-blue-400 hover:bg-white/5'
+            }`}
+            title="Voice Settings"
+          >
+            <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+          <button
             onClick={toggleLiveMode}
             className={`px-3 py-2 sm:px-6 sm:py-2.5 rounded-xl text-[10px] sm:text-sm font-bold flex items-center gap-2 sm:gap-3 transition-all ${
               isLiveMode ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-lg shadow-emerald-500/10' : 'glass-input text-zinc-400 hover:text-white'
             }`}
           >
-            {isLiveMode ? <><Loader2 className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" /> LIVE</> : <><Mic className="w-3 h-3 sm:w-4 sm:h-4" /> VOICE</>}
+            {isLiveMode ? <><Loader2 className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" /> VOICE MODE</> : <><Mic className="w-3 h-3 sm:w-4 sm:h-4" /> VOICE</>}
           </button>
         </div>
       </div>
 
-      <div className="flex flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden relative">
+        {/* Codex Sidebar */}
+        <AnimatePresence>
+          {showCodex && (
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="absolute right-0 top-0 bottom-0 w-80 glass-panel border-l border-white/10 z-40 flex flex-col shadow-2xl"
+            >
+              <div className="p-6 border-b border-white/5 flex items-center justify-between">
+                <h3 className="text-lg font-serif font-bold text-white flex items-center gap-2">
+                  <Book className="w-5 h-5 text-emerald-400" />
+                  World Codex
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setIsAutoCodexEnabled(!isAutoCodexEnabled)}
+                    className={`p-2 rounded-lg transition-all ${isAutoCodexEnabled ? 'text-blue-400 bg-blue-500/10' : 'text-zinc-500 hover:text-blue-400'}`}
+                    title={isAutoCodexEnabled ? "Auto-scan enabled" : "Auto-scan disabled"}
+                  >
+                    <Repeat className={`w-4 h-4 ${isAutoCodexEnabled ? 'animate-spin-slow' : ''}`} />
+                  </button>
+                  <button 
+                    onClick={() => handleAutoPopulateCodex(true)} 
+                    disabled={isAutoPopulatingCodex || messages.length < 2}
+                    className={`p-2 rounded-lg transition-all ${isAutoPopulatingCodex ? 'text-emerald-400 animate-pulse' : 'text-zinc-500 hover:text-emerald-400 hover:bg-white/5'}`}
+                    title="Scan story for new entries"
+                  >
+                    {isAutoPopulatingCodex ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  </button>
+                  <button onClick={() => setShowCodex(false)} className="text-zinc-500 hover:text-white">
+                    <CloseIcon className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+                {isAddingCodex ? (
+                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 p-4 rounded-2xl bg-white/5 border border-white/10">
+                    <input
+                      type="text"
+                      placeholder="Entry Title"
+                      value={newCodexEntry.title || ''}
+                      onChange={e => setNewCodexEntry(prev => ({ ...prev, title: e.target.value }))}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    />
+                    <select
+                      value={newCodexEntry.category}
+                      onChange={e => setNewCodexEntry(prev => ({ ...prev, category: e.target.value as any }))}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                    >
+                      <option value="Lore">Lore</option>
+                      <option value="Mechanics">Mechanics</option>
+                      <option value="Location">Location</option>
+                      <option value="Item">Item</option>
+                    </select>
+                    <textarea
+                      placeholder="Description/Rules..."
+                      value={newCodexEntry.content || ''}
+                      onChange={e => setNewCodexEntry(prev => ({ ...prev, content: e.target.value }))}
+                      rows={4}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <button 
+                        onClick={handleRefineCodexEntry} 
+                        disabled={isRefiningCodexEntry || !newCodexEntry.title || !newCodexEntry.content}
+                        className="flex-1 py-2 rounded-xl bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 text-[10px] font-bold uppercase tracking-widest border border-blue-500/20 flex items-center justify-center gap-2"
+                      >
+                        {isRefiningCodexEntry ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                        Refine
+                      </button>
+                    </div>
+                    <div className="flex gap-2">
+                      <button onClick={() => setIsAddingCodex(false)} className="flex-1 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest">Cancel</button>
+                      <button onClick={handleAddCodexEntry} className="flex-1 py-2 rounded-xl bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 text-xs font-bold uppercase tracking-widest border border-emerald-500/20">Save</button>
+                    </div>
+                  </motion.div>
+                ) : (
+                  <button
+                    onClick={() => setIsAddingCodex(true)}
+                    className="w-full py-4 rounded-2xl border border-dashed border-white/10 text-zinc-500 hover:text-emerald-400 hover:border-emerald-500/30 transition-all flex flex-col items-center justify-center gap-2 group"
+                  >
+                    <Plus className="w-5 h-5 group-hover:scale-110 transition-transform" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Add New Entry</span>
+                  </button>
+                )}
+
+                <div className="space-y-4">
+                  {codexEntries.map(entry => (
+                    <div key={entry.id} className="group p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-[8px] font-bold uppercase tracking-tighter px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                          {entry.category}
+                        </span>
+                        <button onClick={() => handleDeleteCodexEntry(entry.id)} className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-400 transition-all">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                      <h4 className="text-sm font-bold text-white mb-1">{entry.title}</h4>
+                      <p className="text-xs text-zinc-500 leading-relaxed line-clamp-3 group-hover:line-clamp-none transition-all">{entry.content}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div className="flex-1 flex flex-col relative bg-black/10">
           {/* Avatar Display */}
           <div className="h-72 border-b border-white/5 relative bg-black/20 flex items-center justify-center overflow-hidden">
@@ -797,7 +938,7 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
                 className="absolute bottom-32 left-1/2 -translate-x-1/2 glass-panel px-4 sm:px-6 py-3 sm:py-4 rounded-[2rem] flex flex-col gap-3 shadow-2xl border border-emerald-500/20 z-20 w-[90%] max-w-md"
               >
                 <div className="flex items-center gap-4 sm:gap-6 justify-center">
-                  <button onClick={rewindAudio} className="text-zinc-400 hover:text-white transition-colors" title="Restart">
+                  <button onClick={handlePrevSegment} className="text-zinc-400 hover:text-white transition-colors" title="Previous Segment">
                     <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                   <button onClick={skipBackward} className="text-zinc-400 hover:text-white transition-colors" title="Rewind 5s">
@@ -812,14 +953,21 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
                   <button onClick={skipForward} className="text-zinc-400 hover:text-white transition-colors" title="Forward 5s">
                     <FastForward className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
-                  <button onClick={() => { stopAudio(); setAudioBuffer(null); setPausedAt(0); setPlaybackTime(0); }} className="text-zinc-400 hover:text-red-400 transition-colors" title="Close">
+                  <button onClick={handleNextSegment} className="text-zinc-400 hover:text-white transition-colors" title="Next Segment">
+                    <SkipForward className="w-4 h-4 sm:w-5 sm:h-5" />
+                  </button>
+                  <button onClick={() => { stopAudio(); setAudioBuffer(null); setPausedAt(0); setPlaybackTime(0); setCurrentIndex(-1); setPlaylist([]); }} className="text-zinc-400 hover:text-red-400 transition-colors" title="Close">
                     <CloseIcon className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
                 </div>
                 
                 <div className="space-y-1">
                   <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                    <span>{formatTime(playbackTime)}</span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-500/80">SEGMENT {currentIndex + 1}/{playlist.length}</span>
+                      <span className="w-1 h-1 bg-zinc-800 rounded-full" />
+                      <span>{formatTime(playbackTime)}</span>
+                    </div>
                     <span>{formatTime(audioBuffer.duration)}</span>
                   </div>
                   <input 
@@ -838,6 +986,96 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
 
           {/* Input Area */}
           <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
+            <AnimatePresence>
+              {showVoiceSettings && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden mb-4"
+                >
+                  <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Voice Customizer</h4>
+                      <div className="flex gap-2">
+                        {voicePresets.map(preset => (
+                          <button
+                            key={preset.name}
+                            onClick={() => handleUpdateVoice({
+                              voiceSettings: { ...profile.voiceSettings, pitch: preset.pitch, speed: preset.speed },
+                              storyTone: preset.tone
+                            })}
+                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[9px] font-bold text-zinc-400 transition-all"
+                          >
+                            {preset.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="flex items-center justify-between text-[9px] font-bold text-zinc-500 uppercase tracking-widest">
+                            <span>Pitch: {profile.voiceSettings?.pitch}</span>
+                            <Sliders className="w-3 h-3" />
+                          </label>
+                          <div className="flex gap-2">
+                            {['Low', 'Normal', 'High'].map(p => (
+                              <button
+                                key={p}
+                                onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, pitch: p } })}
+                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${profile.voiceSettings?.pitch === p ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'}`}
+                              >
+                                {p}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2">
+                          <label className="flex items-center justify-between text-[9px] font-bold text-zinc-500 uppercase tracking-widest">
+                            <span>Speed: {profile.voiceSettings?.speed}</span>
+                            <Sliders className="w-3 h-3" />
+                          </label>
+                          <div className="flex gap-2">
+                            {['Slow', 'Normal', 'Fast'].map(s => (
+                              <button
+                                key={s}
+                                onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, speed: s } })}
+                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${profile.voiceSettings?.speed === s ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'}`}
+                              >
+                                {s}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Narrative Tone</label>
+                          <input
+                            type="text"
+                            value={profile.storyTone}
+                            onChange={(e) => handleUpdateVoice({ storyTone: e.target.value })}
+                            placeholder="e.g. Dramatic, Epic, Whispered..."
+                            className="w-full glass-input rounded-xl px-4 py-2 text-xs text-white placeholder-zinc-700 focus:ring-1 focus:ring-blue-500/30"
+                          />
+                        </div>
+                        
+                        <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
+                          <p className="text-[9px] text-blue-400/60 leading-relaxed italic">
+                            Tip: The tone affects both the AI's writing style and the emotional delivery of the voice.
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <div className="flex items-center gap-2 sm:gap-3 mb-4 px-2">
               <button
                 onClick={() => {
@@ -902,18 +1140,61 @@ If the player sends a message in the format ((OOC: ...)), treat it as an out-of-
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
                   placeholder={isLiveMode ? "Type or speak..." : "Describe an action or speak..."}
-                  className="w-full glass-input rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base text-white placeholder-zinc-600 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none max-h-40"
+                  className={`w-full glass-input rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base text-white placeholder-zinc-600 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none ${isInputExpanded ? 'h-64 sm:h-80' : 'h-[50px] max-h-40'}`}
                   rows={1}
-                  style={{ minHeight: '50px' }}
                 />
+                <button 
+                  onClick={() => setIsInputExpanded(!isInputExpanded)}
+                  className="absolute right-3 top-3 p-1.5 text-zinc-600 hover:text-emerald-400 transition-colors"
+                  title={isInputExpanded ? "Collapse" : "Expand"}
+                >
+                  {isInputExpanded ? <SkipBack className="w-4 h-4 rotate-90" /> : <Repeat className="w-4 h-4 rotate-90" />}
+                </button>
               </div>
-              <button onClick={handleSendText} disabled={!input.trim() || isTyping} className="p-3 sm:p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-2xl shadow-xl transition-all">
+              <button onClick={() => handleSendText()} disabled={!input.trim() || isTyping} className="p-3 sm:p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-2xl shadow-xl transition-all">
                 <Send className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
             </div>
           </div>
         </div>
       </div>
-    </div>
-  );
+      {/* Confirmation Modal */}
+  <AnimatePresence>
+    {confirmModal.isOpen && (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+          className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+        />
+        <motion.div
+          initial={{ opacity: 0, scale: 0.9, y: 20 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.9, y: 20 }}
+          className="relative w-full max-w-md glass-panel p-8 rounded-[2rem] border border-white/10 shadow-2xl"
+        >
+          <h3 className="text-2xl font-serif text-white mb-2">{confirmModal.title}</h3>
+          <p className="text-zinc-400 mb-8 leading-relaxed">{confirmModal.message}</p>
+          <div className="flex gap-4">
+            <button
+              onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+              className="flex-1 px-6 py-3 rounded-xl font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-all uppercase tracking-widest text-xs"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={confirmModal.onConfirm}
+              className="flex-1 px-6 py-3 rounded-xl font-bold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all uppercase tracking-widest text-xs border border-red-500/20"
+            >
+              Confirm
+            </button>
+          </div>
+        </motion.div>
+      </div>
+    )}
+  </AnimatePresence>
+</div>
+);
 }

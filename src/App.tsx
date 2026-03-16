@@ -1,4 +1,72 @@
 import { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
+import { get, set, del } from 'idb-keyval';
+import { motion, AnimatePresence } from 'motion/react';
+import { CharacterCreator } from './components/CharacterCreator';
+import { ChatInterface } from './components/ChatInterface';
+import { CharacterEditor } from './components/CharacterEditor';
+import { ScenarioLibrary } from './components/ScenarioLibrary';
+import { CharacterProfile, Scenario, generateId } from './lib/gemini';
+import { Library } from 'lucide-react';
+
+// Declare global window properties for AI Studio
+declare global {
+  interface Window {
+    aistudio?: {
+      hasSelectedApiKey: () => Promise<boolean>;
+      openSelectKey: () => Promise<void>;
+    };
+  }
+}
+
+// Custom Confirmation Modal
+interface ConfirmationModalProps {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}
+
+function ConfirmationModal({ isOpen, title, message, onConfirm, onCancel }: ConfirmationModalProps) {
+  return (
+    <AnimatePresence>
+      {isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onCancel}
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            className="relative w-full max-w-md glass-panel p-8 rounded-[2rem] border border-white/10 shadow-2xl"
+          >
+            <h3 className="text-2xl font-serif text-white mb-2">{title}</h3>
+            <p className="text-zinc-400 mb-8 leading-relaxed">{message}</p>
+            <div className="flex gap-4">
+              <button
+                onClick={onCancel}
+                className="flex-1 px-6 py-3 rounded-xl font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-all uppercase tracking-widest text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={onConfirm}
+                className="flex-1 px-6 py-3 rounded-xl font-bold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all uppercase tracking-widest text-xs border border-red-500/20"
+              >
+                Confirm
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>
+  );
+}
 
 // Error Boundary Component
 class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
@@ -28,8 +96,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
             Reload Application
           </button>
           <button 
-            onClick={() => {
-              localStorage.removeItem('personaforge_current_scenario_id');
+            onClick={async () => {
+              await del('personaforge_current_scenario_id');
               window.location.href = '/';
             }}
             className="mt-4 text-zinc-500 hover:text-white text-sm underline"
@@ -43,41 +111,39 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     return this.props.children;
   }
 }
-import { CharacterCreator } from './components/CharacterCreator';
-import { ChatInterface } from './components/ChatInterface';
-import { CharacterEditor } from './components/CharacterEditor';
-import { ScenarioLibrary } from './components/ScenarioLibrary';
-import { CharacterProfile, Scenario, generateId } from './lib/gemini';
-import { Library } from 'lucide-react';
-
-// Declare global window properties for AI Studio
-declare global {
-  interface Window {
-    aistudio?: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    };
-  }
-}
 
 export default function App() {
   const [hasKey, setHasKey] = useState<boolean | null>(null);
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [isScenariosLoaded, setIsScenariosLoaded] = useState(false);
+  const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(null);
   
-  const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(() => {
-    return localStorage.getItem('personaforge_current_scenario_id');
+  // Modal State
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {},
   });
 
-  // Load scenarios from IndexedDB
+  // Load scenarios and current ID from IndexedDB
   useEffect(() => {
-    const loadScenarios = async () => {
+    const loadData = async () => {
       try {
-        const saved = await get('personaforge_scenarios');
-        if (saved) {
-          setScenarios(saved);
+        const [savedScenarios, savedId] = await Promise.all([
+          get('personaforge_scenarios'),
+          get('personaforge_current_scenario_id')
+        ]);
+
+        if (savedScenarios) {
+          setScenarios(savedScenarios);
         } else {
-          // Migration for existing localStorage data
+          // Migration
           const oldLocal = localStorage.getItem('personaforge_scenarios');
           if (oldLocal) {
             try {
@@ -85,18 +151,27 @@ export default function App() {
               setScenarios(parsed);
               await set('personaforge_scenarios', parsed);
               localStorage.removeItem('personaforge_scenarios');
-            } catch (e) {
-              console.error("Failed to migrate scenarios from localStorage", e);
-            }
+            } catch (e) {}
+          }
+        }
+
+        if (savedId) {
+          setCurrentScenarioId(savedId);
+        } else {
+          const oldId = localStorage.getItem('personaforge_current_scenario_id');
+          if (oldId) {
+            setCurrentScenarioId(oldId);
+            await set('personaforge_current_scenario_id', oldId);
+            localStorage.removeItem('personaforge_current_scenario_id');
           }
         }
       } catch (e) {
-        console.error("Failed to load scenarios from IndexedDB", e);
+        console.error("Failed to load data from IndexedDB", e);
       } finally {
         setIsScenariosLoaded(true);
       }
     };
-    loadScenarios();
+    loadData();
   }, []);
 
   // Safety check: wait for scenarios to load before validating ID
@@ -129,14 +204,16 @@ export default function App() {
     }
   }, [scenarios, isScenariosLoaded]);
 
+  // Save ID to IndexedDB
   useEffect(() => {
-    if (currentScenarioId) {
-      localStorage.setItem('personaforge_current_scenario_id', currentScenarioId);
-      // We no longer clear the draft here to avoid race conditions
-    } else {
-      localStorage.removeItem('personaforge_current_scenario_id');
+    if (isScenariosLoaded) {
+      if (currentScenarioId) {
+        set('personaforge_current_scenario_id', currentScenarioId);
+      } else {
+        del('personaforge_current_scenario_id');
+      }
     }
-  }, [currentScenarioId]);
+  }, [currentScenarioId, isScenariosLoaded]);
 
   useEffect(() => {
     setHasKey(true);
@@ -160,10 +237,17 @@ export default function App() {
   };
 
   const handleDeleteScenario = (id: string) => {
-    if (confirm('Are you sure you want to delete this scenario and all its messages?')) {
-      setScenarios(prev => prev.filter(s => s.id !== id));
-      localStorage.removeItem(`personaforge_messages_${id}`);
-    }
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Scenario',
+      message: 'Are you sure you want to delete this scenario and all its messages? This action cannot be undone.',
+      onConfirm: async () => {
+        setScenarios(prev => prev.filter(s => s.id !== id));
+        await del(`personaforge_messages_${id}`);
+        localStorage.removeItem(`personaforge_messages_${id}`);
+        setConfirmModal(prev => ({ ...prev, isOpen: false }));
+      }
+    });
   };
 
   const handleCharacterCreated = (profile: CharacterProfile, avatarBase64: string) => {
@@ -220,6 +304,15 @@ export default function App() {
     setIsEditing(false);
   };
 
+  const handleUpdateProfile = (profile: CharacterProfile) => {
+    if (!currentScenarioId) return;
+    setScenarios(prev => prev.map(s => 
+      s.id === currentScenarioId 
+        ? { ...s, profile, lastUpdated: Date.now() } 
+        : s
+    ));
+  };
+
   if (hasKey === null) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500">Loading...</div>;
   }
@@ -253,10 +346,16 @@ export default function App() {
           {currentScenario && (
             <button
               onClick={() => {
-                if (confirm('Are you sure you want to delete this character and all messages?')) {
-                  handleDeleteScenario(currentScenarioId!);
-                  setCurrentScenarioId(null);
-                }
+                setConfirmModal({
+                  isOpen: true,
+                  title: 'Reset System',
+                  message: 'Are you sure you want to delete this character and all messages? This will wipe the current narrative state.',
+                  onConfirm: () => {
+                    handleDeleteScenario(currentScenarioId!);
+                    setCurrentScenarioId(null);
+                    setConfirmModal(prev => ({ ...prev, isOpen: false }));
+                  }
+                });
               }}
               className="text-[10px] font-bold text-zinc-600 hover:text-red-400 transition-all uppercase tracking-widest"
             >
@@ -265,6 +364,14 @@ export default function App() {
           )}
         </div>
       </header>
+
+      <ConfirmationModal
+        isOpen={confirmModal.isOpen}
+        title={confirmModal.title}
+        message={confirmModal.message}
+        onConfirm={confirmModal.onConfirm}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+      />
 
       <main className="flex-1 flex flex-col max-w-7xl mx-auto w-full relative z-10">
         {!currentScenarioId && !isCreating && !showDraft ? (
@@ -304,6 +411,7 @@ export default function App() {
               scenarioId={currentScenario.id}
               onEditCharacter={() => setIsEditing(true)} 
               onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
+              onUpdateProfile={handleUpdateProfile}
             />
           </div>
         ) : null}
