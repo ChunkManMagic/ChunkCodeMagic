@@ -4,6 +4,8 @@ import { Sparkles, Loader2, User, Image as ImageIcon, Wand2, Globe, Heart, Sword
 import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode } from '../lib/gemini';
 import { CharacterEditor } from './CharacterEditor';
 
+import { STORAGE_KEYS } from '../constants';
+
 interface CharacterCreatorProps {
   onCharacterCreated: (profile: CharacterProfile, avatarBase64: string) => void;
   onCancel: () => void;
@@ -48,67 +50,11 @@ const DEFAULT_PROFILE: CharacterProfile = {
 };
 
 export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCreatorProps) {
-  const [step, setStep] = useState<CreatorStep>(() => {
-    const validSteps = ['mode', 'idle', 'profile', 'avatar', 'review'];
-    const saved = localStorage.getItem('personaforge_draft_step');
-    let initialStep = 'mode';
-    if (saved && validSteps.includes(saved)) {
-      initialStep = saved;
-    } else {
-      const rescue = localStorage.getItem('personaforge_rescue_backup');
-      if (rescue && rescue !== 'null' && rescue !== 'undefined') {
-        try {
-          const data = JSON.parse(rescue);
-          if (data.step && validSteps.includes(data.step)) {
-            initialStep = data.step;
-          }
-        } catch (e) {}
-      }
-    }
-    // If we were in the middle of generating or reviewing, reset to idle since generation state/avatar is lost
-    if (initialStep === 'profile' || initialStep === 'avatar' || initialStep === 'review') {
-      return 'idle';
-    }
-    return initialStep as CreatorStep;
-  });
-  const [appMode, setAppMode] = useState<AppMode>(() => {
-    const validModes = [AppMode.ROLEPLAY, AppMode.SCENARIO, AppMode.GAME];
-    const saved = localStorage.getItem('personaforge_draft_mode');
-    if (saved && validModes.includes(saved as AppMode)) return saved as AppMode;
-    const rescue = localStorage.getItem('personaforge_rescue_backup');
-    if (rescue && rescue !== 'null' && rescue !== 'undefined') {
-      try {
-        const data = JSON.parse(rescue);
-        if (data.appMode && validModes.includes(data.appMode as AppMode)) return data.appMode as AppMode;
-      } catch (e) {}
-    }
-    return AppMode.ROLEPLAY;
-  });
-  const [setupType, setSetupType] = useState<'quick' | 'detailed'>(() => {
-    const validTypes = ['quick', 'detailed'];
-    const saved = localStorage.getItem('personaforge_draft_setup_type');
-    if (saved && validTypes.includes(saved)) return saved as 'quick' | 'detailed';
-    const rescue = localStorage.getItem('personaforge_rescue_backup');
-    if (rescue && rescue !== 'null' && rescue !== 'undefined') {
-      try {
-        const data = JSON.parse(rescue);
-        if (data.setupType && validTypes.includes(data.setupType)) return data.setupType as 'quick' | 'detailed';
-      } catch (e) {}
-    }
-    return 'quick';
-  });
-  const [idea, setIdea] = useState(() => {
-    const saved = localStorage.getItem('personaforge_draft_idea');
-    if (saved && saved !== 'null' && saved !== 'undefined') return saved;
-    const rescue = localStorage.getItem('personaforge_rescue_backup');
-    if (rescue && rescue !== 'null' && rescue !== 'undefined') {
-      try {
-        const data = JSON.parse(rescue);
-        if (data.idea) return data.idea;
-      } catch (e) {}
-    }
-    return '';
-  });
+  const [step, setStep] = useState<CreatorStep>('mode');
+  const [appMode, setAppMode] = useState<AppMode>(AppMode.ROLEPLAY);
+  const [setupType, setSetupType] = useState<'quick' | 'detailed'>('quick');
+  const [idea, setIdea] = useState('');
+  const [detailedProfile, setDetailedProfile] = useState<CharacterProfile>(DEFAULT_PROFILE);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -116,39 +62,76 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
   const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
 
-  // Detailed form state
-  const [detailedProfile, setDetailedProfile] = useState<CharacterProfile>(() => {
-    try {
-      const draft = localStorage.getItem('personaforge_draft_profile');
-      const rescue = localStorage.getItem('personaforge_rescue_backup');
-      
-      let dataToUse = null;
-      if (draft) {
-        dataToUse = JSON.parse(draft);
-      } else if (rescue) {
-        const rescueData = JSON.parse(rescue);
-        if (rescueData.detailedProfile) {
-          dataToUse = rescueData.detailedProfile;
-        }
-      }
-
-      if (dataToUse) {
-        // Deep merge with defaults to prevent crashes
-        return {
-          ...DEFAULT_PROFILE,
-          ...dataToUse,
-          traits: { ...DEFAULT_PROFILE.traits, ...(dataToUse.traits || {}) },
-          voiceSettings: { ...DEFAULT_PROFILE.voiceSettings, ...(dataToUse.voiceSettings || {}) },
-          playerProfile: { ...DEFAULT_PROFILE.playerProfile, ...(dataToUse.playerProfile || {}) }
-        };
-      }
-    } catch (e) {
-      console.error("Failed to load draft", e);
-    }
-    return DEFAULT_PROFILE;
-  });
-
   const isFirstRender = useRef(true);
+
+  // Consolidated loading logic
+  useEffect(() => {
+    const loadDraft = () => {
+      try {
+        const validSteps: CreatorStep[] = ['mode', 'idle', 'profile', 'avatar', 'review'];
+        const validModes = [AppMode.ROLEPLAY, AppMode.SCENARIO, AppMode.GAME];
+        const validTypes: ('quick' | 'detailed')[] = ['quick', 'detailed'];
+
+        const savedStep = localStorage.getItem(STORAGE_KEYS.DRAFT_STEP);
+        const savedMode = localStorage.getItem(STORAGE_KEYS.DRAFT_MODE);
+        const savedType = localStorage.getItem(STORAGE_KEYS.DRAFT_SETUP_TYPE);
+        const savedIdea = localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA);
+        const savedData = localStorage.getItem(STORAGE_KEYS.DRAFT_DATA);
+        const rescue = localStorage.getItem(STORAGE_KEYS.RESCUE_BACKUP);
+
+        let initialStep: CreatorStep = 'mode';
+        let initialMode: AppMode = AppMode.ROLEPLAY;
+        let initialType: 'quick' | 'detailed' = 'quick';
+        let initialIdea = '';
+        let initialProfile = DEFAULT_PROFILE;
+
+        // Try rescue first if regular draft is missing or we want to be safe
+        if (rescue) {
+          try {
+            const data = JSON.parse(rescue);
+            if (data.step && validSteps.includes(data.step)) initialStep = data.step;
+            if (data.appMode && validModes.includes(data.appMode)) initialMode = data.appMode;
+            if (data.setupType && validTypes.includes(data.setupType)) initialType = data.setupType;
+            if (data.idea) initialIdea = data.idea;
+            if (data.detailedProfile) initialProfile = data.detailedProfile;
+          } catch (e) {}
+        }
+
+        // Regular draft overrides rescue if present
+        if (savedStep && validSteps.includes(savedStep as CreatorStep)) initialStep = savedStep as CreatorStep;
+        if (savedMode && validModes.includes(savedMode as AppMode)) initialMode = savedMode as AppMode;
+        if (savedType && validTypes.includes(savedType as 'quick' | 'detailed')) initialType = savedType as 'quick' | 'detailed';
+        if (savedIdea) initialIdea = savedIdea;
+        if (savedData) {
+          try {
+            const data = JSON.parse(savedData);
+            initialProfile = {
+              ...DEFAULT_PROFILE,
+              ...data,
+              traits: { ...DEFAULT_PROFILE.traits, ...(data.traits || {}) },
+              voiceSettings: { ...DEFAULT_PROFILE.voiceSettings, ...(data.voiceSettings || {}) },
+              playerProfile: { ...DEFAULT_PROFILE.playerProfile, ...(data.playerProfile || {}) }
+            };
+          } catch (e) {}
+        }
+
+        // Reset volatile steps
+        if (['profile', 'avatar', 'review'].includes(initialStep)) {
+          initialStep = 'idle';
+        }
+
+        setStep(initialStep);
+        setAppMode(initialMode);
+        setSetupType(initialType);
+        setIdea(initialIdea);
+        setDetailedProfile(initialProfile);
+      } catch (e) {
+        console.error("Failed to load draft", e);
+      }
+    };
+
+    loadDraft();
+  }, []);
 
   // Auto-save basic draft
   useEffect(() => {
@@ -160,14 +143,14 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
     }
 
     try {
-      localStorage.setItem('personaforge_draft_mode', appMode);
-      localStorage.setItem('personaforge_draft_idea', idea);
-      localStorage.setItem('personaforge_draft_step', step);
-      localStorage.setItem('personaforge_draft_setup_type', setupType);
-      localStorage.setItem('personaforge_draft_profile', JSON.stringify(detailedProfile));
+      localStorage.setItem(STORAGE_KEYS.DRAFT_MODE, appMode);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, idea);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, step);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_SETUP_TYPE, setupType);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_DATA, JSON.stringify(detailedProfile));
       
       // Create a secondary "Rescue" backup every time we save
-      localStorage.setItem('personaforge_rescue_backup', JSON.stringify({
+      localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
         appMode, idea, step, setupType, detailedProfile, timestamp: Date.now()
       }));
     } catch (e) {
@@ -177,7 +160,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
 
   const handleRescue = () => {
     try {
-      const rescue = localStorage.getItem('personaforge_rescue_backup');
+      const rescue = localStorage.getItem(STORAGE_KEYS.RESCUE_BACKUP);
       if (rescue && rescue !== 'null' && rescue !== 'undefined') {
         const data = JSON.parse(rescue);
         const validModes = [AppMode.ROLEPLAY, AppMode.SCENARIO, AppMode.GAME];

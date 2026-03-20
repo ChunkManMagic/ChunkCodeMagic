@@ -1,15 +1,40 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
-import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, SkipForward, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind, Book, Plus, Trash2, Settings2, Sliders } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, SkipForward, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
-import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry } from '../lib/gemini';
+import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry, summarizeHistory, getSettings } from '../lib/gemini';
 
-interface Message {
+export interface Message {
   id: string;
   role: 'user' | 'model';
   text: string;
+  isSummarized?: boolean;
+  provider?: string;
 }
+
+const parseMessageContent = (text: string, role: string) => {
+  if (role === 'model') {
+    const oocMatch = text.match(/<ooc>([\s\S]*?)<\/ooc>/i);
+    if (oocMatch) {
+      return {
+        mainText: text.replace(/<ooc>[\s\S]*?<\/ooc>/i, '').trim(),
+        oocText: oocMatch[1].trim()
+      };
+    }
+  } else if (role === 'user') {
+    const noteMatch = text.match(/\[Director's Note: ([\s\S]*?)\]/i);
+    if (noteMatch) {
+      return {
+        mainText: text.replace(/\[Director's Note: [\s\S]*?\]/i, '').trim(),
+        oocText: noteMatch[1].trim()
+      };
+    }
+  }
+  return { mainText: text, oocText: null };
+};
+
+import { STORAGE_KEYS } from '../constants';
 
 interface ChatInterfaceProps {
   profile: CharacterProfile;
@@ -18,10 +43,12 @@ interface ChatInterfaceProps {
   onEditCharacter: () => void;
   onCarryOver: () => void;
   onUpdateProfile: (profile: CharacterProfile) => void;
+  onBranchScenario: (slicedMessages: Message[], codexEntries: CodexEntry[], storySummary: string) => void;
 }
 
-export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile }: ChatInterfaceProps) {
+export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onBranchScenario }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [storySummary, setStorySummary] = useState<string>('');
   const [isLoaded, setIsLoaded] = useState(false);
   const [codexEntries, setCodexEntries] = useState<CodexEntry[]>([]);
   const [showCodex, setShowCodex] = useState(false);
@@ -36,24 +63,44 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     isOpen: boolean;
     title: string;
     message: string;
-    onConfirm: () => void;
+    type: 'delete' | 'reset' | 'rewind' | null;
+    targetId: string | null;
   }>({
     isOpen: false,
     title: '',
     message: '',
-    onConfirm: () => {},
+    type: null,
+    targetId: null,
   });
+
+  const handleConfirmAction = () => {
+    if (!confirmModal.type) return;
+
+    if (confirmModal.type === 'delete' && confirmModal.targetId) {
+      setCodexEntries(prev => prev.filter(e => e.id !== confirmModal.targetId));
+    } else if (confirmModal.type === 'reset') {
+      setMessages([]);
+      setCodexEntries([]);
+    } else if (confirmModal.type === 'rewind' && confirmModal.targetId) {
+      const index = messages.findIndex(m => m.id === confirmModal.targetId);
+      if (index !== -1) {
+        setMessages(messages.slice(0, index));
+      }
+    }
+
+    setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }));
+  };
 
   useEffect(() => {
     const loadData = async () => {
       try {
         // Load Messages
-        let saved = await get(`personaforge_messages_${scenarioId}`);
+        let saved = await get(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId));
         if (!saved) {
-          const localSaved = localStorage.getItem(`personaforge_messages_${scenarioId}`);
+          const localSaved = localStorage.getItem(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId));
           if (localSaved) {
             saved = JSON.parse(localSaved);
-            await set(`personaforge_messages_${scenarioId}`, saved);
+            await set(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId), saved);
           }
         }
         if (saved) {
@@ -67,9 +114,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         }
 
         // Load Codex
-        const savedCodex = await get(`personaforge_codex_${scenarioId}`);
+        const savedCodex = await get(STORAGE_KEYS.SCENARIO_CODEX(scenarioId));
         if (savedCodex) {
           setCodexEntries(savedCodex);
+        }
+
+        // Load Summary
+        const savedSummary = await get(STORAGE_KEYS.SCENARIO_SUMMARY(scenarioId));
+        if (savedSummary) {
+          setStorySummary(savedSummary);
         }
       } catch (e) {
         console.error("Failed to load data", e);
@@ -81,6 +134,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   }, [scenarioId]);
 
   const [input, setInput] = useState('');
+  const [directorNote, setDirectorNote] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -90,8 +144,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [isManualPause, setIsManualPause] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editInput, setEditInput] = useState('');
+  const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null);
+  const [rerollGuidance, setRerollGuidance] = useState('');
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const audioCache = useRef<Map<string, string>>(new Map());
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const recognitionRef = useRef<any>(null);
@@ -122,23 +180,51 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   }, [isPlaying, startTime, pausedAt, audioBuffer]);
 
   useEffect(() => {
+    setIsSpeaking(isTyping || isPlaying || playlist.length > 0);
+  }, [isTyping, isPlaying, playlist.length]);
+
+  useEffect(() => {
+    if (isLiveMode) {
+      if (isSpeaking) {
+        if (isMicActive) {
+          recognitionRef.current?.stop();
+          setIsMicActive(false);
+        }
+      } else {
+        // Only restart if not already active and not typing/playing
+        if (!isMicActive && !isTyping && !isPlaying && playlist.length === 0) {
+          try {
+            recognitionRef.current?.start();
+            setIsMicActive(true);
+          } catch (e) {
+            // Recognition might already be starting or active
+          }
+        }
+      }
+    }
+  }, [isLiveMode, isSpeaking, isMicActive, isTyping, isPlaying, playlist.length]);
+
+  useEffect(() => {
     if (isLoaded) {
-      set(`personaforge_messages_${scenarioId}`, messages).catch(e => {
+      set(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId), messages).catch(e => {
         console.error("Failed to save messages to IndexedDB", e);
       });
       // Also save to localStorage for quick sync, but limit size
       try {
         const recentMessages = messages.slice(-50); // Keep only last 50 for localStorage
-        localStorage.setItem(`personaforge_messages_${scenarioId}`, JSON.stringify(recentMessages));
+        localStorage.setItem(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId), JSON.stringify(recentMessages));
       } catch (e) {
         // Ignore quota errors
       }
+      set(STORAGE_KEYS.SCENARIO_SUMMARY(scenarioId), storySummary).catch(e => {
+        console.error("Failed to save summary to IndexedDB", e);
+      });
     }
-  }, [messages, scenarioId, isLoaded]);
+  }, [messages, storySummary, scenarioId, isLoaded]);
 
   useEffect(() => {
     if (isLoaded) {
-      set(`personaforge_codex_${scenarioId}`, codexEntries).catch(e => {
+      set(STORAGE_KEYS.SCENARIO_CODEX(scenarioId), codexEntries).catch(e => {
         console.error("Failed to save codex to IndexedDB", e);
       });
     }
@@ -177,15 +263,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       isOpen: true,
       title: 'Rewind Narrative',
       message: 'Are you sure you want to rewind the story to this point? All subsequent messages will be deleted.',
-      onConfirm: () => {
-        const index = messages.findIndex(m => m.id === messageId);
-        if (index !== -1) {
-          const newMessages = messages.slice(0, index);
-          setMessages(newMessages);
-        }
-        setConfirmModal(prev => ({ ...prev, isOpen: false }));
-      }
+      type: 'rewind',
+      targetId: messageId
     });
+  };
+
+  const handleBranch = (messageId: string) => {
+    const index = messages.findIndex(m => m.id === messageId);
+    if (index === -1) return;
+    const slicedMessages = messages.slice(0, index + 1);
+    onBranchScenario(slicedMessages, codexEntries, storySummary);
   };
 
   const startEditing = (message: Message) => {
@@ -214,29 +301,64 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setIsTyping(true);
       
       try {
-        const historyForAi = baseMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+        let currentSummary = storySummary;
+        let unsummarizedMessages = baseMessages.filter(m => !m.isSummarized);
+        
+        if (unsummarizedMessages.length > 10) {
+          const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 10);
+          const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+          
+          // Background summarization (we await it here to use it immediately, but could be detached)
+          currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
+          setStorySummary(currentSummary);
+          
+          // Mark as summarized
+          const summarizedIds = new Set(toSummarize.map(m => m.id));
+          setMessages(prev => prev.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m));
+          
+          unsummarizedMessages = unsummarizedMessages.slice(-10);
+        }
+
+        const historyForAi = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
         const aiMessageId = generateId();
-        const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
+        const aiMessage: Message = { id: aiMessageId, role: 'model', text: '', provider: getSettings().activeTextProvider };
         setMessages(prev => [...prev, aiMessage]);
         
         let fullReply = '';
         let sentenceBuffer = '';
-        const stream = generateTextReplyStream(historyForAi, profile, editInput, codexEntries);
+        let isInsideOoc = false;
+        let lastUpdateTime = Date.now();
+        
+        const stream = generateTextReplyStream(historyForAi, profile, editInput, codexEntries, currentSummary);
         
         for await (const chunk of stream) {
           fullReply += chunk;
-          sentenceBuffer += chunk;
           
-          setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+          // Handle OOC tags for audio reading
+          let processChunk = chunk;
+          if (fullReply.includes('<ooc>') && !fullReply.includes('</ooc>')) {
+            isInsideOoc = true;
+            processChunk = '';
+          } else if (fullReply.includes('</ooc>') && isInsideOoc) {
+            isInsideOoc = false;
+            processChunk = '';
+          } else if (isInsideOoc) {
+            processChunk = '';
+          }
+
+          sentenceBuffer += processChunk;
           
-          // Wait for at least 1 sentence or a paragraph break for faster playback
-          const sentences = sentenceBuffer.match(/[.!?]\s/g);
-          if (isAutoRead && ((sentences && sentences.length >= 1) || sentenceBuffer.includes('\n\n'))) {
-            handleReadAloud(sentenceBuffer);
-            sentenceBuffer = '';
+          // Throttle state updates to every 100ms
+          if (Date.now() - lastUpdateTime > 100) {
+            setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+            lastUpdateTime = Date.now();
           }
         }
         
+        // Final state update to ensure we have the complete text
+        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+        
+        // Single TTS request for the entire response to save quota
         if (isAutoRead && sentenceBuffer.trim()) {
           handleReadAloud(sentenceBuffer);
         }
@@ -257,38 +379,178 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   };
 
-  const handleSendText = async (overrideText?: string) => {
-    const textToSend = overrideText || input;
-    if (!textToSend.trim() || isTyping) return;
-    const userMsg: Message = { id: generateId(), role: 'user', text: textToSend };
-    setMessages(prev => [...prev, userMsg]);
-    if (!overrideText) setInput('');
+  const handleRegenerate = async (messageId: string, guidance: string) => {
+    if (isTyping || !profile) return;
     
+    const index = messages.findIndex(m => m.id === messageId);
+    if (index === -1) return;
+
+    const slicedHistory = messages.slice(0, index);
+    const lastUserIndex = slicedHistory.map(m => m.role).lastIndexOf('user');
+    if (lastUserIndex === -1) return;
+
+    const historyBeforeUser = slicedHistory.slice(0, lastUserIndex);
+    const lastUserMessage = slicedHistory[lastUserIndex];
+    
+    let userInput = lastUserMessage.text;
+    if (guidance.trim()) {
+      userInput += `\n\n[Director's Note for AI: ${guidance.trim()}]`;
+    }
+
+    setMessages(slicedHistory);
+    setRegeneratingMessageId(null);
+    setRerollGuidance('');
     setIsTyping(true);
+
     try {
-      const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+      let currentSummary = storySummary;
+      let unsummarizedMessages = historyBeforeUser.filter(m => !m.isSummarized);
+      
+      if (unsummarizedMessages.length > 10) {
+        const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 10);
+        const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+        
+        currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
+        setStorySummary(currentSummary);
+        
+        const summarizedIds = new Set(toSummarize.map(m => m.id));
+        setMessages(prev => prev.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m));
+        
+        unsummarizedMessages = unsummarizedMessages.slice(-10);
+      }
+
+      const historyForAi = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
       const aiMessageId = generateId();
-      const aiMessage: Message = { id: aiMessageId, role: 'model', text: '' };
+      const aiMessage: Message = { id: aiMessageId, role: 'model', text: '', provider: getSettings().activeTextProvider };
       setMessages(prev => [...prev, aiMessage]);
       
       let fullReply = '';
       let sentenceBuffer = '';
-      const stream = generateTextReplyStream(history, profile, userMsg.text, codexEntries);
+      let isInsideOoc = false;
+      let lastUpdateTime = Date.now();
+      
+      const stream = generateTextReplyStream(historyForAi, profile, userInput, codexEntries, currentSummary);
       
       for await (const chunk of stream) {
         fullReply += chunk;
-        sentenceBuffer += chunk;
         
-        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+        let processChunk = chunk;
+        if (fullReply.includes('<ooc>') && !fullReply.includes('</ooc>')) {
+          isInsideOoc = true;
+          processChunk = '';
+        } else if (fullReply.includes('</ooc>') && isInsideOoc) {
+          isInsideOoc = false;
+          processChunk = '';
+        } else if (isInsideOoc) {
+          processChunk = '';
+        }
+
+        sentenceBuffer += processChunk;
         
-        // Wait for at least 1 sentence or a paragraph break for faster playback
-        const sentences = sentenceBuffer.match(/[.!?]\s/g);
-        if (isAutoRead && ((sentences && sentences.length >= 1) || sentenceBuffer.includes('\n\n'))) {
-          handleReadAloud(sentenceBuffer);
-          sentenceBuffer = '';
+        if (Date.now() - lastUpdateTime > 100) {
+          setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+          lastUpdateTime = Date.now();
         }
       }
       
+      setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+      
+      // Single TTS request for the entire response to save quota
+      if (isAutoRead && sentenceBuffer.trim()) {
+        handleReadAloud(sentenceBuffer);
+      }
+
+      handleAutoPopulateCodex();
+    } catch (err) {
+      console.error(err);
+      setMessages(prev => [...prev, {
+        id: generateId(),
+        role: 'model',
+        text: '*The narrative stream falters. Please try again.*',
+        timestamp: Date.now(),
+        provider: getSettings().activeTextProvider
+      }]);
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  const handleSendText = async (overrideText?: string) => {
+    let textToSend = overrideText || input;
+    if (directorNote.trim()) {
+      if (textToSend.trim()) {
+        textToSend += `\n\n[Director's Note: ${directorNote.trim()}]`;
+      } else {
+        textToSend = `[Director's Note: ${directorNote.trim()}]`;
+      }
+    }
+    
+    if (!textToSend.trim() || isTyping) return;
+    const userMsg: Message = { id: generateId(), role: 'user', text: textToSend };
+    setMessages(prev => [...prev, userMsg]);
+    setInput('');
+    setDirectorNote('');
+    
+    setIsTyping(true);
+    try {
+      let currentSummary = storySummary;
+      let unsummarizedMessages = messages.filter(m => !m.isSummarized);
+      
+      if (unsummarizedMessages.length > 10) {
+        const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 10);
+        const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+        
+        // Background summarization
+        currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
+        setStorySummary(currentSummary);
+        
+        // Mark as summarized
+        const summarizedIds = new Set(toSummarize.map(m => m.id));
+        setMessages(prev => prev.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m));
+        
+        unsummarizedMessages = unsummarizedMessages.slice(-10);
+      }
+
+      const history = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+      const aiMessageId = generateId();
+      const aiMessage: Message = { id: aiMessageId, role: 'model', text: '', provider: getSettings().activeTextProvider };
+      setMessages(prev => [...prev, aiMessage]);
+      
+      let fullReply = '';
+      let sentenceBuffer = '';
+      let isInsideOoc = false;
+      let lastUpdateTime = Date.now();
+      
+      const stream = generateTextReplyStream(history, profile, userMsg.text, codexEntries, currentSummary);
+      
+      for await (const chunk of stream) {
+        fullReply += chunk;
+
+        // Handle OOC tags for audio reading
+        let processChunk = chunk;
+        if (fullReply.includes('<ooc>') && !fullReply.includes('</ooc>')) {
+          isInsideOoc = true;
+          processChunk = '';
+        } else if (fullReply.includes('</ooc>') && isInsideOoc) {
+          isInsideOoc = false;
+          processChunk = '';
+        } else if (isInsideOoc) {
+          processChunk = '';
+        }
+
+        sentenceBuffer += processChunk;
+        
+        // Throttle state updates to every 100ms
+        if (Date.now() - lastUpdateTime > 100) {
+          setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+          lastUpdateTime = Date.now();
+        }
+      }
+      
+      // Final state update to ensure we have the complete text
+      setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+      
+      // Single TTS request for the entire response to save quota
       if (isAutoRead && sentenceBuffer.trim()) {
         handleReadAloud(sentenceBuffer);
       }
@@ -304,31 +566,91 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const handleReadAloud = async (text: string) => {
     try {
-      const cleanText = text.replace(/[*#_~`]/g, '').trim();
+      const textWithoutOoc = text.replace(/<ooc>[\s\S]*?<\/ooc>/gi, '').trim();
+      const cleanText = textWithoutOoc.replace(/[*#_~`]/g, '').trim();
       if (!cleanText) return;
       
-      // Split text into chunks of ~600 characters to ensure pieces are well under 1 minute
-      // and to help mitigate audio artifacts on long playbacks.
-      const chunks = cleanText.match(/[\s\S]{1,600}(?:\.|\?|!|\n|\s|$)/g) || [cleanText];
+      const settings = getSettings();
+      
+      // Helper for browser TTS fallback
+      const speakWithBrowser = (txt: string) => {
+        const utterance = new SpeechSynthesisUtterance(txt);
+        if (profile.voiceSettings?.speed === 'Fast') utterance.rate = 1.2;
+        else if (profile.voiceSettings?.speed === 'Slow') utterance.rate = 0.8;
+        if (profile.voiceSettings?.pitch === 'High') utterance.pitch = 1.2;
+        else if (profile.voiceSettings?.pitch === 'Low') utterance.pitch = 0.8;
+        window.speechSynthesis.speak(utterance);
+      };
+
+      if (settings.voiceEngine === 'Fast Browser') {
+        speakWithBrowser(cleanText);
+        return;
+      }
+
+      // Split text into larger chunks to reduce API calls while staying within model limits
+      // 3000 characters is a safe limit for the TTS model for a single request
+      const chunks: string[] = [];
+      let remainingText = cleanText;
+      
+      while (remainingText.length > 0) {
+        if (remainingText.length <= 3000) {
+          chunks.push(remainingText);
+          break;
+        }
+        
+        // Find a good breaking point (sentence end, then newline, then space)
+        let breakIndex = remainingText.lastIndexOf('. ', 3000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('? ', 3000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('! ', 3000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('\n', 3000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf(' ', 3000);
+        
+        // If no good break point, force break at 3000
+        if (breakIndex === -1 || breakIndex < 500) breakIndex = 3000;
+        
+        chunks.push(remainingText.substring(0, breakIndex + 1).trim());
+        remainingText = remainingText.substring(breakIndex + 1).trim();
+      }
       
       for (const chunk of chunks) {
         if (!chunk.trim()) continue;
-        const audioBase64 = await generateSpeech(chunk.trim(), profile.voiceName, profile.voiceSettings, profile.storyTone);
-        if (audioBase64) {
-          setPlaylist(prev => {
-            const newPlaylist = [...prev, audioBase64];
-            if (currentIndex === -1) setCurrentIndex(0);
-            return newPlaylist;
-          });
+        
+        try {
+          // Check cache first
+          const cacheKey = `${chunk.trim()}_${profile.voiceName}_${profile.voiceSettings?.pitch}_${profile.voiceSettings?.speed}`;
+          let audioBase64 = audioCache.current.get(cacheKey);
+          
+          if (!audioBase64) {
+            audioBase64 = await generateSpeech(chunk.trim(), profile.voiceName, profile.voiceSettings, profile.storyTone);
+            if (audioBase64) {
+              audioCache.current.set(cacheKey, audioBase64);
+            }
+          }
+
+          if (audioBase64) {
+            setPlaylist(prev => {
+              const newPlaylist = [...prev, audioBase64];
+              if (currentIndex === -1) setCurrentIndex(0);
+              return newPlaylist;
+            });
+          }
+        } catch (err: any) {
+          console.error('Cloud TTS Error:', err);
+          // Fallback to browser TTS for any error from cloud engines
+          console.warn('Cloud TTS failed, falling back to browser speech.');
+          speakWithBrowser(chunk);
         }
       }
-    } catch (e) { console.error(e); }
+    } catch (err) {
+      console.error('Speech Error:', err);
+    }
   };
 
   useEffect(() => {
     if (currentIndex >= 0 && currentIndex < playlist.length && !isPlaying && !isManualPause) {
       playBase64Audio(playlist[currentIndex]);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentIndex, playlist, isManualPause]);
 
   const playBase64Audio = async (base64: string) => {
@@ -504,8 +826,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
     recognition.onstart = () => setIsMicActive(true);
     recognition.onend = () => {
-      if (isLiveMode) recognition.start(); // Keep listening if mode is active
-      else setIsMicActive(false);
+      setIsMicActive(false);
     };
 
     recognition.onresult = (event: any) => {
@@ -607,10 +928,6 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setCodexEntries(prev => [...prev, entry]);
     setNewCodexEntry({ category: 'Lore' });
     setIsAddingCodex(false);
-  };
-
-  const handleDeleteCodexEntry = (id: string) => {
-    setCodexEntries(prev => prev.filter(e => e.id !== id));
   };
 
   const handleUpdateVoice = (updates: Partial<CharacterProfile>) => {
@@ -742,7 +1059,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               isLiveMode ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-lg shadow-emerald-500/10' : 'glass-input text-zinc-400 hover:text-white'
             }`}
           >
-            {isLiveMode ? <><Loader2 className="w-3 h-3 sm:w-4 sm:h-4 animate-spin" /> VOICE MODE</> : <><Mic className="w-3 h-3 sm:w-4 sm:h-4" /> VOICE</>}
+            {isLiveMode ? (
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${isMicActive ? 'bg-red-500 animate-pulse' : 'bg-zinc-600'}`} />
+                <span className="text-emerald-400">LIVE MODE</span>
+              </div>
+            ) : (
+              <><Mic className="w-3 h-3 sm:w-4 sm:h-4" /> VOICE</>
+            )}
           </button>
         </div>
       </div>
@@ -844,7 +1168,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                         <span className="text-[8px] font-bold uppercase tracking-tighter px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
                           {entry.category}
                         </span>
-                        <button onClick={() => handleDeleteCodexEntry(entry.id)} className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-400 transition-all">
+                        <button 
+                          onClick={() => setConfirmModal({
+                            isOpen: true,
+                            title: 'Delete Entry',
+                            message: `Are you sure you want to delete "${entry.title}"?`,
+                            type: 'delete',
+                            targetId: entry.id
+                          })} 
+                          className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-400 transition-all"
+                        >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
@@ -895,7 +1228,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     <button onClick={() => handleRewind(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Rewind to here"><RotateCcw className="w-3.5 h-3.5" /></button>
                     <button onClick={() => startEditing(msg)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /></button>
                     {msg.role === 'model' && (
-                      <button onClick={() => handleReadAloud(msg.text)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-blue-400 transition-colors" title="Read aloud"><Volume2 className="w-3.5 h-3.5" /></button>
+                      <>
+                        <button onClick={() => {
+                          const { mainText } = parseMessageContent(msg.text, msg.role);
+                          handleReadAloud(mainText);
+                        }} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-blue-400 transition-colors" title="Read aloud"><Volume2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => setRegeneratingMessageId(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-emerald-400 transition-colors" title="Regenerate message"><RefreshCw className="w-3.5 h-3.5" /></button>
+                        <button onClick={() => handleBranch(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-purple-400 transition-colors" title="Branch scenario from here"><GitBranch className="w-3.5 h-3.5" /></button>
+                      </>
                     )}
                   </div>
                   <div className={`max-w-[85%] rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
@@ -908,9 +1248,62 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                         </div>
                       </div>
                     ) : (
-                      <div className={`prose prose-invert max-w-none text-[15px] leading-relaxed ${msg.role === 'model' ? 'narrative-text' : ''}`}>
-                        <ReactMarkdown>{msg.text}</ReactMarkdown>
-                      </div>
+                      (() => {
+                        const { mainText, oocText } = parseMessageContent(msg.text, msg.role);
+                        return (
+                          <div className="flex flex-col gap-3">
+                            {mainText && (
+                              <div className={`prose prose-invert max-w-none text-[15px] leading-relaxed ${msg.role === 'model' ? 'narrative-text' : ''}`}>
+                                <ReactMarkdown>{mainText}</ReactMarkdown>
+                              </div>
+                            )}
+                            {oocText && (
+                              <div className={`text-sm p-3 rounded-xl border ${msg.role === 'user' ? 'bg-emerald-700/30 border-emerald-500/30 text-emerald-100' : 'bg-zinc-800/50 border-zinc-700/50 text-zinc-300'}`}>
+                                <div className="text-xs font-bold uppercase tracking-wider mb-1 opacity-70">
+                                  {msg.role === 'user' ? "Director's Note" : "OOC Reply"}
+                                </div>
+                                <div className="prose prose-invert max-w-none text-sm">
+                                  <ReactMarkdown>{oocText}</ReactMarkdown>
+                                </div>
+                              </div>
+                            )}
+                            {msg.role === 'model' && msg.provider && (
+                              <div className="text-[9px] text-zinc-500 uppercase tracking-widest text-right mt-1 opacity-50">
+                                Generated by {msg.provider}
+                              </div>
+                            )}
+                            {regeneratingMessageId === msg.id && (
+                              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 pt-3 border-t border-white/10">
+                                <div className="flex flex-col gap-2">
+                                  <input
+                                    type="text"
+                                    value={rerollGuidance}
+                                    onChange={(e) => setRerollGuidance(e.target.value)}
+                                    placeholder='Optional: Guide the rewrite (e.g., "Make it more aggressive", "Focus on the environment").'
+                                    className="w-full bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder:text-zinc-600"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        handleRegenerate(msg.id, rerollGuidance);
+                                      } else if (e.key === 'Escape') {
+                                        setRegeneratingMessageId(null);
+                                        setRerollGuidance('');
+                                      }
+                                    }}
+                                  />
+                                  <div className="flex justify-end gap-2 mt-1">
+                                    <button onClick={() => { setRegeneratingMessageId(null); setRerollGuidance(''); }} className="px-3 py-1.5 text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest rounded-lg hover:bg-white/5 transition-colors">Cancel</button>
+                                    <button onClick={() => handleRegenerate(msg.id, rerollGuidance)} className="px-3 py-1.5 text-xs font-bold text-emerald-400 hover:text-emerald-300 uppercase tracking-widest bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors flex items-center gap-1.5">
+                                      <RefreshCw className="w-3 h-3" />
+                                      Confirm Reroll
+                                    </button>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
                 </motion.div>
@@ -1134,24 +1527,34 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                   {isMicActive ? <Mic className="w-5 h-5 sm:w-6 sm:h-6" /> : <MicOff className="w-5 h-5 sm:w-6 sm:h-6" />}
                 </button>
               )}
-              <div className="flex-1 relative group">
-                <textarea
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
-                  placeholder={isLiveMode ? "Type or speak..." : "Describe an action or speak..."}
-                  className={`w-full glass-input rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base text-white placeholder-zinc-600 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none ${isInputExpanded ? 'h-64 sm:h-80' : 'h-[50px] max-h-40'}`}
-                  rows={1}
+              <div className="flex-1 flex flex-col gap-2 relative group">
+                <div className="relative">
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
+                    placeholder={isLiveMode ? "Type or speak..." : "Describe an action or speak..."}
+                    className={`w-full glass-input rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base text-white placeholder-zinc-600 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none ${isInputExpanded ? 'h-64 sm:h-80' : 'h-[50px] max-h-40'}`}
+                    rows={1}
+                  />
+                  <button 
+                    onClick={() => setIsInputExpanded(!isInputExpanded)}
+                    className="absolute right-3 top-3 p-1.5 text-zinc-600 hover:text-emerald-400 transition-colors"
+                    title={isInputExpanded ? "Collapse" : "Expand"}
+                  >
+                    {isInputExpanded ? <SkipBack className="w-4 h-4 rotate-90" /> : <Repeat className="w-4 h-4 rotate-90" />}
+                  </button>
+                </div>
+                <input
+                  type="text"
+                  value={directorNote}
+                  onChange={(e) => setDirectorNote(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendText(); } }}
+                  placeholder="Director's Note / OOC (e.g. 'Act surprised', 'Change the subject')"
+                  className="w-full glass-input rounded-xl px-4 py-2 text-xs text-zinc-300 placeholder-zinc-600 focus:ring-1 focus:ring-emerald-500/30 transition-all"
                 />
-                <button 
-                  onClick={() => setIsInputExpanded(!isInputExpanded)}
-                  className="absolute right-3 top-3 p-1.5 text-zinc-600 hover:text-emerald-400 transition-colors"
-                  title={isInputExpanded ? "Collapse" : "Expand"}
-                >
-                  {isInputExpanded ? <SkipBack className="w-4 h-4 rotate-90" /> : <Repeat className="w-4 h-4 rotate-90" />}
-                </button>
               </div>
-              <button onClick={() => handleSendText()} disabled={!input.trim() || isTyping} className="p-3 sm:p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-2xl shadow-xl transition-all">
+              <button onClick={() => handleSendText()} disabled={(!input.trim() && !directorNote.trim()) || isTyping} className="p-3 sm:p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-2xl shadow-xl transition-all">
                 <Send className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
             </div>
@@ -1185,7 +1588,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               Cancel
             </button>
             <button
-              onClick={confirmModal.onConfirm}
+              onClick={handleConfirmAction}
               className="flex-1 px-6 py-3 rounded-xl font-bold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all uppercase tracking-widest text-xs border border-red-500/20"
             >
               Confirm

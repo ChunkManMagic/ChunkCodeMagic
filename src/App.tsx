@@ -1,12 +1,15 @@
-import { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
+import { useState, useEffect, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { get, set, del } from 'idb-keyval';
 import { motion, AnimatePresence } from 'motion/react';
 import { CharacterCreator } from './components/CharacterCreator';
-import { ChatInterface } from './components/ChatInterface';
+import { ChatInterface, Message } from './components/ChatInterface';
 import { CharacterEditor } from './components/CharacterEditor';
 import { ScenarioLibrary } from './components/ScenarioLibrary';
-import { CharacterProfile, Scenario, generateId } from './lib/gemini';
-import { Library } from 'lucide-react';
+import { CharacterProfile, Scenario, generateId, CodexEntry } from './lib/gemini';
+import { Library, AlertCircle, CheckCircle2, Settings } from 'lucide-react';
+import { STORAGE_KEYS } from './constants';
+import { SettingsModal } from './components/SettingsModal';
+import { getSettings } from './lib/gemini';
 
 // Declare global window properties for AI Studio
 declare global {
@@ -97,7 +100,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
           </button>
           <button 
             onClick={async () => {
-              await del('personaforge_current_scenario_id');
+              await del(STORAGE_KEYS.CURRENT_SCENARIO_ID);
               window.location.href = '/';
             }}
             className="mt-4 text-zinc-500 hover:text-white text-sm underline"
@@ -117,18 +120,21 @@ export default function App() {
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [isScenariosLoaded, setIsScenariosLoaded] = useState(false);
   const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
     message: string;
-    onConfirm: () => void;
+    type: 'delete' | 'reset' | null;
+    targetId: string | null;
   }>({
     isOpen: false,
     title: '',
     message: '',
-    onConfirm: () => {},
+    type: null,
+    targetId: null,
   });
 
   // Load scenarios and current ID from IndexedDB
@@ -136,35 +142,41 @@ export default function App() {
     const loadData = async () => {
       try {
         const [savedScenarios, savedId] = await Promise.all([
-          get('personaforge_scenarios'),
-          get('personaforge_current_scenario_id')
+          get(STORAGE_KEYS.SCENARIOS),
+          get(STORAGE_KEYS.CURRENT_SCENARIO_ID)
         ]);
 
-        if (savedScenarios) {
-          setScenarios(savedScenarios);
-        } else {
-          // Migration
-          const oldLocal = localStorage.getItem('personaforge_scenarios');
+        let initialScenarios: Scenario[] = savedScenarios || [];
+
+        if (!savedScenarios) {
+          // Migration from localStorage
+          const oldLocal = localStorage.getItem(STORAGE_KEYS.SCENARIOS);
           if (oldLocal) {
             try {
-              const parsed = JSON.parse(oldLocal);
-              setScenarios(parsed);
-              await set('personaforge_scenarios', parsed);
-              localStorage.removeItem('personaforge_scenarios');
-            } catch (e) {}
+              initialScenarios = JSON.parse(oldLocal);
+              await set(STORAGE_KEYS.SCENARIOS, initialScenarios);
+              localStorage.removeItem(STORAGE_KEYS.SCENARIOS);
+            } catch (e) {
+              console.error("Failed to migrate scenarios", e);
+            }
           }
         }
 
-        if (savedId) {
-          setCurrentScenarioId(savedId);
-        } else {
-          const oldId = localStorage.getItem('personaforge_current_scenario_id');
+        let initialId = savedId || null;
+        if (!savedId) {
+          const oldId = localStorage.getItem(STORAGE_KEYS.CURRENT_SCENARIO_ID);
           if (oldId) {
-            setCurrentScenarioId(oldId);
-            await set('personaforge_current_scenario_id', oldId);
-            localStorage.removeItem('personaforge_current_scenario_id');
+            initialId = oldId;
+            await set(STORAGE_KEYS.CURRENT_SCENARIO_ID, oldId);
+            localStorage.removeItem(STORAGE_KEYS.CURRENT_SCENARIO_ID);
           }
         }
+
+        // Validate ID before setting state
+        const isValidId = initialScenarios.some(s => s.id === initialId);
+        
+        setScenarios(initialScenarios);
+        setCurrentScenarioId(isValidId ? initialId : null);
       } catch (e) {
         console.error("Failed to load data from IndexedDB", e);
       } finally {
@@ -174,49 +186,67 @@ export default function App() {
     loadData();
   }, []);
 
-  // Safety check: wait for scenarios to load before validating ID
-  useEffect(() => {
-    if (isScenariosLoaded && currentScenarioId && !scenarios.find(s => s.id === currentScenarioId)) {
-      setCurrentScenarioId(null);
-    }
-  }, [scenarios, currentScenarioId, isScenariosLoaded]);
-
   const [isCreating, setIsCreating] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showDraft, setShowDraft] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [settings, setSettings] = useState(getSettings());
 
   useEffect(() => {
-    const draft = localStorage.getItem('personaforge_draft_profile');
-    const idea = localStorage.getItem('personaforge_draft_idea');
+    const draft = localStorage.getItem(STORAGE_KEYS.DRAFT_DATA);
+    const idea = localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA);
     if ((draft || idea) && !currentScenarioId) {
       setShowDraft(true);
     }
   }, [currentScenarioId]);
 
-  const currentScenario = scenarios.find(s => s.id === currentScenarioId);
+  // Optimize scenario lookup
+  const scenarioMap = useMemo(() => {
+    return new Map(scenarios.map(s => [s.id, s]));
+  }, [scenarios]);
 
-  // Save to IndexedDB
+  const currentScenario = currentScenarioId ? scenarioMap.get(currentScenarioId) : null;
+
+  // Debounced save to IndexedDB
   useEffect(() => {
-    if (isScenariosLoaded) {
-      set('personaforge_scenarios', scenarios).catch(e => {
-        console.error("Failed to save scenarios to IndexedDB", e);
-      });
-    }
+    if (!isScenariosLoaded) return;
+
+    setSaveStatus('saving');
+    const timeoutId = setTimeout(() => {
+      set(STORAGE_KEYS.SCENARIOS, scenarios)
+        .then(() => setSaveStatus('saved'))
+        .catch(e => {
+          console.error("Failed to save scenarios to IndexedDB", e);
+          setSaveStatus('error');
+        });
+    }, 1000);
+
+    return () => clearTimeout(timeoutId);
   }, [scenarios, isScenariosLoaded]);
 
   // Save ID to IndexedDB
   useEffect(() => {
     if (isScenariosLoaded) {
       if (currentScenarioId) {
-        set('personaforge_current_scenario_id', currentScenarioId);
+        set(STORAGE_KEYS.CURRENT_SCENARIO_ID, currentScenarioId).catch(() => setSaveStatus('error'));
       } else {
-        del('personaforge_current_scenario_id');
+        del(STORAGE_KEYS.CURRENT_SCENARIO_ID).catch(() => setSaveStatus('error'));
       }
     }
   }, [currentScenarioId, isScenariosLoaded]);
 
+  // Fix API key check
   useEffect(() => {
-    setHasKey(true);
+    const checkKey = async () => {
+      try {
+        const hasApiKey = await window.aistudio?.hasSelectedApiKey?.();
+        setHasKey(hasApiKey ?? true);
+      } catch (e) {
+        console.error("Failed to check API key", e);
+        setHasKey(false);
+      }
+    };
+    checkKey();
   }, []);
 
   const handleCreateNew = () => {
@@ -236,17 +266,30 @@ export default function App() {
     setIsCreating(false);
   };
 
+  const handleConfirmAction = async () => {
+    const { type, targetId } = confirmModal;
+    if (!type || !targetId) return;
+
+    if (type === 'delete' || type === 'reset') {
+      setScenarios(prev => prev.filter(s => s.id !== targetId));
+      await del(STORAGE_KEYS.SCENARIO_MESSAGES(targetId));
+      localStorage.removeItem(STORAGE_KEYS.SCENARIO_MESSAGES(targetId));
+      
+      if (type === 'reset') {
+        setCurrentScenarioId(null);
+      }
+    }
+
+    setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }));
+  };
+
   const handleDeleteScenario = (id: string) => {
     setConfirmModal({
       isOpen: true,
       title: 'Delete Scenario',
       message: 'Are you sure you want to delete this scenario and all its messages? This action cannot be undone.',
-      onConfirm: async () => {
-        setScenarios(prev => prev.filter(s => s.id !== id));
-        await del(`personaforge_messages_${id}`);
-        localStorage.removeItem(`personaforge_messages_${id}`);
-        setConfirmModal(prev => ({ ...prev, isOpen: false }));
-      }
+      type: 'delete',
+      targetId: id,
     });
   };
 
@@ -264,11 +307,11 @@ export default function App() {
       setShowDraft(false);
       
       // Clear draft ONLY on successful creation
-      localStorage.removeItem('personaforge_draft_profile');
-      localStorage.removeItem('personaforge_draft_mode');
-      localStorage.removeItem('personaforge_draft_idea');
-      localStorage.removeItem('personaforge_draft_step');
-      localStorage.removeItem('personaforge_draft_setup_type');
+      localStorage.removeItem(STORAGE_KEYS.DRAFT_DATA);
+      localStorage.removeItem(STORAGE_KEYS.DRAFT_MODE);
+      localStorage.removeItem(STORAGE_KEYS.DRAFT_IDEA);
+      localStorage.removeItem(STORAGE_KEYS.DRAFT_STEP);
+      localStorage.removeItem(STORAGE_KEYS.DRAFT_SETUP_TYPE);
       // We keep the rescue backup for one more session just in case
     } catch (e) {
       console.error("Failed to create character:", e);
@@ -313,6 +356,34 @@ export default function App() {
     ));
   };
 
+  const handleBranchScenario = async (slicedMessages: Message[], codexEntries: CodexEntry[], storySummary: string) => {
+    if (!currentScenario) return;
+    
+    const newScenarioId = generateId();
+    const newScenario: Scenario = {
+      id: newScenarioId,
+      profile: {
+        ...currentScenario.profile,
+        name: `${currentScenario.profile.name} (Alternate Timeline)`
+      },
+      avatarBase64: currentScenario.avatarBase64,
+      lastUpdated: Date.now()
+    };
+
+    // Save the branched data to IndexedDB
+    await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), slicedMessages);
+    await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), codexEntries);
+    await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), storySummary);
+
+    setScenarios(prev => [...prev, newScenario]);
+    setCurrentScenarioId(newScenarioId);
+  };
+
+  const handleSettingsClose = () => {
+    setShowSettings(false);
+    setSettings(getSettings());
+  };
+
   if (hasKey === null) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500">Loading...</div>;
   }
@@ -340,9 +411,32 @@ export default function App() {
         </div>
         <div className="text-center">
           <h1 className="text-4xl font-serif font-bold text-white tracking-tighter">PersonaForge</h1>
-          <p className="text-[10px] uppercase tracking-[0.4em] text-zinc-500 mt-2 font-bold">Immersive Narrative Engine</p>
+          <div className="flex items-center justify-center gap-2 mt-2">
+            <p className="text-[10px] uppercase tracking-[0.4em] text-zinc-500 font-bold">Immersive Narrative Engine</p>
+            <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
+              settings.activeTextProvider === 'Google' 
+                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' 
+                : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+            }`}>
+              {settings.activeTextProvider}
+            </div>
+            <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
+              settings.voiceEngine === 'Cinematic'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+            }`}>
+              {settings.voiceEngine}
+            </div>
+          </div>
         </div>
-        <div className="w-32 flex justify-end">
+        <div className="w-32 flex justify-end gap-4 items-center">
+          <button
+            onClick={() => setShowSettings(true)}
+            className="text-zinc-500 hover:text-white transition-colors"
+            title="Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
           {currentScenario && (
             <button
               onClick={() => {
@@ -350,11 +444,8 @@ export default function App() {
                   isOpen: true,
                   title: 'Reset System',
                   message: 'Are you sure you want to delete this character and all messages? This will wipe the current narrative state.',
-                  onConfirm: () => {
-                    handleDeleteScenario(currentScenarioId!);
-                    setCurrentScenarioId(null);
-                    setConfirmModal(prev => ({ ...prev, isOpen: false }));
-                  }
+                  type: 'reset',
+                  targetId: currentScenarioId,
                 });
               }}
               className="text-[10px] font-bold text-zinc-600 hover:text-red-400 transition-all uppercase tracking-widest"
@@ -369,9 +460,11 @@ export default function App() {
         isOpen={confirmModal.isOpen}
         title={confirmModal.title}
         message={confirmModal.message}
-        onConfirm={confirmModal.onConfirm}
-        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+        onConfirm={handleConfirmAction}
+        onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }))}
       />
+
+      {showSettings && <SettingsModal onClose={handleSettingsClose} />}
 
       <main className="flex-1 flex flex-col max-w-7xl mx-auto w-full relative z-10">
         {!currentScenarioId && !isCreating && !showDraft ? (
@@ -412,12 +505,36 @@ export default function App() {
               onEditCharacter={() => setIsEditing(true)} 
               onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
               onUpdateProfile={handleUpdateProfile}
+              onBranchScenario={handleBranchScenario}
             />
           </div>
         ) : null}
       </main>
       
-      <footer className="mt-8 text-center relative z-10">
+      <footer className="mt-8 text-center relative z-10 flex flex-col items-center gap-4">
+        <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10">
+          {saveStatus === 'saving' && (
+            <div className="flex items-center gap-2 text-[10px] text-zinc-500 uppercase tracking-widest">
+              <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+              Saving...
+            </div>
+          )}
+          {saveStatus === 'saved' && (
+            <div className="flex items-center gap-2 text-[10px] text-emerald-500 uppercase tracking-widest">
+              <CheckCircle2 className="w-3 h-3" />
+              Saved
+            </div>
+          )}
+          {saveStatus === 'error' && (
+            <div className="flex items-center gap-2 text-[10px] text-red-500 uppercase tracking-widest">
+              <AlertCircle className="w-3 h-3" />
+              Save Error
+            </div>
+          )}
+          {saveStatus === 'idle' && (
+            <div className="text-[10px] text-zinc-600 uppercase tracking-widest">Ready</div>
+          )}
+        </div>
         <p className="text-[9px] uppercase tracking-[0.3em] text-zinc-700 font-bold">PersonaForge v2.0 • Immersive Roleplay Assistant</p>
       </footer>
     </div>
