@@ -72,12 +72,16 @@ export interface AppSettings {
   elevenLabsApiKey?: string;
   openAiVoiceId?: string;
   customRefineInstructions?: string;
+  premiumCustomVoices?: boolean;
+  premiumContextAnimations?: boolean;
 }
 
 export const defaultSettings: AppSettings = {
   activeTextProvider: 'Google',
   activeModel: 'gemini-3-flash-preview',
-  voiceEngine: 'Cinematic'
+  voiceEngine: 'Cinematic',
+  premiumCustomVoices: true,
+  premiumContextAnimations: true
 };
 
 export function getSettings(): AppSettings {
@@ -104,7 +108,7 @@ export function generateId(): string {
   }
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 5, delay = 2000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {

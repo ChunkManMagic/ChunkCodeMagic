@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react';
-import { X, Save } from 'lucide-react';
+import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2 } from 'lucide-react';
 import { AppSettings, getSettings, defaultSettings } from '../lib/gemini';
+import { db } from '../firebase';
+import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -8,13 +10,41 @@ interface SettingsModalProps {
 
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const [showWaitlist, setShowWaitlist] = useState(false);
+  const [waitlistEmail, setWaitlistEmail] = useState('');
+  const [waitlistGenre, setWaitlistGenre] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setSettings(getSettings());
   }, []);
 
-  const handleChange = (field: keyof AppSettings, value: string) => {
+  const handleChange = (field: keyof AppSettings, value: any) => {
     setSettings(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleWaitlistSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!waitlistEmail || !waitlistGenre) return;
+    
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      await addDoc(collection(db, 'premium_waitlist'), {
+        email: waitlistEmail,
+        genre: waitlistGenre,
+        timestamp: serverTimestamp(),
+        userAgent: navigator.userAgent
+      });
+      setSubmitted(true);
+    } catch (err: any) {
+      console.error('Waitlist Error:', err);
+      setError('Failed to join waitlist. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleSave = () => {
@@ -126,6 +156,126 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500 min-h-[80px] resize-y"
               />
               <p className="text-xs text-gray-500">These instructions will be used when you click the "REFINE" button in chat.</p>
+            </div>
+
+            {/* Premium Features Section */}
+            <div className="pt-4 space-y-4">
+              <div className="flex items-center gap-2">
+                <Crown className="w-4 h-4 text-amber-400" />
+                <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Premium Features (Free during Beta)</h3>
+              </div>
+              
+              <div className="space-y-3">
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-white">Custom Character Voices & TTS</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gradient-to-r from-amber-400 to-orange-500 text-black uppercase">Premium</span>
+                      </div>
+                      <p className="text-xs text-gray-400">Use character-specific voice settings instead of default.</p>
+                    </div>
+                    <button 
+                      onClick={() => handleChange('premiumCustomVoices', !settings.premiumCustomVoices)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${settings.premiumCustomVoices ? 'bg-indigo-600' : 'bg-zinc-700'}`}
+                    >
+                      <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${settings.premiumCustomVoices ? 'left-6' : 'left-1'}`} />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-white">Context-Aware Avatar Animations</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gradient-to-r from-amber-400 to-orange-500 text-black uppercase">Premium</span>
+                      </div>
+                      <p className="text-xs text-gray-400">Avatars react dynamically to the emotional tone of the story.</p>
+                    </div>
+                    <button 
+                      onClick={() => handleChange('premiumContextAnimations', !settings.premiumContextAnimations)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${settings.premiumContextAnimations ? 'bg-indigo-600' : 'bg-zinc-700'}`}
+                    >
+                      <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${settings.premiumContextAnimations ? 'left-6' : 'left-1'}`} />
+                    </button>
+                  </div>
+                </div>
+
+                {!showWaitlist ? (
+                  <button 
+                    onClick={() => setShowWaitlist(true)}
+                    className="w-full flex items-center justify-between p-4 bg-gradient-to-r from-indigo-600/20 to-purple-600/20 border border-indigo-500/30 rounded-2xl hover:from-indigo-600/30 hover:to-purple-600/30 transition-all group"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-indigo-500/20 rounded-lg">
+                        <Sparkles className="w-4 h-4 text-indigo-400" />
+                      </div>
+                      <div className="text-left">
+                        <div className="text-sm font-medium text-white">Join Premium Waitlist</div>
+                        <div className="text-[10px] text-indigo-300">Get early access pricing when Premium launches</div>
+                      </div>
+                    </div>
+                    <ArrowRight className="w-4 h-4 text-indigo-400 group-hover:translate-x-1 transition-transform" />
+                  </button>
+                ) : (
+                  <div className="bg-indigo-900/20 border border-indigo-500/30 rounded-2xl p-4 space-y-4 animate-in fade-in slide-in-from-top-2">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-medium text-white">Premium Waitlist</h4>
+                      <button onClick={() => setShowWaitlist(false)} className="text-xs text-gray-400 hover:text-white">Cancel</button>
+                    </div>
+                    
+                    {submitted ? (
+                      <div className="flex flex-col items-center py-4 text-center space-y-2">
+                        <div className="p-2 bg-emerald-500/20 rounded-full">
+                          <CheckCircle className="w-6 h-6 text-emerald-400" />
+                        </div>
+                        <p className="text-sm text-white font-medium">You're on the list!</p>
+                        <p className="text-xs text-gray-400">We'll notify you when Premium launches.</p>
+                      </div>
+                    ) : (
+                      <form onSubmit={handleWaitlistSubmit} className="space-y-3">
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-gray-400 uppercase">Email Address</label>
+                          <input 
+                            type="email" 
+                            required
+                            value={waitlistEmail}
+                            onChange={e => setWaitlistEmail(e.target.value)}
+                            placeholder="your@email.com"
+                            className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[10px] text-gray-400 uppercase">Preferred Genre</label>
+                          <select 
+                            required
+                            value={waitlistGenre}
+                            onChange={e => setWaitlistGenre(e.target.value)}
+                            className="w-full bg-black/50 border border-white/10 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-indigo-500"
+                          >
+                            <option value="">Select a genre...</option>
+                            <option value="Fantasy">Fantasy</option>
+                            <option value="Sci-Fi">Sci-Fi</option>
+                            <option value="Cyberpunk">Cyberpunk</option>
+                            <option value="Horror">Horror</option>
+                            <option value="Romance">Romance</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                        {error && <p className="text-[10px] text-red-400">{error}</p>}
+                        <button 
+                          disabled={isSubmitting}
+                          type="submit"
+                          className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-600/50 text-white rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                          {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Join Waitlist'}
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
           </div>
         </div>

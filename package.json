@@ -12,6 +12,7 @@
   "dependencies": {
     "@elevenlabs/react": "^0.14.3",
     "@google/genai": "latest",
+    "firebase": "^12.11.0",
     "idb-keyval": "^6.2.1",
     "lucide-react": "^0.475.0",
     "motion": "^12.4.7",

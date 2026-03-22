@@ -1,7 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
-import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, SkipForward, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch, Phone } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch, Phone } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useConversation } from '@elevenlabs/react';
 import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry, summarizeHistory, getSettings } from '../lib/gemini';
@@ -140,8 +140,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [isRefining, setIsRefining] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [isAutoRead, setIsAutoRead] = useState(true);
-  const [playlist, setPlaylist] = useState<string[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [audioQueue, setAudioQueue] = useState<AudioBuffer[]>([]);
+  const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
+  const speechQueue = useRef<string[]>([]);
+  const nextStartTimeRef = useRef<number>(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentAudioSource, setCurrentAudioSource] = useState<AudioBufferSourceNode | null>(null);
   const [isManualPause, setIsManualPause] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editInput, setEditInput] = useState('');
@@ -166,7 +170,6 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setIsLiveMode(false);
     },
     onMessage: (message: any) => {
-      // If it's a final transcript from the user or a response from the agent
       if (message.source === 'user' && message.isFinal) {
         const userMsg: Message = {
           id: generateId(),
@@ -189,14 +192,6 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setIsMicActive(false);
     },
   });
-  
-  // Audio State
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentAudioSource, setCurrentAudioSource] = useState<AudioBufferSourceNode | null>(null);
-  const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
-  const [startTime, setStartTime] = useState(0);
-  const [pausedAt, setPausedAt] = useState(0);
-  const [playbackTime, setPlaybackTime] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const playbackAudioContextRef = useRef<AudioContext | null>(null);
@@ -205,14 +200,11 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     let interval: any;
     if (isPlaying && playbackAudioContextRef.current) {
       interval = setInterval(() => {
-        const current = playbackAudioContextRef.current!.currentTime - startTime;
-        setPlaybackTime(Math.min(current, audioBuffer?.duration || 0));
+        // playbackTime removed
       }, 100);
-    } else {
-      setPlaybackTime(pausedAt);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, startTime, pausedAt, audioBuffer]);
+  }, [isPlaying]);
 
   useEffect(() => {
     if (isLoaded) {
@@ -612,75 +604,81 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         return;
       }
 
-      // Split text into larger chunks to reduce API calls while staying within model limits
-      // 3000 characters is a safe limit for the TTS model for a single request
+      // Split text into small chunks (~200 chars) for sequential generation
       const chunks: string[] = [];
       let remainingText = cleanText;
       
       while (remainingText.length > 0) {
-        if (remainingText.length <= 3000) {
+        if (remainingText.length <= 200) {
           chunks.push(remainingText);
           break;
         }
         
-        // Find a good breaking point (sentence end, then newline, then space)
-        let breakIndex = remainingText.lastIndexOf('. ', 3000);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('? ', 3000);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('! ', 3000);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('\n', 3000);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf(' ', 3000);
+        let breakIndex = remainingText.lastIndexOf('. ', 200);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('? ', 200);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('! ', 200);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('\n', 200);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf(' ', 200);
         
-        // If no good break point, force break at 3000
-        if (breakIndex === -1 || breakIndex < 500) breakIndex = 3000;
+        if (breakIndex === -1 || breakIndex < 50) breakIndex = 200;
         
         chunks.push(remainingText.substring(0, breakIndex + 1).trim());
         remainingText = remainingText.substring(breakIndex + 1).trim();
       }
       
-      for (const chunk of chunks) {
-        if (!chunk.trim()) continue;
-        
-        try {
-          // Check cache first
-          const cacheKey = `${chunk.trim()}_${profile.voiceName}_${profile.voiceSettings?.pitch}_${profile.voiceSettings?.speed}`;
-          let audioBase64 = audioCache.current.get(cacheKey);
-          
-          if (!audioBase64) {
-            audioBase64 = await generateSpeech(chunk.trim(), profile.voiceName, profile.voiceSettings, profile.storyTone);
-            if (audioBase64) {
-              audioCache.current.set(cacheKey, audioBase64);
-            }
-          }
-
-          if (audioBase64) {
-            setPlaylist(prev => {
-              const newPlaylist = [...prev, audioBase64];
-              if (currentIndex === -1) setCurrentIndex(0);
-              return newPlaylist;
-            });
-          }
-        } catch (err: any) {
-          console.error('Cloud TTS Error:', err);
-          // Fallback to browser TTS for any error from cloud engines
-          console.warn('Cloud TTS failed, falling back to browser speech.');
-          speakWithBrowser(chunk);
-        }
+      speechQueue.current = [...speechQueue.current, ...chunks];
+      if (!isProcessingSpeech) {
+        processSpeechQueue();
       }
     } catch (err) {
       console.error('Speech Error:', err);
     }
   };
 
-  useEffect(() => {
-    if (currentIndex >= 0 && currentIndex < playlist.length && !isPlaying && !isManualPause) {
-      playBase64Audio(playlist[currentIndex]);
+  const processSpeechQueue = async () => {
+    if (speechQueue.current.length === 0) {
+      setIsProcessingSpeech(false);
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentIndex, playlist, isManualPause]);
 
-  const playBase64Audio = async (base64: string) => {
+    setIsProcessingSpeech(true);
+    const chunk = speechQueue.current.shift();
+    if (!chunk) {
+      processSpeechQueue();
+      return;
+    }
+
     try {
-      stopAudio();
+      const settings = getSettings();
+      const voiceName = settings.premiumCustomVoices ? profile.voiceName : 'Kore';
+      const voiceSettings = settings.premiumCustomVoices ? profile.voiceSettings : { pitch: 'Normal', speed: 'Normal', accent: 'None' };
+      
+      const cacheKey = `${chunk.trim()}_${voiceName}_${voiceSettings?.pitch}_${voiceSettings?.speed}`;
+      let audioBase64 = audioCache.current.get(cacheKey);
+      
+      if (!audioBase64) {
+        audioBase64 = await generateSpeech(chunk.trim(), voiceName, voiceSettings, profile.storyTone);
+        if (audioBase64) {
+          audioCache.current.set(cacheKey, audioBase64);
+        }
+      }
+
+      if (audioBase64) {
+        const buffer = await decodeAudioData(audioBase64);
+        if (buffer) {
+          setAudioQueue(prev => [...prev, buffer]);
+        }
+      }
+    } catch (err) {
+      console.error('Speech generation error:', err);
+    }
+
+    // Start processing next chunk immediately while current one might be playing
+    processSpeechQueue();
+  };
+
+  const decodeAudioData = async (base64: string): Promise<AudioBuffer | null> => {
+    try {
       const binaryString = window.atob(base64);
       const len = binaryString.length;
       const bytes = new Uint8Array(len);
@@ -699,77 +697,62 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       
       const buffer = audioContext.createBuffer(1, float32Data.length, 24000);
       buffer.getChannelData(0).set(float32Data);
-      setAudioBuffer(buffer);
-      
-      startPlayback(buffer, 0);
-    } catch (e) { 
-      console.error(e);
-      handleNextSegment();
+      return buffer;
+    } catch (e) {
+      console.error('Audio decoding error:', e);
+      return null;
     }
   };
 
-  const handleNextSegment = () => {
-    if (currentIndex < playlist.length - 1) {
-      setCurrentIndex(prev => prev + 1);
-    } else {
-      // End of playlist
-      stopAudio();
-      setAudioBuffer(null);
-      setPausedAt(0);
-      setPlaybackTime(0);
-      setCurrentIndex(-1);
-      setPlaylist([]);
+  const playNextInQueue = useCallback(() => {
+    if (audioQueue.length === 0 || isManualPause) {
+      setIsPlaying(false);
+      return;
     }
-  };
 
-  const handlePrevSegment = () => {
-    if (currentIndex > 0) {
-      setCurrentIndex(prev => prev - 1);
-    } else {
-      rewindAudio();
+    const nextBuffer = audioQueue[0];
+    setAudioQueue(prev => prev.slice(1));
+    
+    if (!playbackAudioContextRef.current) {
+      playbackAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
     }
-  };
-
-  const startPlayback = (buffer: AudioBuffer, offset: number) => {
-    if (!playbackAudioContextRef.current) return;
     const audioContext = playbackAudioContextRef.current;
-    
+
     const source = audioContext.createBufferSource();
-    source.buffer = buffer;
+    source.buffer = nextBuffer;
     
-    // Create GainNode for ADSR envelope (fade-in/fade-out)
     const gainNode = audioContext.createGain();
-    
-    // Connect source -> gainNode -> destination
     source.connect(gainNode);
     gainNode.connect(audioContext.destination);
-    
-    const startTimeLocal = audioContext.currentTime;
-    const fadeTime = 0.01; // 10ms
-    
-    // Apply rapid linear fade-in
-    gainNode.gain.setValueAtTime(0, startTimeLocal);
-    gainNode.gain.linearRampToValueAtTime(1, startTimeLocal + fadeTime);
-    
-    // Apply rapid linear fade-out at the end of the buffer
-    const duration = buffer.duration - offset;
-    const endTime = startTimeLocal + duration;
-    gainNode.gain.setValueAtTime(1, Math.max(startTimeLocal, endTime - fadeTime));
-    gainNode.gain.linearRampToValueAtTime(0, endTime);
-    
-    source.onended = () => {
-      if (audioContext.currentTime - startTime >= buffer.duration - offset - 0.1) {
-        setIsPlaying(false);
-        setCurrentAudioSource(null);
-        handleNextSegment();
-      }
-    };
 
-    source.start(0, offset);
+    // Schedule start
+    const now = audioContext.currentTime;
+    const startTime = Math.max(now, nextStartTimeRef.current);
+    
+    // Fade in/out to prevent clicks
+    const fadeTime = 0.005;
+    gainNode.gain.setValueAtTime(0, startTime);
+    gainNode.gain.linearRampToValueAtTime(1, startTime + fadeTime);
+    gainNode.gain.setValueAtTime(1, startTime + nextBuffer.duration - fadeTime);
+    gainNode.gain.linearRampToValueAtTime(0, startTime + nextBuffer.duration);
+
+    source.start(startTime);
+    nextStartTimeRef.current = startTime + nextBuffer.duration;
+    
     setCurrentAudioSource(source);
-    setStartTime(audioContext.currentTime - offset);
     setIsPlaying(true);
-  };
+
+    source.onended = () => {
+      setIsPlaying(false);
+      // The useEffect will trigger playNextInQueue if there's more
+    };
+  }, [audioQueue, isManualPause]);
+
+  useEffect(() => {
+    if (audioQueue.length > 0 && !isPlaying && !isManualPause) {
+      playNextInQueue();
+    }
+  }, [audioQueue, isPlaying, isManualPause, playNextInQueue]);
 
   const stopAudio = () => {
     if (currentAudioSource) {
@@ -777,56 +760,18 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setCurrentAudioSource(null);
     }
     setIsPlaying(false);
+    nextStartTimeRef.current = 0;
+    setAudioQueue([]);
+    speechQueue.current = [];
   };
 
   const togglePlayPause = () => {
     if (isPlaying) {
-      if (playbackAudioContextRef.current) {
-        setPausedAt(playbackAudioContextRef.current.currentTime - startTime);
-      }
       stopAudio();
       setIsManualPause(true);
-    } else if (audioBuffer) {
+    } else {
       setIsManualPause(false);
-      startPlayback(audioBuffer, pausedAt);
     }
-  };
-
-  const rewindAudio = () => {
-    if (audioBuffer) {
-      stopAudio();
-      setPausedAt(0);
-      startPlayback(audioBuffer, 0);
-    }
-  };
-
-  const seekAudio = (time: number) => {
-    if (audioBuffer) {
-      const newTime = Math.max(0, Math.min(time, audioBuffer.duration));
-      stopAudio();
-      setPausedAt(newTime);
-      startPlayback(audioBuffer, newTime);
-    }
-  };
-
-  const skipForward = () => {
-    if (audioBuffer) {
-      const newTime = Math.min((isPlaying ? playbackAudioContextRef.current!.currentTime - startTime : pausedAt) + 5, audioBuffer.duration);
-      seekAudio(newTime);
-    }
-  };
-
-  const skipBackward = () => {
-    if (audioBuffer) {
-      const newTime = Math.max((isPlaying ? playbackAudioContextRef.current!.currentTime - startTime : pausedAt) - 5, 0);
-      seekAudio(newTime);
-    }
-  };
-
-  const formatTime = (time: number) => {
-    const mins = Math.floor(time / 60);
-    const secs = Math.floor(time % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
 
   const toggleLiveMode = async () => {
@@ -1311,7 +1256,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
           {/* Audio Controls Overlay */}
           <AnimatePresence>
-            {audioBuffer && (
+            {isPlaying && (
               <motion.div 
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -1319,47 +1264,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 className="absolute bottom-32 left-1/2 -translate-x-1/2 glass-panel px-4 sm:px-6 py-3 sm:py-4 rounded-[2rem] flex flex-col gap-3 shadow-2xl border border-emerald-500/20 z-20 w-[90%] max-w-md"
               >
                 <div className="flex items-center gap-4 sm:gap-6 justify-center">
-                  <button onClick={handlePrevSegment} className="text-zinc-400 hover:text-white transition-colors" title="Previous Segment">
-                    <SkipBack className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
-                  <button onClick={skipBackward} className="text-zinc-400 hover:text-white transition-colors" title="Rewind 5s">
-                    <Rewind className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
+                  <div className="flex items-center gap-2 text-emerald-500 animate-pulse">
+                    <Volume2 className="w-4 h-4" />
+                    <span className="text-[10px] font-bold uppercase tracking-widest">Narrating...</span>
+                  </div>
                   <button 
                     onClick={togglePlayPause} 
                     className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-600 hover:bg-emerald-500 rounded-full flex items-center justify-center text-white transition-all shadow-lg shadow-emerald-900/20"
                   >
-                    {isPlaying ? <Pause className="w-5 h-5 sm:w-6 sm:h-6" /> : <Play className="w-5 h-5 sm:w-6 sm:h-6 ml-0.5" />}
+                    <Pause className="w-5 h-5 sm:w-6 sm:h-6" />
                   </button>
-                  <button onClick={skipForward} className="text-zinc-400 hover:text-white transition-colors" title="Forward 5s">
-                    <FastForward className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
-                  <button onClick={handleNextSegment} className="text-zinc-400 hover:text-white transition-colors" title="Next Segment">
-                    <SkipForward className="w-4 h-4 sm:w-5 sm:h-5" />
-                  </button>
-                  <button onClick={() => { stopAudio(); setAudioBuffer(null); setPausedAt(0); setPlaybackTime(0); setCurrentIndex(-1); setPlaylist([]); }} className="text-zinc-400 hover:text-red-400 transition-colors" title="Close">
+                  <button onClick={stopAudio} className="text-zinc-400 hover:text-red-400 transition-colors" title="Stop">
                     <CloseIcon className="w-4 h-4 sm:w-5 sm:h-5" />
                   </button>
-                </div>
-                
-                <div className="space-y-1">
-                  <div className="flex justify-between text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
-                    <div className="flex items-center gap-2">
-                      <span className="text-emerald-500/80">SEGMENT {currentIndex + 1}/{playlist.length}</span>
-                      <span className="w-1 h-1 bg-zinc-800 rounded-full" />
-                      <span>{formatTime(playbackTime)}</span>
-                    </div>
-                    <span>{formatTime(audioBuffer.duration)}</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="0" 
-                    max={audioBuffer.duration} 
-                    step="0.1"
-                    value={playbackTime}
-                    onChange={(e) => seekAudio(parseFloat(e.target.value))}
-                    className="w-full h-1.5 rounded-full appearance-none bg-zinc-800 cursor-pointer accent-emerald-500"
-                  />
                 </div>
               </motion.div>
             )}
