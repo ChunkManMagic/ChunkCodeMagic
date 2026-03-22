@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
-import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, SkipForward, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Play, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, SkipForward, Repeat, Globe, Heart, Swords, Info, FastForward, Rewind, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch, Phone } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { useConversation } from '@elevenlabs/react';
 import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry, summarizeHistory, getSettings } from '../lib/gemini';
 
 export interface Message {
@@ -148,12 +149,46 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [rerollGuidance, setRerollGuidance] = useState('');
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
-  const [isSpeaking, setIsSpeaking] = useState(false);
   const audioCache = useRef<Map<string, string>>(new Map());
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
-  const recognitionRef = useRef<any>(null);
+  const [showRefineSettings, setShowRefineSettings] = useState(false);
   const [showModeDetails, setShowModeDetails] = useState(false);
+
+  // ElevenLabs Conversational AI
+  const conversation = useConversation({
+    onConnect: () => {
+      setIsMicActive(true);
+      setIsLiveMode(true);
+    },
+    onDisconnect: () => {
+      setIsMicActive(false);
+      setIsLiveMode(false);
+    },
+    onMessage: (message: any) => {
+      // If it's a final transcript from the user or a response from the agent
+      if (message.source === 'user' && message.isFinal) {
+        const userMsg: Message = {
+          id: generateId(),
+          role: 'user',
+          text: message.message,
+        };
+        setMessages(prev => [...prev, userMsg]);
+      } else if (message.source === 'ai') {
+        const aiMsg: Message = {
+          id: generateId(),
+          role: 'model',
+          text: message.message,
+        };
+        setMessages(prev => [...prev, aiMsg]);
+      }
+    },
+    onError: (error: any) => {
+      console.error('ElevenLabs Error:', error);
+      setIsLiveMode(false);
+      setIsMicActive(false);
+    },
+  });
   
   // Audio State
   const [isPlaying, setIsPlaying] = useState(false);
@@ -178,31 +213,6 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
     return () => clearInterval(interval);
   }, [isPlaying, startTime, pausedAt, audioBuffer]);
-
-  useEffect(() => {
-    setIsSpeaking(isTyping || isPlaying || playlist.length > 0);
-  }, [isTyping, isPlaying, playlist.length]);
-
-  useEffect(() => {
-    if (isLiveMode) {
-      if (isSpeaking) {
-        if (isMicActive) {
-          recognitionRef.current?.stop();
-          setIsMicActive(false);
-        }
-      } else {
-        // Only restart if not already active and not typing/playing
-        if (!isMicActive && !isTyping && !isPlaying && playlist.length === 0) {
-          try {
-            recognitionRef.current?.start();
-            setIsMicActive(true);
-          } catch (e) {
-            // Recognition might already be starting or active
-          }
-        }
-      }
-    }
-  }, [isLiveMode, isSpeaking, isMicActive, isTyping, isPlaying, playlist.length]);
 
   useEffect(() => {
     if (isLoaded) {
@@ -230,15 +240,24 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   }, [codexEntries, scenarioId, isLoaded]);
 
+  const [error, setError] = useState<string | null>(null);
+
   const handleRefine = async () => {
     if (!input.trim() || isRefining) return;
     setIsRefining(true);
+    setError(null);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-      const refined = await refineInput(input, profile, history);
-      setInput(refined);
-    } catch (err) {
-      console.error(err);
+      const settings = getSettings();
+      const refined = await refineInput(input, profile, history, settings.customRefineInstructions);
+      if (refined) {
+        setInput(refined);
+      } else {
+        setError("No refinement received from AI. Check your API key.");
+      }
+    } catch (err: any) {
+      console.error("Refinement Error:", err);
+      setError(err.message || "Failed to refine input. Check your connection or API key.");
     } finally {
       setIsRefining(false);
     }
@@ -247,12 +266,18 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const handleSuggest = async () => {
     if (isSuggesting) return;
     setIsSuggesting(true);
+    setError(null);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
       const suggestion = await suggestNextAction(history, profile);
-      setInput(suggestion);
-    } catch (err) {
-      console.error(err);
+      if (suggestion) {
+        setInput(suggestion);
+      } else {
+        setError("No suggestion received from AI. Check your API key.");
+      }
+    } catch (err: any) {
+      console.error("Suggestion Error:", err);
+      setError(err.message || "Failed to get suggestion. Check your connection or API key.");
     } finally {
       setIsSuggesting(false);
     }
@@ -805,77 +830,40 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   };
 
   const toggleLiveMode = async () => {
-    if (isLiveMode) {
-      stopVoiceMode();
+    if (isLiveMode || conversation.status === 'connected') {
+      await conversation.endSession();
+      setIsLiveMode(false);
       return;
     }
 
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      alert("Your browser does not support speech recognition. Try Chrome or Edge.");
+    const settings = getSettings();
+    const agentId = settings.elevenLabsAgentId || process.env.VITE_ELEVENLABS_AGENT_ID;
+    const apiKey = settings.elevenLabsApiKey || process.env.VITE_ELEVENLABS_API_KEY;
+
+    if (!agentId) {
+      alert("Please configure an ElevenLabs Agent ID in Settings to use Live Mode.");
       return;
     }
 
-    setIsLiveMode(true);
-    setIsAutoRead(true);
-    
-    const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-
-    recognition.onstart = () => setIsMicActive(true);
-    recognition.onend = () => {
-      setIsMicActive(false);
-    };
-
-    recognition.onresult = (event: any) => {
-      let interimTranscript = '';
-      let finalTranscript = '';
-
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        } else {
-          interimTranscript += event.results[i][0].transcript;
-        }
-      }
-
-      if (finalTranscript) {
-        handleSendText(finalTranscript);
-      } else if (interimTranscript) {
-        setInput(interimTranscript);
-      }
-    };
-
-    recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error);
-      if (event.error === 'not-allowed') {
-        alert("Microphone access denied.");
-        stopVoiceMode();
-      }
-    };
-
-    recognitionRef.current = recognition;
-    recognition.start();
-  };
-
-  const stopVoiceMode = () => {
-    setIsLiveMode(false);
-    setIsMicActive(false);
-    if (recognitionRef.current) {
-      recognitionRef.current.onend = null;
-      recognitionRef.current.stop();
-      recognitionRef.current = null;
+    try {
+      // Request microphone permission explicitly if needed
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      
+      await (conversation as any).startSession({
+        agentId: agentId,
+        clientKey: apiKey,
+      });
+      setIsLiveMode(true);
+    } catch (err) {
+      console.error("Failed to start ElevenLabs session:", err);
+      alert("Failed to start voice session. Check your microphone permissions and API key.");
     }
   };
 
   const toggleMic = () => {
     if (isMicActive) {
-      if (recognitionRef.current) recognitionRef.current.stop();
       setIsMicActive(false);
     } else {
-      if (recognitionRef.current) recognitionRef.current.start();
       setIsMicActive(true);
     }
   };
@@ -1061,11 +1049,11 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           >
             {isLiveMode ? (
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${isMicActive ? 'bg-red-500 animate-pulse' : 'bg-zinc-600'}`} />
-                <span className="text-emerald-400">LIVE MODE</span>
+                <div className={`w-2 h-2 rounded-full ${conversation.isSpeaking ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
+                <span className="text-emerald-400">AGENT CONNECTED</span>
               </div>
             ) : (
-              <><Mic className="w-3 h-3 sm:w-4 sm:h-4" /> VOICE</>
+              <><Phone className="w-3 h-3 sm:w-4 sm:h-4" /> START CALL</>
             )}
           </button>
         </div>
@@ -1380,6 +1368,38 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           {/* Input Area */}
           <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
             <AnimatePresence>
+              {showRefineSettings && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="overflow-hidden mb-4"
+                >
+                  <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Refine Style Instructions</h4>
+                      <button onClick={() => setShowRefineSettings(false)} className="text-zinc-500 hover:text-white">
+                        <CloseIcon className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <textarea
+                      value={getSettings().customRefineInstructions || ''}
+                      onChange={(e) => {
+                        const newSettings = { ...getSettings(), customRefineInstructions: e.target.value };
+                        localStorage.setItem('personaforge_settings', JSON.stringify(newSettings));
+                        // Force re-render to reflect changes
+                        setShowRefineSettings(true);
+                      }}
+                      placeholder="e.g. 'Make it more poetic', 'Keep it concise', 'Use a darker tone'"
+                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50 min-h-[80px] resize-y"
+                    />
+                    <p className="text-xs text-zinc-500">These instructions guide the AI when you click the REFINE button.</p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            <AnimatePresence>
               {showVoiceSettings && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
@@ -1486,12 +1506,21 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               <button
                 onClick={handleRefine}
                 disabled={!input.trim() || isRefining}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
+                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-l-lg border-y border-l transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
                   isRefining ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
                 }`}
               >
                 {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
                 REFINE
+              </button>
+              <button
+                onClick={() => setShowRefineSettings(!showRefineSettings)}
+                className={`text-[9px] sm:text-[10px] font-bold px-2 py-1 rounded-r-lg border-y border-r transition-all tracking-widest flex items-center ${
+                  showRefineSettings ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
+                }`}
+                title="Refine Settings"
+              >
+                <Sliders className="w-3 h-3" />
               </button>
               <button
                 onClick={handleSuggest}
@@ -1517,6 +1546,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               </div>
             </div>
             <div className="flex items-end gap-2 sm:gap-3">
+              {error && (
+                <div className="absolute -top-10 left-0 right-0 bg-red-500/20 border border-red-500/30 text-red-400 text-[10px] px-3 py-1 rounded-lg backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2">
+                  {error}
+                  <button onClick={() => setError(null)} className="ml-2 hover:text-white">×</button>
+                </div>
+              )}
               {isLiveMode && (
                 <button
                   onClick={toggleMic}

@@ -275,8 +275,8 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
     try {
       const refined = await refineField(field as any, detailedProfile);
       setDetailedProfile(prev => {
-        if (field === 'player_name') return { ...prev, playerProfile: { ...prev.playerProfile, name: refined } };
-        if (field === 'player_desc') return { ...prev, playerProfile: { ...prev.playerProfile, description: refined } };
+        if (field === 'player_name') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), name: refined } };
+        if (field === 'player_desc') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), description: refined } };
         return { ...prev, [field]: refined };
       });
     } catch (err) {
@@ -813,8 +813,8 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                           <input 
                             type="text" 
                             className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                            value={detailedProfile.playerProfile.name}
-                            onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...detailedProfile.playerProfile, name: e.target.value}})}
+                            value={detailedProfile.playerProfile?.name || ''}
+                            onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), name: e.target.value}})}
                           />
                         </div>
                         <div>
@@ -832,8 +832,8 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                           <textarea 
                             rows={2}
                             className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
-                            value={detailedProfile.playerProfile.description}
-                            onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...detailedProfile.playerProfile, description: e.target.value}})}
+                            value={detailedProfile.playerProfile?.description || ''}
+                            onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), description: e.target.value}})}
                           />
                         </div>
                       </div>

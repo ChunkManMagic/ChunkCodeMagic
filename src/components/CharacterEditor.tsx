@@ -37,8 +37,8 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     try {
       const refined = await refineField(field as any, profile);
       setProfile(prev => {
-        if (field === 'player_name') return { ...prev, playerProfile: { ...prev.playerProfile, name: refined } };
-        if (field === 'player_desc') return { ...prev, playerProfile: { ...prev.playerProfile, description: refined } };
+        if (field === 'player_name') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), name: refined } };
+        if (field === 'player_desc') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), description: refined } };
         return { ...prev, [field]: refined };
       });
     } catch (err) {
@@ -417,16 +417,16 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                 <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Your Name</label>
                 <input
                   type="text"
-                  value={profile.playerProfile.name}
-                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...profile.playerProfile, name: e.target.value } })}
+                  value={profile.playerProfile?.name || ''}
+                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...(profile.playerProfile || {}), name: e.target.value } })}
                   className="w-full p-4 rounded-2xl glass-input text-white text-sm focus:ring-2 focus:ring-zinc-500/30 transition-all"
                 />
               </div>
               <div>
                 <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Your Description</label>
                 <textarea
-                  value={profile.playerProfile.description}
-                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...profile.playerProfile, description: e.target.value } })}
+                  value={profile.playerProfile?.description || ''}
+                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...(profile.playerProfile || {}), description: e.target.value } })}
                   className="w-full p-4 rounded-2xl glass-input text-white text-sm leading-relaxed resize-none focus:ring-2 focus:ring-zinc-500/30 transition-all"
                   rows={2}
                 />

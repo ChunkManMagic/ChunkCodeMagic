@@ -11,16 +11,6 @@ import { STORAGE_KEYS } from './constants';
 import { SettingsModal } from './components/SettingsModal';
 import { getSettings } from './lib/gemini';
 
-// Declare global window properties for AI Studio
-declare global {
-  interface Window {
-    aistudio?: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-    };
-  }
-}
-
 // Custom Confirmation Modal
 interface ConfirmationModalProps {
   isOpen: boolean;
@@ -235,18 +225,9 @@ export default function App() {
     }
   }, [currentScenarioId, isScenariosLoaded]);
 
-  // Fix API key check
+  // Assume key is present to avoid prompting the user
   useEffect(() => {
-    const checkKey = async () => {
-      try {
-        const hasApiKey = await window.aistudio?.hasSelectedApiKey?.();
-        setHasKey(hasApiKey ?? true);
-      } catch (e) {
-        console.error("Failed to check API key", e);
-        setHasKey(false);
-      }
-    };
-    checkKey();
+    setHasKey(true);
   }, []);
 
   const handleCreateNew = () => {

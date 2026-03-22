@@ -34,54 +34,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         
         <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
           <div className="space-y-4">
-            <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">API Keys</h3>
-            
-            <div className="space-y-2">
-              <label className="text-sm text-gray-300">Gemini API Key</label>
-              <input 
-                type="password" 
-                value={settings.geminiApiKey}
-                onChange={e => handleChange('geminiApiKey', e.target.value)}
-                placeholder="AI Studio API Key"
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm text-gray-300">OpenRouter API Key</label>
-              <input 
-                type="password" 
-                value={settings.openRouterApiKey}
-                onChange={e => handleChange('openRouterApiKey', e.target.value)}
-                placeholder="sk-or-v1-..."
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm text-gray-300">ElevenLabs API Key</label>
-              <input 
-                type="password" 
-                value={settings.elevenLabsApiKey}
-                onChange={e => handleChange('elevenLabsApiKey', e.target.value)}
-                placeholder="ElevenLabs API Key"
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <label className="text-sm text-gray-300">OpenAI API Key</label>
-              <input 
-                type="password" 
-                value={settings.openAiApiKey}
-                onChange={e => handleChange('openAiApiKey', e.target.value)}
-                placeholder="OpenAI API Key"
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-              />
-            </div>
-          </div>
-
-          <div className="space-y-4">
             <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Preferences</h3>
             
             <div className="space-y-2">
@@ -103,8 +55,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 onChange={e => handleChange('activeModel', e.target.value)}
                 className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
               >
-                <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview</option>
-                <option value="gemini-3-flash-preview">gemini-3-flash-preview</option>
+                <option value="gemini-3-flash-preview">gemini-3-flash-preview (Free)</option>
+                <option value="google/gemini-flash-1.5-8b">google/gemini-flash-1.5-8b (Free)</option>
                 <option value="meta-llama/llama-3-8b-instruct:free">meta-llama/llama-3-8b-instruct:free</option>
               </select>
             </div>
@@ -124,16 +76,28 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             </div>
 
             {settings.voiceEngine === 'ElevenLabs' && (
-              <div className="space-y-2">
-                <label className="text-sm text-gray-300">ElevenLabs Voice ID</label>
-                <input 
-                  type="text" 
-                  value={settings.elevenLabsVoiceId || ''}
-                  onChange={e => handleChange('elevenLabsVoiceId', e.target.value)}
-                  placeholder="pNInz6obpg8nEByWQX7d"
-                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-                />
-              </div>
+              <>
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-300">ElevenLabs Voice ID</label>
+                  <input 
+                    type="text" 
+                    value={settings.elevenLabsVoiceId || ''}
+                    onChange={e => handleChange('elevenLabsVoiceId', e.target.value)}
+                    placeholder="pNInz6obpg8nEByWQX7d"
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-300">ElevenLabs Agent ID (for Conversational AI)</label>
+                  <input 
+                    type="text" 
+                    value={settings.elevenLabsAgentId || ''}
+                    onChange={e => handleChange('elevenLabsAgentId', e.target.value)}
+                    placeholder="Agent ID from ElevenLabs Dashboard"
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </>
             )}
 
             {settings.voiceEngine === 'OpenAI' && (
@@ -153,6 +117,16 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </select>
               </div>
             )}
+            <div className="space-y-2">
+              <label className="text-sm text-gray-300">Custom Writing Style Instructions</label>
+              <textarea 
+                value={settings.customRefineInstructions || ''}
+                onChange={e => handleChange('customRefineInstructions', e.target.value)}
+                placeholder="e.g. 'Make it more poetic', 'Keep it concise', 'Use a darker tone'"
+                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500 min-h-[80px] resize-y"
+              />
+              <p className="text-xs text-gray-500">These instructions will be used when you click the "REFINE" button in chat.</p>
+            </div>
           </div>
         </div>
 
