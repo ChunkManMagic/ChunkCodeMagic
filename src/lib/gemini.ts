@@ -6,6 +6,30 @@ export enum AppMode {
   GAME = 'Game'
 }
 
+export interface InventoryItem {
+  id: string;
+  name: string;
+  description: string;
+  quantity: number;
+  type: 'Weapon' | 'Armor' | 'Consumable' | 'Quest' | 'Misc';
+  rarity?: 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
+  value?: string;
+  imageUrl?: string;
+}
+
+export interface PlayerProfile {
+  name: string;
+  description: string;
+  personality?: string;
+  backstory?: string;
+  appearance?: string;
+  clothing?: string;
+  accessories?: string;
+  hairStyle?: string;
+  hairColor?: string;
+  eyeColor?: string;
+}
+
 export interface CharacterProfile {
   mode: AppMode;
   name: string;
@@ -37,10 +61,8 @@ export interface CharacterProfile {
   };
   storyTone: string;
   relationship: string;
-  playerProfile: {
-    name: string;
-    description: string;
-  };
+  playerProfile: PlayerProfile;
+  inventory?: InventoryItem[];
   worldAtmosphere?: string;
   keyLocations?: string;
   characterFlaws?: string;
@@ -61,6 +83,7 @@ export interface CodexEntry {
   title: string;
   content: string;
   category: 'Lore' | 'Mechanics' | 'Location' | 'Item';
+  imageUrl?: string;
 }
 
 export interface AppSettings {
@@ -112,12 +135,26 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000): Pr
   try {
     return await fn();
   } catch (error: any) {
-    if (retries > 0 && (error?.status === 429 || error?.code === 429 || error?.message?.includes('429'))) {
+    const errorMessage = error?.message || String(error);
+    
+    // Handle specific Gemini errors
+    if (errorMessage.includes('API key not valid')) {
+      throw new Error("Invalid Gemini API Key. Please check your settings.");
+    }
+    
+    if (errorMessage.includes('User location is not supported')) {
+      throw new Error("Gemini is not available in your current location.");
+    }
+
+    if (retries > 0 && (error?.status === 429 || error?.code === 429 || errorMessage.includes('429') || errorMessage.includes('quota'))) {
+      console.warn(`Rate limit hit, retrying in ${delay}ms... (${retries} retries left)`);
       // Add jitter to delay
       const jitter = Math.random() * 1000;
       await new Promise(resolve => setTimeout(resolve, delay + jitter));
       return withRetry(fn, retries - 1, delay * 2);
     }
+    
+    console.error("Gemini API Error:", error);
     throw error;
   }
 }
@@ -126,7 +163,8 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Generate a detailed character profile based on this idea: "${idea}" for a ${mode} mode.`,
+    contents: `Generate a detailed character profile based on this idea: "${idea}" for a ${mode} mode. 
+    Also generate a detailed profile for the player character that would be a good fit for this story.`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -149,8 +187,24 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
           secretMotive: { type: Type.STRING },
           gameSystem: { type: Type.STRING },
           questObjective: { type: Type.STRING },
+          playerProfile: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              description: { type: Type.STRING },
+              personality: { type: Type.STRING },
+              backstory: { type: Type.STRING },
+              appearance: { type: Type.STRING },
+              clothing: { type: Type.STRING },
+              accessories: { type: Type.STRING },
+              hairStyle: { type: Type.STRING },
+              hairColor: { type: Type.STRING },
+              eyeColor: { type: Type.STRING },
+            },
+            required: ["name", "description"]
+          }
         },
-        required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship"]
+        required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
       }
     }
   }));
@@ -172,7 +226,8 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
     traits: { friendliness: 50, assertiveness: 50, empathy: 50 },
     storyTone: data.storyTone || "Dramatic",
     relationship: data.relationship || "Strangers",
-    playerProfile: { name: "The Protagonist", description: "A mysterious traveler." },
+    playerProfile: data.playerProfile || { name: "The Protagonist", description: "A mysterious traveler." },
+    inventory: [],
     worldAtmosphere: data.worldAtmosphere || "",
     keyLocations: data.keyLocations || "",
     characterFlaws: data.characterFlaws || "",
@@ -210,13 +265,152 @@ The character should be the central focus, looking towards the camera.`;
   return "";
 }
 
+export async function generateCodexImage(entry: CodexEntry, profile: CharacterProfile): Promise<string> {
+  const ai = getGenAI();
+  const prompt = `A highly detailed, cinematic 8k illustration of the following:
+Title: ${entry.title}
+Category: ${entry.category}
+Description: ${entry.content}
+World Atmosphere: ${profile.worldAtmosphere || 'atmospheric'}
+Tone: ${profile.storyTone}
+Style: Digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures. 
+The subject should be the central focus, capturing the essence of the description.`;
+
+  const response = await withRetry(() => ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        { text: prompt }
+      ]
+    }
+  }));
+  
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      return `data:image/png;base64,${part.inlineData.data}`;
+    }
+  }
+  return "";
+}
+
+export async function generateItemImage(item: InventoryItem, profile: CharacterProfile): Promise<string> {
+  const ai = getGenAI();
+  const prompt = `A highly detailed, cinematic 8k illustration of a game item:
+Item Name: ${item.name}
+Type: ${item.type}
+Description: ${item.description}
+World Atmosphere: ${profile.worldAtmosphere || 'atmospheric'}
+Tone: ${profile.storyTone}
+Style: RPG item icon, digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures, centered on a neutral background.`;
+
+  const response = await withRetry(() => ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [
+        { text: prompt }
+      ]
+    }
+  }));
+  
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      return `data:image/png;base64,${part.inlineData.data}`;
+    }
+  }
+  return "";
+}
+
+export async function extractInventoryUpdates(history: any[], currentInventory: InventoryItem[]): Promise<{
+  added: Partial<InventoryItem>[];
+  removed: string[];
+  updated: { id: string; quantity: number }[];
+}> {
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Analyze the following roleplay history and identify any changes to the player's inventory.
+Current Inventory: ${JSON.stringify(currentInventory)}
+Recent History: ${JSON.stringify(history.slice(-10))}
+
+Identify:
+1. New items gained (name, description, type, quantity).
+2. Items lost or consumed (name or id).
+3. Changes in quantity of existing items.
+
+Return a JSON object with:
+- "added": Array of new items.
+- "removed": Array of item names or IDs that were lost.
+- "updated": Array of { id, quantity } for existing items.
+
+Only include items that were explicitly mentioned as gained, lost, or used in the recent history.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          added: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                description: { type: Type.STRING },
+                type: { type: Type.STRING, enum: ['Weapon', 'Armor', 'Consumable', 'Quest', 'Misc'] },
+                quantity: { type: Type.INTEGER },
+                rarity: { type: Type.STRING, enum: ['Common', 'Uncommon', 'Rare', 'Epic', 'Legendary'] },
+                value: { type: Type.STRING }
+              },
+              required: ["name", "description", "type", "quantity"]
+            }
+          },
+          removed: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING }
+          },
+          updated: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                id: { type: Type.STRING },
+                name: { type: Type.STRING },
+                quantity: { type: Type.INTEGER }
+              }
+            }
+          }
+        }
+      }
+    }
+  }));
+
+  try {
+    return JSON.parse(response.text || '{"added":[], "removed":[], "updated":[]}');
+  } catch (e) {
+    return { added: [], removed: [], updated: [] };
+  }
+}
+
 export async function refineField(field: string, profile: CharacterProfile): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-3-flash-preview",
-    contents: `Refine the ${field} for this character: ${JSON.stringify(profile)}`
+    contents: `Refine the ${field} for this character: ${JSON.stringify(profile)}. Return ONLY the refined text.`
   }));
-  return response.text || "";
+  return response.text?.trim() || "";
+}
+
+export async function refinePlayerProfile(field: string, profile: CharacterProfile): Promise<string> {
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Refine the player's ${field} for this roleplay scenario.
+Player Profile: ${JSON.stringify(profile.playerProfile || {})}
+Character they are interacting with: ${profile.name}
+World Atmosphere: ${profile.worldAtmosphere || 'Not specified'}
+
+Return ONLY the refined ${field} text.`
+  }));
+  return response.text?.trim() || "";
 }
 
 export async function refineTraits(profile: CharacterProfile): Promise<any> {
@@ -366,6 +560,57 @@ Return ONLY the suggested text, ready to be used as user input. Make it immersiv
   return response.text?.trim() || "";
 }
 
+export async function suggestMultipleActions(history: any[], profile: CharacterProfile): Promise<string[]> {
+  const ai = getGenAI();
+  
+  const systemInstruction = `You are an AI assistant helping a player roleplay. 
+The player is playing as:
+Name: ${profile.playerProfile?.name || 'The Protagonist'}
+Description: ${profile.playerProfile?.description || 'A mysterious traveler'}
+
+They are interacting with:
+Name: ${profile.name}
+Personality: ${profile.personality}
+Relationship: ${profile.relationship}
+
+World Context: ${profile.worldAtmosphere || 'Not specified'}
+Key Locations: ${profile.keyLocations || 'Not specified'}
+
+Your task is to suggest 3 distinct, compelling possible next actions or dialogue choices for the player character based on the story history.
+IMPORTANT: Analyze the VERY LAST message in the history carefully. The suggestions must be a logical NEXT STEP from that message. 
+Do NOT suggest actions that have already been performed or dialogue that has already been spoken.
+
+Return them as a JSON array of strings. Each string should be a complete, immersive, and descriptive action or dialogue.
+Return ONLY the JSON. No other text.`;
+
+  const chat = ai.chats.create({
+    model: "gemini-3-flash-preview",
+    config: { 
+      systemInstruction,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.ARRAY,
+        items: { type: Type.STRING }
+      }
+    },
+    history: history
+      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
+      .map(m => ({
+        role: m.role,
+        parts: m.parts
+      }))
+  });
+  
+  const response = await withRetry(() => chat.sendMessage({ message: `Give me 3 possible next actions.` }));
+  try {
+    const text = response.text?.trim() || "[]";
+    return JSON.parse(text);
+  } catch (e) {
+    console.error("Failed to parse multiple suggestions:", e);
+    return [];
+  }
+}
+
 export async function refineInput(input: string, profile: CharacterProfile, history: any[], customInstructions?: string): Promise<string> {
   const ai = getGenAI();
   
@@ -500,6 +745,43 @@ Return the refined entry as JSON with the same fields (title, content, category)
     return JSON.parse(response.text || JSON.stringify(entry));
   } catch (e) {
     return entry;
+  }
+}
+
+export async function updateCharacterProfilesFromHistory(history: any[], profile: CharacterProfile): Promise<Partial<CharacterProfile>> {
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Analyze the following roleplay history and suggest updates to the character's profile based on recent events, character development, and changes in relationships.
+Current Profile: ${JSON.stringify(profile)}
+Recent History: ${JSON.stringify(history.slice(-15))}
+
+Return a JSON object with any fields that should be updated. Only include fields that have meaningful changes.
+Fields you can update: personality, backstory, appearance, relationship, worldAtmosphere, keyLocations, characterFlaws, secretMotive, questObjective.`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          personality: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          relationship: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocations: { type: Type.STRING },
+          characterFlaws: { type: Type.STRING },
+          secretMotive: { type: Type.STRING },
+          questObjective: { type: Type.STRING }
+        }
+      }
+    }
+  }));
+  
+  try {
+    return JSON.parse(response.text || "{}");
+  } catch (e) {
+    console.error("Failed to parse character profile updates", e);
+    return {};
   }
 }
 

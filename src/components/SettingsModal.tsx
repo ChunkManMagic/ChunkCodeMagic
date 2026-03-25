@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2 } from 'lucide-react';
+import { toast } from 'sonner';
 import { AppSettings, getSettings, defaultSettings } from '../lib/gemini';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
@@ -39,9 +40,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         userAgent: navigator.userAgent
       });
       setSubmitted(true);
+      toast.success("You've been added to the waitlist!");
     } catch (err: any) {
       console.error('Waitlist Error:', err);
       setError('Failed to join waitlist. Please try again.');
+      toast.error("Failed to join waitlist. Please check your connection.");
     } finally {
       setIsSubmitting(false);
     }
@@ -49,6 +52,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
   const handleSave = () => {
     localStorage.setItem('personaforge_settings', JSON.stringify(settings));
+    toast.success("Settings saved");
     onClose();
   };
 

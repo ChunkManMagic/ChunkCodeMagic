@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { toast } from 'sonner';
 import { Sparkles, Loader2, User, Image as ImageIcon, Wand2, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw } from 'lucide-react';
-import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode } from '../lib/gemini';
+import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem } from '../lib/gemini';
 import { CharacterEditor } from './CharacterEditor';
 
 import { STORAGE_KEYS } from '../constants';
@@ -39,8 +40,17 @@ const DEFAULT_PROFILE: CharacterProfile = {
   relationship: 'Strangers',
   playerProfile: {
     name: 'The Protagonist',
-    description: 'A mysterious traveler.'
+    description: 'A mysterious traveler.',
+    personality: '',
+    backstory: '',
+    appearance: '',
+    clothing: '',
+    accessories: '',
+    hairStyle: '',
+    hairColor: '',
+    eyeColor: ''
   },
+  inventory: [],
   worldAtmosphere: '',
   keyLocations: '',
   characterFlaws: '',
@@ -194,13 +204,16 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
       setStep('profile');
       const profile = await generateCharacterProfile(idea, appMode);
       setDraftProfile(profile);
+      toast.success("Character profile generated!");
       setStep('avatar');
       const avatarBase64 = await generateAvatar(profile);
       setDraftAvatar(avatarBase64);
+      toast.success("Avatar generated!");
       setStep('review');
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to generate character. Please try again.");
+      toast.error(`Generation failed: ${err.message || 'Unknown error'}`);
       setStep('idle');
     } finally {
       setIsGenerating(false);
@@ -239,8 +252,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
     try {
       const refinedTraits = await refineTraits(detailedProfile);
       setDetailedProfile(prev => ({ ...prev, traits: refinedTraits }));
-    } catch (err) {
+      toast.success("Traits refined");
+    } catch (err: any) {
       console.error("Refine traits error:", err);
+      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -260,27 +275,40 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
       const avatarBase64 = await generateAvatar(detailedProfile);
       setDraftAvatar(avatarBase64);
       setDraftProfile({ ...detailedProfile, mode: appMode });
+      toast.success("Avatar generated!");
       setStep('review');
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to generate avatar. Please try again.");
+      toast.error(`Avatar generation failed: ${err.message || 'Unknown error'}`);
       setStep('idle');
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const handleRefineField = async (field: keyof CharacterProfile | 'player_name' | 'player_desc') => {
+  const handleRefineField = async (field: string) => {
     setIsRefiningField(field);
     try {
-      const refined = await refineField(field as any, detailedProfile);
-      setDetailedProfile(prev => {
-        if (field === 'player_name') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), name: refined } };
-        if (field === 'player_desc') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), description: refined } };
-        return { ...prev, [field]: refined };
-      });
-    } catch (err) {
+      let refined = '';
+      if (field.startsWith('player_')) {
+        const playerField = field.replace('player_', '');
+        refined = await refinePlayerProfile(playerField, detailedProfile);
+        setDetailedProfile(prev => ({
+          ...prev,
+          playerProfile: {
+            ...(prev.playerProfile || {}),
+            [playerField]: refined
+          } as any
+        }));
+      } else {
+        refined = await refineField(field as any, detailedProfile);
+        setDetailedProfile(prev => ({ ...prev, [field]: refined }));
+      }
+      toast.success(`${field.replace('player_', '')} refined`);
+    } catch (err: any) {
       console.error("Refine field error:", err);
+      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -808,36 +836,221 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                     <div className="pt-4 border-t border-zinc-800/50">
                       <h4 className="text-sm font-bold text-zinc-300 mb-4">Player Character</h4>
                       <div className="space-y-4">
-                        <div>
-                          <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Your Name</label>
-                          <input 
-                            type="text" 
-                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                            value={detailedProfile.playerProfile?.name || ''}
-                            onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), name: e.target.value}})}
-                          />
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Your Name</label>
+                              <button 
+                                onClick={() => handleRefineField('player_name')}
+                                disabled={isRefiningField !== null}
+                                className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                              >
+                                {isRefiningField === 'player_name' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                                REFINE
+                              </button>
+                            </div>
+                            <input 
+                              type="text" 
+                              className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                              value={detailedProfile.playerProfile?.name || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), name: e.target.value}})}
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Personality</label>
+                              <button 
+                                onClick={() => handleRefineField('player_personality')}
+                                disabled={isRefiningField !== null}
+                                className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                              >
+                                {isRefiningField === 'player_personality' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                                REFINE
+                              </button>
+                            </div>
+                            <input 
+                              type="text" 
+                              className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                              value={detailedProfile.playerProfile?.personality || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), personality: e.target.value}})}
+                            />
+                          </div>
                         </div>
+
                         <div>
                           <div className="flex justify-between items-center mb-2">
-                            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Your Description</label>
+                            <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Your Backstory</label>
                             <button 
-                              onClick={() => handleRefineField('player_desc')}
+                              onClick={() => handleRefineField('player_backstory')}
                               disabled={isRefiningField !== null}
                               className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
                             >
-                              {isRefiningField === 'player_desc' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              {isRefiningField === 'player_backstory' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
                               MAGIC REFINE
                             </button>
                           </div>
                           <textarea 
                             rows={2}
                             className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
-                            value={detailedProfile.playerProfile?.description || ''}
-                            onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), description: e.target.value}})}
+                            value={detailedProfile.playerProfile?.backstory || ''}
+                            onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), backstory: e.target.value}})}
                           />
+                        </div>
+
+                        <div className="grid grid-cols-3 gap-3">
+                          <div>
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Hair Style</label>
+                            <input 
+                              type="text" 
+                              className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                              value={detailedProfile.playerProfile?.hairStyle || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), hairStyle: e.target.value}})}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Hair Color</label>
+                            <input 
+                              type="text" 
+                              className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                              value={detailedProfile.playerProfile?.hairColor || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), hairColor: e.target.value}})}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Eye Color</label>
+                            <input 
+                              type="text" 
+                              className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                              value={detailedProfile.playerProfile?.eyeColor || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), eyeColor: e.target.value}})}
+                            />
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Appearance</label>
+                              <button 
+                                onClick={() => handleRefineField('player_appearance')}
+                                disabled={isRefiningField !== null}
+                                className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                              >
+                                {isRefiningField === 'player_appearance' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                                REFINE
+                              </button>
+                            </div>
+                            <input 
+                              type="text" 
+                              className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                              value={detailedProfile.playerProfile?.appearance || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), appearance: e.target.value}})}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Clothing</label>
+                            <input 
+                              type="text" 
+                              className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                              value={detailedProfile.playerProfile?.clothing || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), clothing: e.target.value}})}
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Accessories</label>
+                            <input 
+                              type="text" 
+                              className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                              value={detailedProfile.playerProfile?.accessories || ''}
+                              onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), accessories: e.target.value}})}
+                            />
+                          </div>
                         </div>
                       </div>
                     </div>
+
+                    {appMode === AppMode.GAME && (
+                      <div className="pt-4 border-t border-zinc-800/50">
+                        <div className="flex justify-between items-center mb-4">
+                          <h4 className="text-sm font-bold text-zinc-300">Starting Inventory</h4>
+                          <button 
+                            onClick={() => {
+                              const newItem: InventoryItem = {
+                                id: Math.random().toString(36).substr(2, 9),
+                                name: 'New Item',
+                                description: 'Item description...',
+                                quantity: 1,
+                                type: 'Misc'
+                              };
+                              setDetailedProfile({
+                                ...detailedProfile,
+                                inventory: [...(detailedProfile.inventory || []), newItem]
+                              });
+                            }}
+                            className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1"
+                          >
+                            + ADD ITEM
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {(detailedProfile.inventory || []).map((item, idx) => (
+                            <div key={item.id} className="p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl space-y-2">
+                              <div className="flex gap-2">
+                                <input 
+                                  type="text" 
+                                  className="flex-1 bg-transparent border-none text-white text-xs font-bold focus:ring-0 p-0"
+                                  value={item.name}
+                                  onChange={e => {
+                                    const newInv = [...(detailedProfile.inventory || [])];
+                                    newInv[idx].name = e.target.value;
+                                    setDetailedProfile({...detailedProfile, inventory: newInv});
+                                  }}
+                                />
+                                <select 
+                                  className="bg-zinc-800 text-[10px] text-zinc-400 border-none rounded px-1 focus:ring-0"
+                                  value={item.type}
+                                  onChange={e => {
+                                    const newInv = [...(detailedProfile.inventory || [])];
+                                    newInv[idx].type = e.target.value as any;
+                                    setDetailedProfile({...detailedProfile, inventory: newInv});
+                                  }}
+                                >
+                                  <option>Weapon</option>
+                                  <option>Armor</option>
+                                  <option>Consumable</option>
+                                  <option>Quest</option>
+                                  <option>Misc</option>
+                                </select>
+                                <button 
+                                  onClick={() => {
+                                    const newInv = detailedProfile.inventory?.filter(i => i.id !== item.id);
+                                    setDetailedProfile({...detailedProfile, inventory: newInv});
+                                  }}
+                                  className="text-red-500 hover:text-red-400"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                              <textarea 
+                                rows={1}
+                                className="w-full bg-transparent border-none text-zinc-500 text-[10px] focus:ring-0 p-0 resize-none"
+                                value={item.description}
+                                onChange={e => {
+                                  const newInv = [...(detailedProfile.inventory || [])];
+                                  newInv[idx].description = e.target.value;
+                                  setDetailedProfile({...detailedProfile, inventory: newInv});
+                                }}
+                              />
+                            </div>
+                          ))}
+                          {(detailedProfile.inventory || []).length === 0 && (
+                            <div className="text-center py-4 border-2 border-dashed border-zinc-800 rounded-xl text-zinc-600 text-[10px] uppercase tracking-widest">
+                              No items in inventory
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

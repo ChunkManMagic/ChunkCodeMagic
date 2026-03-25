@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits } from '../lib/gemini';
+import { toast } from 'sonner';
+import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile } from '../lib/gemini';
 import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2 } from 'lucide-react';
 
 interface CharacterEditorProps {
@@ -25,24 +26,37 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     try {
       const newAvatar = await generateAvatar(profile);
       setAvatar(newAvatar);
-    } catch (err) {
+      toast.success("Avatar regenerated!");
+    } catch (err: any) {
       console.error("Failed to regenerate avatar", err);
+      toast.error(`Failed to regenerate avatar: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRegenerating(false);
     }
   };
 
-  const handleRefineField = async (field: keyof CharacterProfile | 'player_name' | 'player_desc') => {
+  const handleRefineField = async (field: keyof CharacterProfile | string) => {
     setIsRefiningField(field);
     try {
-      const refined = await refineField(field as any, profile);
+      let refined = "";
+      if (field.startsWith('player_')) {
+        const playerField = field.replace('player_', '');
+        refined = await refinePlayerProfile(playerField, profile);
+      } else {
+        refined = await refineField(field as any, profile);
+      }
+      
       setProfile(prev => {
-        if (field === 'player_name') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), name: refined } };
-        if (field === 'player_desc') return { ...prev, playerProfile: { ...(prev.playerProfile || {}), description: refined } };
+        if (field.startsWith('player_')) {
+          const playerField = field.replace('player_', '');
+          return { ...prev, playerProfile: { ...(prev.playerProfile || {}), [playerField]: refined } };
+        }
         return { ...prev, [field]: refined };
       });
-    } catch (err) {
+      toast.success(`${field.toString().replace('player_', '')} refined`);
+    } catch (err: any) {
       console.error("Refine field error:", err);
+      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -53,8 +67,10 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     try {
       const refinedTraits = await refineTraits(profile);
       setProfile(prev => ({ ...prev, traits: refinedTraits }));
-    } catch (err) {
+      toast.success("Traits refined");
+    } catch (err: any) {
       console.error("Refine traits error:", err);
+      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -407,29 +423,85 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           </div>
 
           {/* Player Profile */}
-          <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-6">
+          <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-8">
             <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
               <Settings2 className="w-3 h-3" />
               Player Persona (You)
             </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Your Name</label>
-                <input
-                  type="text"
-                  value={profile.playerProfile?.name || ''}
-                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...(profile.playerProfile || {}), name: e.target.value } })}
-                  className="w-full p-4 rounded-2xl glass-input text-white text-sm focus:ring-2 focus:ring-zinc-500/30 transition-all"
-                />
+            
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Your Name</label>
+                    <button 
+                      onClick={() => handleRefineField('player_name')}
+                      disabled={isRefiningField !== null}
+                      className="text-[9px] font-bold text-zinc-500 hover:text-white flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {isRefiningField === 'player_name' ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                      REFINE
+                    </button>
+                  </div>
+                  <input
+                    type="text"
+                    value={profile.playerProfile?.name || ''}
+                    onChange={(e) => setProfile({ ...profile, playerProfile: { ...(profile.playerProfile || {}), name: e.target.value } })}
+                    className="w-full p-4 rounded-2xl glass-input text-white text-sm focus:ring-2 focus:ring-zinc-500/30 transition-all"
+                  />
+                </div>
+                <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Your Description</label>
+                    <button 
+                      onClick={() => handleRefineField('player_description')}
+                      disabled={isRefiningField !== null}
+                      className="text-[9px] font-bold text-zinc-500 hover:text-white flex items-center gap-1 disabled:opacity-50"
+                    >
+                      {isRefiningField === 'player_description' ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                      REFINE
+                    </button>
+                  </div>
+                  <textarea
+                    value={profile.playerProfile?.description || ''}
+                    onChange={(e) => setProfile({ ...profile, playerProfile: { ...(profile.playerProfile || {}), description: e.target.value } })}
+                    className="w-full p-4 rounded-2xl glass-input text-white text-sm leading-relaxed resize-none focus:ring-2 focus:ring-zinc-500/30 transition-all"
+                    rows={1}
+                  />
+                </div>
               </div>
-              <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Your Description</label>
-                <textarea
-                  value={profile.playerProfile?.description || ''}
-                  onChange={(e) => setProfile({ ...profile, playerProfile: { ...(profile.playerProfile || {}), description: e.target.value } })}
-                  className="w-full p-4 rounded-2xl glass-input text-white text-sm leading-relaxed resize-none focus:ring-2 focus:ring-zinc-500/30 transition-all"
-                  rows={2}
-                />
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {[
+                  { label: 'Personality', field: 'personality' },
+                  { label: 'Backstory', field: 'backstory' },
+                  { label: 'Appearance', field: 'appearance' },
+                  { label: 'Clothing', field: 'clothing' },
+                  { label: 'Accessories', field: 'accessories' },
+                  { label: 'Hair Style', field: 'hairStyle' },
+                  { label: 'Hair Color', field: 'hairColor' },
+                  { label: 'Eye Color', field: 'eyeColor' }
+                ].map(item => (
+                  <div key={item.field}>
+                    <div className="flex justify-between items-center mb-2">
+                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
+                      <button 
+                        onClick={() => handleRefineField(`player_${item.field}`)}
+                        disabled={isRefiningField !== null}
+                        className="text-[9px] font-bold text-zinc-500 hover:text-white flex items-center gap-1 disabled:opacity-50"
+                      >
+                        {isRefiningField === `player_${item.field}` ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                        REFINE
+                      </button>
+                    </div>
+                    <textarea
+                      value={(profile.playerProfile as any)?.[item.field] || ''}
+                      onChange={(e) => setProfile({ ...profile, playerProfile: { ...(profile.playerProfile || {}), [item.field]: e.target.value } })}
+                      className="w-full p-4 rounded-2xl glass-input text-white text-sm leading-relaxed resize-none focus:ring-2 focus:ring-zinc-500/30 transition-all"
+                      rows={2}
+                    />
+                  </div>
+                ))}
               </div>
             </div>
           </div>

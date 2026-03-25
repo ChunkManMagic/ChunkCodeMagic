@@ -1,10 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch, Phone } from 'lucide-react';
+import { toast } from 'sonner';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package, Image as ImageIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useConversation } from '@elevenlabs/react';
-import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry, summarizeHistory, getSettings } from '../lib/gemini';
+import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry, summarizeHistory, getSettings, updateCharacterProfilesFromHistory, generateCodexImage, extractInventoryUpdates, generateItemImage, InventoryItem } from '../lib/gemini';
 
 export interface Message {
   id: string;
@@ -53,12 +54,18 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [isLoaded, setIsLoaded] = useState(false);
   const [codexEntries, setCodexEntries] = useState<CodexEntry[]>([]);
   const [showCodex, setShowCodex] = useState(false);
+  const [showInventory, setShowInventory] = useState(false);
   const [newCodexEntry, setNewCodexEntry] = useState<Partial<CodexEntry>>({ category: 'Lore' });
   const [isAddingCodex, setIsAddingCodex] = useState(false);
   const [isAutoPopulatingCodex, setIsAutoPopulatingCodex] = useState(false);
   const [isAutoCodexEnabled, setIsAutoCodexEnabled] = useState(false);
+  const [isAutoProfileEnabled, setIsAutoProfileEnabled] = useState(false);
   const [isRefiningCodexEntry, setIsRefiningCodexEntry] = useState(false);
-
+  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
+  const [isScanningInventory, setIsScanningInventory] = useState(false);
+  const [isAutoInventoryEnabled, setIsAutoInventoryEnabled] = useState(false);
+  const [isGeneratingCodexImage, setIsGeneratingCodexImage] = useState<string | null>(null);
+  const [isGeneratingItemImage, setIsGeneratingItemImage] = useState<string | null>(null);
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -74,6 +81,112 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     targetId: null,
   });
 
+  const getRelationshipPercentage = (relationship: string) => {
+    const rel = relationship.toLowerCase();
+    if (rel.includes('stranger')) return 5;
+    if (rel.includes('acquaintance')) return 20;
+    if (rel.includes('friend')) return 50;
+    if (rel.includes('ally') || rel.includes('allies')) return 75;
+    if (rel.includes('lover')) return 95;
+    if (rel.includes('rival')) return 40;
+    if (rel.includes('enemy')) return 0;
+    return 10;
+  };
+
+  const handleGenerateCodexImage = async (entry: CodexEntry) => {
+    setIsGeneratingCodexImage(entry.id);
+    try {
+      const imageUrl = await generateCodexImage(entry, profile);
+      if (imageUrl) {
+        const updatedEntries = codexEntries.map(e => e.id === entry.id ? { ...e, imageUrl } : e);
+        setCodexEntries(updatedEntries);
+        await set(STORAGE_KEYS.SCENARIO_CODEX(scenarioId), updatedEntries);
+        toast.success(`Generated image for ${entry.title}`);
+      }
+    } catch (error: any) {
+      console.error("Failed to generate codex image:", error);
+      toast.error(`Image generation failed: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsGeneratingCodexImage(null);
+    }
+  };
+
+  const handleGenerateItemImage = async (item: InventoryItem) => {
+    setIsGeneratingItemImage(item.id);
+    try {
+      const imageUrl = await generateItemImage(item, profile);
+      if (imageUrl) {
+        const updatedInventory = (profile.inventory || []).map(i => i.id === item.id ? { ...i, imageUrl } : i);
+        onUpdateProfile({ ...profile, inventory: updatedInventory });
+        toast.success(`Generated image for ${item.name}`);
+      }
+    } catch (error: any) {
+      console.error("Failed to generate item image:", error);
+      toast.error(`Item image generation failed: ${error.message || 'Unknown error'}`);
+    } finally {
+      setIsGeneratingItemImage(null);
+    }
+  };
+
+  const handleAutoUpdateInventory = async (force = false, messagesOverride?: Message[]) => {
+    if (!force && !isAutoInventoryEnabled) return;
+    const currentMessages = messagesOverride || messages;
+    if (currentMessages.length < 2) return;
+
+    setIsScanningInventory(true);
+    try {
+      const updates = await extractInventoryUpdates(currentMessages, profile.inventory || []);
+      
+      let newInventory = [...(profile.inventory || [])];
+      let changed = false;
+
+      // Handle removals
+      if (updates.removed.length > 0) {
+        newInventory = newInventory.filter(item => 
+          !updates.removed.includes(item.id) && !updates.removed.includes(item.name)
+        );
+        changed = true;
+      }
+
+      // Handle updates
+      if (updates.updated.length > 0) {
+        updates.updated.forEach(update => {
+          const item = newInventory.find(i => i.id === update.id || i.name === (update as any).name);
+          if (item) {
+            item.quantity = update.quantity;
+            changed = true;
+          }
+        });
+      }
+
+      // Handle additions
+      if (updates.added.length > 0) {
+        updates.added.forEach(newItem => {
+          const item: InventoryItem = {
+            id: generateId(),
+            name: newItem.name || 'Unknown Item',
+            description: newItem.description || '',
+            type: newItem.type || 'Misc',
+            quantity: newItem.quantity || 1,
+            rarity: newItem.rarity,
+            value: newItem.value
+          };
+          newInventory.push(item);
+          changed = true;
+        });
+      }
+
+      if (changed) {
+        onUpdateProfile({ ...profile, inventory: newInventory });
+      }
+    } catch (error) {
+      console.error("Failed to auto-update inventory:", error);
+    } finally {
+      setIsScanningInventory(null as any); // Reset
+      setIsScanningInventory(false);
+    }
+  };
+
   const handleConfirmAction = () => {
     if (!confirmModal.type) return;
 
@@ -85,7 +198,10 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     } else if (confirmModal.type === 'rewind' && confirmModal.targetId) {
       const index = messages.findIndex(m => m.id === confirmModal.targetId);
       if (index !== -1) {
-        setMessages(messages.slice(0, index));
+        // Rewind to this message (keep this message and delete everything after)
+        const newMessages = messages.slice(0, index + 1).map(m => ({ ...m, isSummarized: false }));
+        setMessages(newMessages);
+        setStorySummary(''); // Clear summary to ensure AI only considers the current messages
       }
     }
 
@@ -244,12 +360,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       const refined = await refineInput(input, profile, history, settings.customRefineInstructions);
       if (refined) {
         setInput(refined);
+        toast.success("Input refined");
       } else {
         setError("No refinement received from AI. Check your API key.");
+        toast.error("No refinement received");
       }
     } catch (err: any) {
       console.error("Refinement Error:", err);
       setError(err.message || "Failed to refine input. Check your connection or API key.");
+      toast.error(`Refinement Error: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefining(false);
     }
@@ -264,12 +383,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       const suggestion = await suggestNextAction(history, profile);
       if (suggestion) {
         setInput(suggestion);
+        toast.success("AI suggested an action");
       } else {
         setError("No suggestion received from AI. Check your API key.");
+        toast.error("No suggestion received");
       }
     } catch (err: any) {
       console.error("Suggestion Error:", err);
       setError(err.message || "Failed to get suggestion. Check your connection or API key.");
+      toast.error(`Suggestion Error: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSuggesting(false);
     }
@@ -382,6 +504,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         
         // Auto-populate codex after a model response
         handleAutoPopulateCodex();
+        handleAutoUpdateInventory();
       } catch (err) {
         console.error(err);
       } finally {
@@ -478,12 +601,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       }
 
       handleAutoPopulateCodex();
-    } catch (err) {
+      handleAutoUpdateProfile();
+    } catch (err: any) {
       console.error(err);
+      toast.error(`Narrative Error: ${err.message || 'Unknown error'}`);
       setMessages(prev => [...prev, {
         id: generateId(),
         role: 'model',
-        text: '*The narrative stream falters. Please try again.*',
+        text: `*The narrative stream falters: ${err.message || 'Please try again.'}*`,
         timestamp: Date.now(),
         provider: getSettings().activeTextProvider
       }]);
@@ -572,8 +697,17 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         handleReadAloud(sentenceBuffer);
       }
 
+      const historyWithReply = [
+        ...history,
+        { role: 'user', parts: [{ text: userMsg.text }] },
+        { role: 'model', parts: [{ text: fullReply }] }
+      ];
+      const messagesWithReply = [...messages, userMsg, { ...aiMessage, text: fullReply }];
+
       // Auto-populate codex after a model response
-      handleAutoPopulateCodex();
+      handleAutoPopulateCodex(false, historyWithReply);
+      handleAutoUpdateInventory(false, messagesWithReply);
+      handleAutoUpdateProfile(false, historyWithReply);
     } catch (err) {
       console.error(err);
     } finally {
@@ -813,14 +947,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   };
 
-  const handleAutoPopulateCodex = async (force = false) => {
-    if (isAutoPopulatingCodex || messages.length < 2) return;
-    if (!force && (!isAutoCodexEnabled || messages.length % 3 !== 0)) return;
+  const handleAutoPopulateCodex = async (force = false, historyOverride?: any[]) => {
+    const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+    if (isAutoPopulatingCodex || currentHistory.length < 2) return;
+    if (!force && (!isAutoCodexEnabled || currentHistory.length % 3 !== 0)) return;
     
     setIsAutoPopulatingCodex(true);
     try {
-      const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-      const newEntries = await extractCodexEntries(history, profile, codexEntries);
+      const newEntries = await extractCodexEntries(currentHistory, profile, codexEntries);
       
       if (newEntries.length > 0) {
         const entriesWithIds: CodexEntry[] = newEntries.map(e => ({
@@ -834,6 +968,24 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       console.error("Auto-populate codex failed", err);
     } finally {
       setIsAutoPopulatingCodex(false);
+    }
+  };
+
+  const handleAutoUpdateProfile = async (force = false, historyOverride?: any[]) => {
+    const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+    if (isUpdatingProfile || currentHistory.length < 5) return;
+    if (!force && (!isAutoProfileEnabled || currentHistory.length % 5 !== 0)) return;
+
+    setIsUpdatingProfile(true);
+    try {
+      const updates = await updateCharacterProfilesFromHistory(currentHistory, profile);
+      if (updates && Object.keys(updates).length > 0) {
+        onUpdateProfile({ ...profile, ...updates });
+      }
+    } catch (e) {
+      console.error("Auto-profile update failed", e);
+    } finally {
+      setIsUpdatingProfile(false);
     }
   };
 
@@ -892,10 +1044,24 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 <span className="text-[6px] sm:text-[8px] font-bold text-zinc-400 uppercase tracking-tighter">{profile.mode}</span>
               </div>
             </div>
-            <div className="flex items-center gap-2 text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold text-zinc-500 mt-0.5">
-              <span className="text-emerald-500/80">{profile.storyTone}</span>
-              <span className="w-0.5 h-0.5 sm:w-1 sm:h-1 bg-zinc-800 rounded-full" />
-              <span>{profile.relationship}</span>
+            <div className="flex flex-col gap-1 mt-1">
+              <div className="flex items-center gap-2 text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold text-zinc-500">
+                <span className="text-emerald-500/80">{profile.storyTone}</span>
+                <span className="w-0.5 h-0.5 sm:w-1 sm:h-1 bg-zinc-800 rounded-full" />
+                <span>{profile.relationship}</span>
+              </div>
+              <div className="w-24 sm:w-32 h-1 bg-white/5 rounded-full overflow-hidden relative">
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${getRelationshipPercentage(profile.relationship)}%` }}
+                  className={`absolute inset-y-0 left-0 rounded-full ${
+                    profile.relationship.toLowerCase().includes('enemy') ? 'bg-red-500' :
+                    profile.relationship.toLowerCase().includes('rival') ? 'bg-amber-500' :
+                    profile.relationship.toLowerCase().includes('lover') ? 'bg-pink-500' :
+                    'bg-emerald-500'
+                  } shadow-[0_0_8px_rgba(16,185,129,0.3)]`}
+                />
+              </div>
             </div>
           </div>
         </div>
@@ -907,6 +1073,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           >
             <Book className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
+          {profile.mode === AppMode.GAME && (
+            <button
+              onClick={() => setShowInventory(!showInventory)}
+              className={`p-2 rounded-xl transition-all ${showInventory ? 'bg-purple-500/20 text-purple-400' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+              title="Inventory"
+            >
+              <Package className="w-4 h-4 sm:w-5 sm:h-5" />
+            </button>
+          )}
           <div className="relative">
             <button
               onClick={() => setShowModeDetails(!showModeDetails)}
@@ -1005,6 +1180,151 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       </div>
 
       <div className="flex flex-1 overflow-hidden relative">
+        {/* Inventory Sidebar */}
+        <AnimatePresence>
+          {showInventory && profile.mode === AppMode.GAME && (
+            <motion.div
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+              className="absolute right-0 top-0 bottom-0 w-80 glass-panel border-l border-white/10 z-40 flex flex-col shadow-2xl"
+            >
+              <div className="p-6 border-b border-white/5 flex items-center justify-between">
+                <h3 className="text-lg font-serif font-bold text-white flex items-center gap-2">
+                  <Package className="w-5 h-5 text-purple-400" />
+                  Inventory
+                </h3>
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setIsAutoInventoryEnabled(!isAutoInventoryEnabled)}
+                    className={`p-2 rounded-lg transition-all ${isAutoInventoryEnabled ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-500 hover:text-purple-400'}`}
+                    title={isAutoInventoryEnabled ? "Auto-scan enabled" : "Auto-scan disabled"}
+                  >
+                    <Repeat className={`w-4 h-4 ${isAutoInventoryEnabled ? 'animate-spin-slow' : ''}`} />
+                  </button>
+                  <button 
+                    onClick={() => handleAutoUpdateInventory(true)} 
+                    disabled={isScanningInventory || messages.length < 2}
+                    className={`p-2 rounded-lg transition-all ${isScanningInventory ? 'text-purple-400 animate-pulse' : 'text-zinc-500 hover:text-purple-400 hover:bg-white/5'}`}
+                    title="Scan story for inventory updates"
+                  >
+                    {isScanningInventory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  </button>
+                  <button onClick={() => setShowInventory(false)} className="text-zinc-500 hover:text-white">
+                    <CloseIcon className="w-5 h-5" />
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
+                {(profile.inventory || []).length === 0 ? (
+                  <div className="text-center py-20">
+                    <Package className="w-12 h-12 text-zinc-800 mx-auto mb-4" />
+                    <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Inventory is empty</p>
+                  </div>
+                ) : (
+                  profile.inventory?.map((item, idx) => (
+                    <div key={item.id} className="p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all group overflow-hidden">
+                      {item.imageUrl && (
+                        <div className="aspect-square w-full mb-3 rounded-xl overflow-hidden border border-white/10 relative group/img">
+                          <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover transition-transform group-hover/img:scale-110" referrerPolicy="no-referrer" />
+                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
+                            <button 
+                              onClick={() => handleGenerateItemImage(item)}
+                              className="p-2 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white/30 transition-all"
+                            >
+                              <RefreshCw className={`w-4 h-4 ${isGeneratingItemImage === item.id ? 'animate-spin' : ''}`} />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h4 className="text-sm font-bold text-white truncate group-hover:text-purple-400 transition-colors">{item.name}</h4>
+                            {item.rarity && (
+                              <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-widest ${
+                                item.rarity === 'Legendary' ? 'bg-orange-500/20 text-orange-400' :
+                                item.rarity === 'Epic' ? 'bg-purple-500/20 text-purple-400' :
+                                item.rarity === 'Rare' ? 'bg-blue-500/20 text-blue-400' :
+                                item.rarity === 'Uncommon' ? 'bg-emerald-500/20 text-emerald-400' :
+                                'bg-zinc-500/20 text-zinc-400'
+                              }`}>
+                                {item.rarity}
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">{item.type}</span>
+                            {item.value && <span className="text-[8px] font-bold text-emerald-400/60 uppercase tracking-widest">• {item.value}</span>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {!item.imageUrl && (
+                            <button 
+                              onClick={() => handleGenerateItemImage(item)}
+                              disabled={isGeneratingItemImage === item.id}
+                              className="p-1 rounded-md hover:bg-white/5 text-zinc-600 hover:text-purple-400 transition-all"
+                              title="Generate Item Image"
+                            >
+                              {isGeneratingItemImage === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImageIcon className="w-3 h-3" />}
+                            </button>
+                          )}
+                          <button 
+                            onClick={() => {
+                              const newInv = [...(profile.inventory || [])];
+                              if (newInv[idx].quantity > 1) {
+                                newInv[idx].quantity--;
+                                onUpdateProfile({ ...profile, inventory: newInv });
+                              } else {
+                                const filteredInv = newInv.filter(i => i.id !== item.id);
+                                onUpdateProfile({ ...profile, inventory: filteredInv });
+                              }
+                            }}
+                            className="p-1 rounded-md hover:bg-red-500/20 text-zinc-600 hover:text-red-400 transition-all"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                          <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[10px] font-bold text-zinc-400">
+                            x{item.quantity}
+                          </span>
+                        </div>
+                      </div>
+                      <p className="text-[10px] text-zinc-400 leading-relaxed line-clamp-2 group-hover:line-clamp-none transition-all">{item.description}</p>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="p-6 border-t border-white/5 bg-black/20">
+                <button
+                  onClick={() => {
+                    const newItemName = prompt("Item Name?");
+                    if (!newItemName) return;
+                    const newItem: any = {
+                      id: Math.random().toString(36).substr(2, 9),
+                      name: newItemName,
+                      description: "New item added to inventory.",
+                      quantity: 1,
+                      type: "Misc"
+                    };
+                    onUpdateProfile({
+                      ...profile,
+                      inventory: [...(profile.inventory || []), newItem]
+                    });
+                  }}
+                  className="w-full py-3 rounded-xl bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 text-[10px] font-bold uppercase tracking-widest border border-purple-500/20 transition-all flex items-center justify-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add Item
+                </button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         {/* Codex Sidebar */}
         <AnimatePresence>
           {showCodex && (
@@ -1022,6 +1342,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 </h3>
                 <div className="flex items-center gap-2">
                   <button 
+                    onClick={() => setIsAutoProfileEnabled(!isAutoProfileEnabled)}
+                    className={`p-2 rounded-lg transition-all ${isAutoProfileEnabled ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-500 hover:text-purple-400'}`}
+                    title={isAutoProfileEnabled ? "Auto-character update enabled" : "Auto-character update disabled"}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${isAutoProfileEnabled ? 'animate-spin-slow' : ''}`} />
+                  </button>
+                  <button 
                     onClick={() => setIsAutoCodexEnabled(!isAutoCodexEnabled)}
                     className={`p-2 rounded-lg transition-all ${isAutoCodexEnabled ? 'text-blue-400 bg-blue-500/10' : 'text-zinc-500 hover:text-blue-400'}`}
                     title={isAutoCodexEnabled ? "Auto-scan enabled" : "Auto-scan disabled"}
@@ -1035,6 +1362,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     title="Scan story for new entries"
                   >
                     {isAutoPopulatingCodex ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                  </button>
+                  <button 
+                    onClick={() => handleAutoUpdateProfile(true)}
+                    disabled={isUpdatingProfile || messages.length < 5}
+                    className={`p-2 rounded-lg transition-all ${isUpdatingProfile ? 'text-purple-400 animate-pulse' : 'text-zinc-500 hover:text-purple-400 hover:bg-white/5'}`}
+                    title="Update character profile from history"
+                  >
+                    {isUpdatingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                   </button>
                   <button onClick={() => setShowCodex(false)} className="text-zinc-500 hover:text-white">
                     <CloseIcon className="w-5 h-5" />
@@ -1096,24 +1431,76 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
                 <div className="space-y-4">
                   {codexEntries.map(entry => (
-                    <div key={entry.id} className="group p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-[8px] font-bold uppercase tracking-tighter px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                          {entry.category}
-                        </span>
-                        <button 
-                          onClick={() => setConfirmModal({
-                            isOpen: true,
-                            title: 'Delete Entry',
-                            message: `Are you sure you want to delete "${entry.title}"?`,
-                            type: 'delete',
-                            targetId: entry.id
-                          })} 
-                          className="opacity-0 group-hover:opacity-100 p-1 text-zinc-600 hover:text-red-400 transition-all"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
+                    <div key={entry.id} className="group p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all overflow-hidden">
+                      {entry.imageUrl ? (
+                        <div className="relative h-32 -mx-4 -mt-4 mb-4 overflow-hidden">
+                          <img 
+                            src={entry.imageUrl} 
+                            alt={entry.title} 
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
+                            referrerPolicy="no-referrer"
+                          />
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+                          <button 
+                            onClick={() => handleGenerateCodexImage(entry)}
+                            className="absolute bottom-2 right-2 p-1.5 glass-panel rounded-lg text-white/50 hover:text-white transition-all opacity-0 group-hover:opacity-100"
+                            title="Regenerate Image"
+                          >
+                            <RefreshCw className={`w-3 h-3 ${isGeneratingCodexImage === entry.id ? 'animate-spin' : ''}`} />
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[8px] font-bold uppercase tracking-tighter px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            {entry.category}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            {(entry.category === 'Location' || entry.category === 'Item') && (
+                              <button 
+                                onClick={() => handleGenerateCodexImage(entry)}
+                                disabled={isGeneratingCodexImage === entry.id}
+                                className="p-1 text-zinc-600 hover:text-emerald-400 transition-all"
+                                title="Generate Image"
+                              >
+                                {isGeneratingCodexImage === entry.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                              </button>
+                            )}
+                            <button 
+                              onClick={() => setConfirmModal({
+                                isOpen: true,
+                                title: 'Delete Entry',
+                                message: `Are you sure you want to delete "${entry.title}"?`,
+                                type: 'delete',
+                                targetId: entry.id
+                              })} 
+                              className="p-1 text-zinc-600 hover:text-red-400 transition-all"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                      
+                      {entry.imageUrl && (
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="text-[8px] font-bold uppercase tracking-tighter px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                            {entry.category}
+                          </span>
+                          <button 
+                            onClick={() => setConfirmModal({
+                              isOpen: true,
+                              title: 'Delete Entry',
+                              message: `Are you sure you want to delete "${entry.title}"?`,
+                              type: 'delete',
+                              targetId: entry.id
+                            })} 
+                            className="p-1 text-zinc-600 hover:text-red-400 transition-all"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+
                       <h4 className="text-sm font-bold text-white mb-1">{entry.title}</h4>
                       <p className="text-xs text-zinc-500 leading-relaxed line-clamp-3 group-hover:line-clamp-none transition-all">{entry.content}</p>
                     </div>
@@ -1284,6 +1671,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
           {/* Input Area */}
           <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
+
             <AnimatePresence>
               {showRefineSettings && (
                 <motion.div

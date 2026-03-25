@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, Component, ErrorInfo, ReactNode } from 'react';
 import { get, set, del } from 'idb-keyval';
 import { motion, AnimatePresence } from 'motion/react';
+import { Toaster, toast } from 'sonner';
 import { CharacterCreator } from './components/CharacterCreator';
 import { ChatInterface, Message } from './components/ChatInterface';
 import { CharacterEditor } from './components/CharacterEditor';
@@ -62,14 +63,14 @@ function ConfirmationModal({ isOpen, title, message, onConfirm, onCancel }: Conf
 }
 
 // Error Boundary Component
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
   constructor(props: { children: ReactNode }) {
     super(props);
-    this.state = { hasError: false };
+    this.state = { hasError: false, error: null };
   }
 
-  static getDerivedStateFromError(_: Error) {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -80,23 +81,39 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     if (this.state.hasError) {
       return (
         <div className="min-h-screen bg-[#050505] flex flex-col items-center justify-center p-8 text-center">
+          <div className="w-20 h-20 bg-red-500/10 rounded-full flex items-center justify-center mb-8 border border-red-500/20">
+            <AlertCircle className="w-10 h-10 text-red-500" />
+          </div>
           <h2 className="text-3xl font-serif text-white mb-4">Something went wrong</h2>
-          <p className="text-zinc-500 mb-8 max-w-md">The narrative engine encountered an unexpected error. Don't worry, your progress is likely safe in the library.</p>
-          <button 
-            onClick={() => window.location.reload()}
-            className="px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-500 transition-all"
-          >
-            Reload Application
-          </button>
-          <button 
-            onClick={async () => {
-              await del(STORAGE_KEYS.CURRENT_SCENARIO_ID);
-              window.location.href = '/';
-            }}
-            className="mt-4 text-zinc-500 hover:text-white text-sm underline"
-          >
-            Return to Library
-          </button>
+          <p className="text-zinc-500 mb-4 max-w-md">The narrative engine encountered an unexpected error. Don't worry, your progress is likely safe in the library.</p>
+          {this.state.error && (
+            <div className="bg-red-500/5 border border-red-500/10 rounded-lg p-4 mb-8 max-w-xl w-full text-left overflow-auto max-h-40">
+              <code className="text-xs text-red-400/70 font-mono whitespace-pre-wrap">
+                {this.state.error.toString()}
+              </code>
+            </div>
+          )}
+          <div className="flex flex-col sm:flex-row gap-4">
+            <button 
+              onClick={() => window.location.reload()}
+              className="px-8 py-3 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-900/20"
+            >
+              Reload Application
+            </button>
+            <button 
+              onClick={async () => {
+                try {
+                  await del(STORAGE_KEYS.CURRENT_SCENARIO_ID);
+                  window.location.href = '/';
+                } catch (e) {
+                  window.location.href = '/';
+                }
+              }}
+              className="px-8 py-3 bg-white/5 text-zinc-400 rounded-xl font-bold hover:text-white hover:bg-white/10 transition-all"
+            >
+              Return to Library
+            </button>
+          </div>
         </div>
       );
     }
@@ -197,6 +214,21 @@ export default function App() {
 
   const currentScenario = currentScenarioId ? scenarioMap.get(currentScenarioId) : null;
 
+  const backgroundColors = useMemo(() => {
+    const tone = currentScenario?.profile.storyTone || 'Dramatic';
+    switch (tone) {
+      case 'Gritty': return { primary: 'bg-zinc-500/5', secondary: 'bg-slate-500/5' };
+      case 'Whimsical': return { primary: 'bg-amber-500/5', secondary: 'bg-pink-500/5' };
+      case 'Horror': return { primary: 'bg-red-500/5', secondary: 'bg-purple-900/10' };
+      case 'Romantic': return { primary: 'bg-rose-500/5', secondary: 'bg-pink-400/5' };
+      case 'Cyberpunk': return { primary: 'bg-cyan-500/5', secondary: 'bg-fuchsia-500/5' };
+      case 'Noir': return { primary: 'bg-zinc-800/5', secondary: 'bg-black/20' };
+      case 'Adventure': return { primary: 'bg-orange-500/5', secondary: 'bg-teal-500/5' };
+      case 'Dramatic':
+      default: return { primary: 'bg-emerald-500/5', secondary: 'bg-blue-500/5' };
+    }
+  }, [currentScenario?.profile.storyTone]);
+
   // Debounced save to IndexedDB
   useEffect(() => {
     if (!isScenariosLoaded) return;
@@ -208,6 +240,7 @@ export default function App() {
         .catch(e => {
           console.error("Failed to save scenarios to IndexedDB", e);
           setSaveStatus('error');
+          toast.error("Failed to save your progress to local storage.");
         });
     }, 1000);
 
@@ -259,6 +292,7 @@ export default function App() {
       if (type === 'reset') {
         setCurrentScenarioId(null);
       }
+      toast.success(type === 'delete' ? "Scenario deleted" : "Scenario reset");
     }
 
     setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }));
@@ -294,9 +328,10 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEYS.DRAFT_STEP);
       localStorage.removeItem(STORAGE_KEYS.DRAFT_SETUP_TYPE);
       // We keep the rescue backup for one more session just in case
-    } catch (e) {
+      toast.success("Character created successfully!");
+    } catch (e: any) {
       console.error("Failed to create character:", e);
-      alert("There was an error saving your character. Please try again.");
+      toast.error(`Failed to create character: ${e.message || 'Unknown error'}`);
     }
   };
 
@@ -308,6 +343,7 @@ export default function App() {
         : s
     ));
     setIsEditing(false);
+    toast.success("Character updated successfully!");
   };
 
   const handleCarryOver = (profile: CharacterProfile, avatarBase64: string) => {
@@ -326,6 +362,7 @@ export default function App() {
     setCurrentScenarioId(newScenario.id);
     setIsCreating(false);
     setIsEditing(false);
+    toast.success("Character carried over to new scenario!");
   };
 
   const handleUpdateProfile = (profile: CharacterProfile) => {
@@ -358,6 +395,7 @@ export default function App() {
 
     setScenarios(prev => [...prev, newScenario]);
     setCurrentScenarioId(newScenarioId);
+    toast.success("Scenario branched into alternate timeline!");
   };
 
   const handleSettingsClose = () => {
@@ -371,11 +409,28 @@ export default function App() {
 
   return (
     <ErrorBoundary>
+      <Toaster 
+        position="top-right" 
+        toastOptions={{
+          className: 'glass-panel border border-white/10 text-white rounded-2xl p-4 shadow-2xl',
+          style: {
+            background: 'rgba(10, 10, 10, 0.8)',
+            backdropFilter: 'blur(12px)',
+          }
+        }}
+      />
       <div className="min-h-screen bg-[#050505] text-zinc-100 p-4 md:p-8 flex flex-col selection:bg-emerald-500/30">
       {/* Background Ambience */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-emerald-500/5 blur-[120px] rounded-full animate-float" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-blue-500/5 blur-[120px] rounded-full animate-float" style={{ animationDelay: '-3s' }} />
+        <motion.div 
+          animate={{ backgroundColor: backgroundColors.primary.replace('bg-', '').split('/')[0] }}
+          className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${backgroundColors.primary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
+        />
+        <motion.div 
+          animate={{ backgroundColor: backgroundColors.secondary.replace('bg-', '').split('/')[0] }}
+          className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${backgroundColors.secondary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
+          style={{ animationDelay: '-3s' }} 
+        />
       </div>
 
       <header className="mb-12 flex items-center justify-between relative z-10">
