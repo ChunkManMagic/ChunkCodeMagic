@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2 } from 'lucide-react';
-import { toast } from 'sonner';
-import { AppSettings, getSettings, defaultSettings } from '../lib/gemini';
+import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2 } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
+import { AppSettings, getSettings, defaultSettings, saveSettings } from '../lib/types';
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
+import { clear } from 'idb-keyval';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -17,6 +18,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { toastSuccess, toastError } = useToast();
 
   useEffect(() => {
     setSettings(getSettings());
@@ -40,20 +42,34 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
         userAgent: navigator.userAgent
       });
       setSubmitted(true);
-      toast.success("You've been added to the waitlist!");
+      toastSuccess("You've been added to the waitlist!");
     } catch (err: any) {
       console.error('Waitlist Error:', err);
       setError('Failed to join waitlist. Please try again.');
-      toast.error("Failed to join waitlist. Please check your connection.");
+      toastError("Failed to join waitlist. Please check your connection.");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleSave = () => {
-    localStorage.setItem('personaforge_settings', JSON.stringify(settings));
-    toast.success("Settings saved");
+    saveSettings(settings);
+    toastSuccess("Settings saved");
     onClose();
+  };
+
+  const handleClearData = async () => {
+    if (window.confirm("Are you sure you want to clear ALL app data? This will delete all your scenarios, characters, and settings. This cannot be undone.")) {
+      try {
+        await clear();
+        localStorage.clear();
+        toastSuccess("All data cleared. Reloading...");
+        setTimeout(() => window.location.reload(), 1500);
+      } catch (e) {
+        console.error("Failed to clear data", e);
+        toastError("Failed to clear data");
+      }
+    }
   };
 
   return (
@@ -89,7 +105,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 onChange={e => handleChange('activeModel', e.target.value)}
                 className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
               >
-                <option value="gemini-3-flash-preview">gemini-3-flash-preview (Free)</option>
+                <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview (Lite)</option>
+                <option value="gemini-2.5-flash-preview-05-20">gemini-2.5-flash-preview (Stable)</option>
                 <option value="google/gemini-flash-1.5-8b">google/gemini-flash-1.5-8b (Free)</option>
                 <option value="meta-llama/llama-3-8b-instruct:free">meta-llama/llama-3-8b-instruct:free</option>
               </select>
@@ -284,7 +301,14 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           </div>
         </div>
 
-        <div className="p-4 border-t border-white/10 flex justify-end">
+        <div className="p-4 border-t border-white/10 flex justify-between items-center">
+          <button 
+            onClick={handleClearData}
+            className="flex items-center gap-2 px-4 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-xl transition-colors text-sm font-medium"
+          >
+            <Trash2 className="w-4 h-4" />
+            Clear Data
+          </button>
           <button 
             onClick={handleSave}
             className="flex items-center gap-2 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-colors font-medium"

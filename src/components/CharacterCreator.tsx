@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { toast } from 'sonner';
-import { Sparkles, Loader2, User, Image as ImageIcon, Wand2, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw } from 'lucide-react';
-import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem } from '../lib/gemini';
+import { Sparkles, Loader2, User, Image as ImageIcon, Wand2, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw, Volume2 } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
+import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech } from '../lib/gemini';
 import { CharacterEditor } from './CharacterEditor';
 
 import { STORAGE_KEYS } from '../constants';
@@ -55,14 +55,31 @@ const DEFAULT_PROFILE: CharacterProfile = {
   keyLocations: '',
   characterFlaws: '',
   secretMotive: '',
+  speechPattern: '',
+  likesAndDislikes: '',
+  coreBeliefs: '',
+  quirks: '',
   gameSystem: '',
-  questObjective: ''
+  questObjective: '',
+  scenarioStakes: '',
+  scenarioConflict: '',
+  timePeriod: '',
+  factions: '',
+  magicOrTechnologyLevel: '',
+  incitingIncident: '',
+  dungeonMasterStyle: '',
+  rulesComplexity: '',
+  difficultyLevel: '',
+  partyComposition: '',
+  startingEquipment: '',
+  currentCampaignArc: ''
 };
 
 export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCreatorProps) {
   const [step, setStep] = useState<CreatorStep>('mode');
   const [appMode, setAppMode] = useState<AppMode>(AppMode.ROLEPLAY);
   const [setupType, setSetupType] = useState<'quick' | 'detailed'>('quick');
+  const { toastSuccess, toastError } = useToast();
   const [idea, setIdea] = useState('');
   const [detailedProfile, setDetailedProfile] = useState<CharacterProfile>(DEFAULT_PROFILE);
 
@@ -71,8 +88,46 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
   const [draftProfile, setDraftProfile] = useState<CharacterProfile | null>(null);
   const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
+  const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
 
   const isFirstRender = useRef(true);
+
+  const handlePreviewVoice = async () => {
+    if (isPreviewingVoice) return;
+    setIsPreviewingVoice(true);
+    try {
+      const text = `Hello there! I am ${detailedProfile.name || 'your character'}. This is how my voice sounds.`;
+      const base64Audio = await generateSpeech(text, detailedProfile.voiceName || 'Kore', detailedProfile.voiceSettings, detailedProfile.storyTone || 'Neutral');
+      if (base64Audio) {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const binaryString = window.atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        
+        source.onended = () => {
+          setIsPreviewingVoice(false);
+          ctx.close();
+        };
+        
+        source.start(0);
+      } else {
+        setIsPreviewingVoice(false);
+        toastError("Failed to generate voice preview");
+      }
+    } catch (err: any) {
+      console.error("Voice preview error:", err);
+      toastError(`Voice preview failed: ${err.message || 'Unknown error'}`);
+      setIsPreviewingVoice(false);
+    }
+  };
 
   // Consolidated loading logic
   useEffect(() => {
@@ -204,16 +259,16 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
       setStep('profile');
       const profile = await generateCharacterProfile(idea, appMode);
       setDraftProfile(profile);
-      toast.success("Character profile generated!");
+      toastSuccess("Character profile generated!");
       setStep('avatar');
       const avatarBase64 = await generateAvatar(profile);
       setDraftAvatar(avatarBase64);
-      toast.success("Avatar generated!");
+      toastSuccess("Avatar generated!");
       setStep('review');
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to generate character. Please try again.");
-      toast.error(`Generation failed: ${err.message || 'Unknown error'}`);
+      toastError(`Generation failed: ${err.message || 'Unknown error'}`);
       setStep('idle');
     } finally {
       setIsGenerating(false);
@@ -252,10 +307,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
     try {
       const refinedTraits = await refineTraits(detailedProfile);
       setDetailedProfile(prev => ({ ...prev, traits: refinedTraits }));
-      toast.success("Traits refined");
+      toastSuccess("Traits refined");
     } catch (err: any) {
       console.error("Refine traits error:", err);
-      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
+      toastError(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -275,12 +330,12 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
       const avatarBase64 = await generateAvatar(detailedProfile);
       setDraftAvatar(avatarBase64);
       setDraftProfile({ ...detailedProfile, mode: appMode });
-      toast.success("Avatar generated!");
+      toastSuccess("Avatar generated!");
       setStep('review');
     } catch (err: any) {
       console.error(err);
       setError(err.message || "Failed to generate avatar. Please try again.");
-      toast.error(`Avatar generation failed: ${err.message || 'Unknown error'}`);
+      toastError(`Avatar generation failed: ${err.message || 'Unknown error'}`);
       setStep('idle');
     } finally {
       setIsGenerating(false);
@@ -305,10 +360,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
         refined = await refineField(field as any, detailedProfile);
         setDetailedProfile(prev => ({ ...prev, [field]: refined }));
       }
-      toast.success(`${field.replace('player_', '')} refined`);
+      toastSuccess(`${field.replace('player_', '')} refined`);
     } catch (err: any) {
       console.error("Refine field error:", err);
-      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
+      toastError(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -626,6 +681,126 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                             placeholder="e.g., The Spire, The Underbelly, Neon Market..."
                           />
                         </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Scenario Stakes</label>
+                            <button 
+                              onClick={() => handleRefineField('scenarioStakes')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'scenarioStakes' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.scenarioStakes}
+                            onChange={e => setDetailedProfile({...detailedProfile, scenarioStakes: e.target.value})}
+                            placeholder="e.g., The survival of the last human colony..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Core Conflict</label>
+                            <button 
+                              onClick={() => handleRefineField('scenarioConflict')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'scenarioConflict' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.scenarioConflict}
+                            onChange={e => setDetailedProfile({...detailedProfile, scenarioConflict: e.target.value})}
+                            placeholder="e.g., Man vs Machine, Survival against the elements..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Time Period</label>
+                            <button 
+                              onClick={() => handleRefineField('timePeriod')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'timePeriod' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.timePeriod}
+                            onChange={e => setDetailedProfile({...detailedProfile, timePeriod: e.target.value})}
+                            placeholder="e.g., Neo-Victorian 2099, High Fantasy Medieval..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Factions</label>
+                            <button 
+                              onClick={() => handleRefineField('factions')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'factions' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.factions}
+                            onChange={e => setDetailedProfile({...detailedProfile, factions: e.target.value})}
+                            placeholder="e.g., The Crimson Syndicate, The Iron Guard..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Magic / Tech Level</label>
+                            <button 
+                              onClick={() => handleRefineField('magicOrTechnologyLevel')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'magicOrTechnologyLevel' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.magicOrTechnologyLevel}
+                            onChange={e => setDetailedProfile({...detailedProfile, magicOrTechnologyLevel: e.target.value})}
+                            placeholder="e.g., Low magic, high steampunk technology..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Inciting Incident</label>
+                            <button 
+                              onClick={() => handleRefineField('incitingIncident')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'incitingIncident' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.incitingIncident}
+                            onChange={e => setDetailedProfile({...detailedProfile, incitingIncident: e.target.value})}
+                            placeholder="e.g., The king was assassinated yesterday..."
+                          />
+                        </div>
                       </div>
                     )}
 
@@ -672,6 +847,86 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                             placeholder="e.g., Seeking revenge for a lost sibling..."
                           />
                         </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Speech Pattern</label>
+                            <button 
+                              onClick={() => handleRefineField('speechPattern')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'speechPattern' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.speechPattern}
+                            onChange={e => setDetailedProfile({...detailedProfile, speechPattern: e.target.value})}
+                            placeholder="e.g., Uses archaic words, stutters when nervous..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Likes & Dislikes</label>
+                            <button 
+                              onClick={() => handleRefineField('likesAndDislikes')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'likesAndDislikes' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.likesAndDislikes}
+                            onChange={e => setDetailedProfile({...detailedProfile, likesAndDislikes: e.target.value})}
+                            placeholder="e.g., Loves sweet tea, hates loud noises..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Core Beliefs</label>
+                            <button 
+                              onClick={() => handleRefineField('coreBeliefs')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'coreBeliefs' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.coreBeliefs}
+                            onChange={e => setDetailedProfile({...detailedProfile, coreBeliefs: e.target.value})}
+                            placeholder="e.g., The strong must protect the weak..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Quirks</label>
+                            <button 
+                              onClick={() => handleRefineField('quirks')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'quirks' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.quirks}
+                            onChange={e => setDetailedProfile({...detailedProfile, quirks: e.target.value})}
+                            placeholder="e.g., Always flips a coin before making a decision..."
+                          />
+                        </div>
                       </div>
                     )}
 
@@ -716,6 +971,126 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                             value={detailedProfile.questObjective}
                             onChange={e => setDetailedProfile({...detailedProfile, questObjective: e.target.value})}
                             placeholder="e.g., Retrieve the Crystal of Aethelgard..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">DM Style</label>
+                            <button 
+                              onClick={() => handleRefineField('dungeonMasterStyle')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'dungeonMasterStyle' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.dungeonMasterStyle}
+                            onChange={e => setDetailedProfile({...detailedProfile, dungeonMasterStyle: e.target.value})}
+                            placeholder="e.g., Ruthless, Narrative-focused, Rule-of-Cool..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Rules Complexity</label>
+                            <button 
+                              onClick={() => handleRefineField('rulesComplexity')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'rulesComplexity' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.rulesComplexity}
+                            onChange={e => setDetailedProfile({...detailedProfile, rulesComplexity: e.target.value})}
+                            placeholder="e.g., Simple, Moderate, Hardcore Simulation..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Difficulty Level</label>
+                            <button 
+                              onClick={() => handleRefineField('difficultyLevel')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'difficultyLevel' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.difficultyLevel}
+                            onChange={e => setDetailedProfile({...detailedProfile, difficultyLevel: e.target.value})}
+                            placeholder="e.g., Forgiving, Brutal, Balanced..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Party Composition</label>
+                            <button 
+                              onClick={() => handleRefineField('partyComposition')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'partyComposition' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <input 
+                            type="text"
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.partyComposition}
+                            onChange={e => setDetailedProfile({...detailedProfile, partyComposition: e.target.value})}
+                            placeholder="e.g., Solo rogue, Paladin and Wizard duo..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Starting Equipment</label>
+                            <button 
+                              onClick={() => handleRefineField('startingEquipment')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'startingEquipment' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.startingEquipment}
+                            onChange={e => setDetailedProfile({...detailedProfile, startingEquipment: e.target.value})}
+                            placeholder="e.g., Basic adventuring gear, 50 gold..."
+                          />
+                        </div>
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Current Campaign Arc</label>
+                            <button 
+                              onClick={() => handleRefineField('currentCampaignArc')}
+                              disabled={isRefiningField !== null}
+                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                            >
+                              {isRefiningField === 'currentCampaignArc' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                              MAGIC REFINE
+                            </button>
+                          </div>
+                          <textarea 
+                            rows={2}
+                            className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm"
+                            value={detailedProfile.currentCampaignArc}
+                            onChange={e => setDetailedProfile({...detailedProfile, currentCampaignArc: e.target.value})}
+                            placeholder="e.g., The Search for the Lost Artifact..."
                           />
                         </div>
                       </div>
@@ -784,7 +1159,17 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Voice Persona</label>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Voice Persona</label>
+                        <button
+                          onClick={handlePreviewVoice}
+                          disabled={isPreviewingVoice}
+                          className="text-[10px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50"
+                        >
+                          {isPreviewingVoice ? <Loader2 className="w-3 h-3 animate-spin" /> : <Volume2 className="w-3 h-3" />}
+                          PREVIEW
+                        </button>
+                      </div>
                       <div className="grid grid-cols-5 gap-2 mb-4">
                         {['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'].map(v => (
                           <button

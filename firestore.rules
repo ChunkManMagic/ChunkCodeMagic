@@ -1,6 +1,91 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+    function isValidUser(data) {
+      return data.uid is string && data.uid == request.auth.uid &&
+             data.email is string && data.email.size() > 0;
+    }
+
+    function isValidScenario(data) {
+      return data.id is string && data.profile is map &&
+             data.lastUpdated is int;
+    }
+
+    function isValidMessage(data) {
+      return data.id is string && data.role in ['user', 'model'] &&
+             data.text is string;
+    }
+
+    function isValidCodexEntry(data) {
+      return data.id is string && data.title is string &&
+             data.content is string && data.category is string;
+    }
+
+    function isValidInventoryItem(data) {
+      return data.id is string && data.name is string &&
+             data.description is string;
+    }
+
+    function isValidSummary(data) {
+      return data.text is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // User profiles
+    match /users/{userId} {
+      allow read, write: if isOwner(userId) && (request.method != 'create' || isValidUser(request.resource.data));
+      
+      // Scenarios subcollection
+      match /scenarios/{scenarioId} {
+        allow read, write: if isOwner(userId) && (request.method != 'create' && request.method != 'update' || isValidScenario(request.resource.data));
+        
+        // Messages
+        match /messages/{messageId} {
+          allow read, write: if isOwner(userId) && (request.method != 'create' && request.method != 'update' || isValidMessage(request.resource.data));
+        }
+        
+        // Codex
+        match /codex/{entryId} {
+          allow read, write: if isOwner(userId) && (request.method != 'create' && request.method != 'update' || isValidCodexEntry(request.resource.data));
+        }
+        
+        // Inventory
+        match /inventory/{itemId} {
+          allow read, write: if isOwner(userId) && (request.method != 'create' && request.method != 'update' || isValidInventoryItem(request.resource.data));
+        }
+        
+        // Summary
+        match /summary/current {
+          allow read, write: if isOwner(userId) && (request.method != 'create' && request.method != 'update' || isValidSummary(request.resource.data));
+        }
+      }
+    }
+
     // Allow anyone to join the waitlist
     match /premium_waitlist/{docId} {
       allow create: if request.resource.data.keys().hasAll(['email', 'genre', 'timestamp']) &&

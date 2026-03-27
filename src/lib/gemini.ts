@@ -1,126 +1,16 @@
 import { GoogleGenAI, Type } from "@google/genai";
+import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings } from "./types";
 
-export enum AppMode {
-  SCENARIO = 'Scenario',
-  ROLEPLAY = 'Roleplay',
-  GAME = 'Game'
-}
+export { AppMode };
+export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
 
-export interface InventoryItem {
-  id: string;
-  name: string;
-  description: string;
-  quantity: number;
-  type: 'Weapon' | 'Armor' | 'Consumable' | 'Quest' | 'Misc';
-  rarity?: 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
-  value?: string;
-  imageUrl?: string;
-}
-
-export interface PlayerProfile {
-  name: string;
-  description: string;
-  personality?: string;
-  backstory?: string;
-  appearance?: string;
-  clothing?: string;
-  accessories?: string;
-  hairStyle?: string;
-  hairColor?: string;
-  eyeColor?: string;
-}
-
-export interface CharacterProfile {
-  mode: AppMode;
-  name: string;
-  personality: string;
-  backstory: string;
-  appearance: string;
-  clothing?: string;
-  accessories?: string;
-  hairStyle?: string;
-  hairColor?: string;
-  eyeColor?: string;
-  voiceName: string;
-  voiceSettings: {
-    pitch: string;
-    speed: string;
-    accent: string;
-  };
-  traits: {
-    friendliness?: number;
-    assertiveness?: number;
-    empathy?: number;
-    danger?: number;
-    mystery?: number;
-    supernatural?: number;
-    strictness?: number;
-    generosity?: number;
-    lethality?: number;
-    [key: string]: number | undefined;
-  };
-  storyTone: string;
-  relationship: string;
-  playerProfile: PlayerProfile;
-  inventory?: InventoryItem[];
-  worldAtmosphere?: string;
-  keyLocations?: string;
-  characterFlaws?: string;
-  secretMotive?: string;
-  gameSystem?: string;
-  questObjective?: string;
-}
-
-export interface Scenario {
-  id: string;
-  profile: CharacterProfile;
-  avatarBase64: string;
-  lastUpdated: number;
-}
-
-export interface CodexEntry {
-  id: string;
-  title: string;
-  content: string;
-  category: 'Lore' | 'Mechanics' | 'Location' | 'Item';
-  imageUrl?: string;
-}
-
-export interface AppSettings {
-  activeTextProvider: 'Google' | 'OpenRouter';
-  activeModel: string;
-  voiceEngine: 'Cinematic' | 'Fast Browser' | 'ElevenLabs' | 'OpenAI';
-  elevenLabsVoiceId?: string;
-  elevenLabsAgentId?: string;
-  elevenLabsApiKey?: string;
-  openAiVoiceId?: string;
-  customRefineInstructions?: string;
-  premiumCustomVoices?: boolean;
-  premiumContextAnimations?: boolean;
-}
-
-export const defaultSettings: AppSettings = {
-  activeTextProvider: 'Google',
-  activeModel: 'gemini-3-flash-preview',
-  voiceEngine: 'Cinematic',
-  premiumCustomVoices: true,
-  premiumContextAnimations: true
-};
-
-export function getSettings(): AppSettings {
-  try {
-    const stored = localStorage.getItem('personaforge_settings');
-    if (stored) {
-      return { ...defaultSettings, ...JSON.parse(stored) };
-    }
-  } catch (e) {
-    console.error('Failed to load settings', e);
-  }
-  return defaultSettings;
-}
-
+/**
+ * WARNING: The API key is exposed in the client bundle when using VITE_ prefixed keys.
+ * For production, use a backend proxy to keep keys secure.
+ */
 export function getGenAI() {
-  return new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY });
+  const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY;
+  return new GoogleGenAI({ apiKey });
 }
 
 export function generateId(): string {
@@ -131,38 +21,76 @@ export function generateId(): string {
   }
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
     const errorMessage = error?.message || String(error);
+    const status = error?.status || error?.code;
     
-    // Handle specific Gemini errors
     if (errorMessage.includes('API key not valid')) {
       throw new Error("Invalid Gemini API Key. Please check your settings.");
     }
     
+    if (status === 403 || errorMessage.includes('PERMISSION_DENIED') || errorMessage.includes('403')) {
+      throw new Error("Permission Denied: The current model may not be available with the default key. Try switching to a 'Stable' model in Settings.");
+    }
+
     if (errorMessage.includes('User location is not supported')) {
       throw new Error("Gemini is not available in your current location.");
     }
 
-    if (retries > 0 && (error?.status === 429 || error?.code === 429 || errorMessage.includes('429') || errorMessage.includes('quota'))) {
+    if (retries > 0 && (status === 429 || errorMessage.includes('429') || errorMessage.includes('quota'))) {
       console.warn(`Rate limit hit, retrying in ${delay}ms... (${retries} retries left)`);
-      // Add jitter to delay
       const jitter = Math.random() * 1000;
       await new Promise(resolve => setTimeout(resolve, delay + jitter));
       return withRetry(fn, retries - 1, delay * 2);
     }
     
-    console.error("Gemini API Error:", error);
     throw error;
   }
+}
+
+function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEntry[], currentSummary: string): string {
+  const codexContext = codexEntries.length > 0 
+    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
+    : '';
+
+  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
+  
+  const modeSpecificContext = profile.mode === AppMode.SCENARIO 
+    ? `\nSCENARIO CONTEXT:\nStakes: ${profile.scenarioStakes || 'Not specified'}\nConflict: ${profile.scenarioConflict || 'Not specified'}\nAtmosphere: ${profile.worldAtmosphere || 'Not specified'}\nTime Period: ${profile.timePeriod || 'Not specified'}\nFactions: ${profile.factions || 'Not specified'}\nMagic/Tech Level: ${profile.magicOrTechnologyLevel || 'Not specified'}\nInciting Incident: ${profile.incitingIncident || 'Not specified'}`
+    : profile.mode === AppMode.GAME
+    ? `\nGAME CONTEXT:\nSystem: ${profile.gameSystem || 'Not specified'}\nObjective: ${profile.questObjective || 'Not specified'}\nDM Style: ${profile.dungeonMasterStyle || 'Not specified'}\nComplexity: ${profile.rulesComplexity || 'Not specified'}\nDifficulty: ${profile.difficultyLevel || 'Not specified'}\nParty: ${profile.partyComposition || 'Not specified'}\nStarting Equipment: ${profile.startingEquipment || 'Not specified'}\nCurrent Arc: ${profile.currentCampaignArc || 'Not specified'}`
+    : `\nROLEPLAY CONTEXT:\nFlaws: ${profile.characterFlaws || 'Not specified'}\nMotive: ${profile.secretMotive || 'Not specified'}\nSpeech Pattern: ${profile.speechPattern || 'Not specified'}\nLikes/Dislikes: ${profile.likesAndDislikes || 'Not specified'}\nCore Beliefs: ${profile.coreBeliefs || 'Not specified'}\nQuirks: ${profile.quirks || 'Not specified'}`;
+
+  return `You are playing the role of the following character. Stay in character at all times. Never break character.
+Name: ${profile.name}
+Personality: ${profile.personality}
+Backstory: ${profile.backstory}
+Appearance: ${profile.appearance}
+Tone: ${profile.storyTone}
+Relationship with player: ${profile.relationship}${modeSpecificContext}
+Player Name: ${profile.playerProfile?.name || 'The Protagonist'}
+Player Description: ${profile.playerProfile?.description || 'A mysterious traveler'}
+${codexContext}${summaryContext}
+If the player provides a [Director's Note: ...], use it to guide your next response, actions, or the story's direction. If the note asks a direct question, requests brainstorming, or requires an out-of-character (OOC) reply, you may provide an OOC response. You MUST wrap any OOC response in <ooc> and </ooc> tags at the very end of your message. The rest of your response must remain strictly in-character.
+`;
+}
+
+function buildHistory(messages: any[]) {
+  return messages
+    .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
+    .map(m => ({
+      role: m.role,
+      parts: m.parts
+    }));
 }
 
 export async function generateCharacterProfile(idea: string, mode: AppMode): Promise<CharacterProfile> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Generate a detailed character profile based on this idea: "${idea}" for a ${mode} mode. 
     Also generate a detailed profile for the player character that would be a good fit for this story.`,
     config: {
@@ -181,12 +109,28 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
           eyeColor: { type: Type.STRING },
           storyTone: { type: Type.STRING },
           relationship: { type: Type.STRING },
-          worldAtmosphere: { type: Type.STRING },
-          keyLocations: { type: Type.STRING },
           characterFlaws: { type: Type.STRING },
           secretMotive: { type: Type.STRING },
+          speechPattern: { type: Type.STRING },
+          likesAndDislikes: { type: Type.STRING },
+          coreBeliefs: { type: Type.STRING },
+          quirks: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocations: { type: Type.STRING },
+          scenarioStakes: { type: Type.STRING },
+          scenarioConflict: { type: Type.STRING },
+          timePeriod: { type: Type.STRING },
+          factions: { type: Type.STRING },
+          magicOrTechnologyLevel: { type: Type.STRING },
+          incitingIncident: { type: Type.STRING },
           gameSystem: { type: Type.STRING },
           questObjective: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplexity: { type: Type.STRING },
+          difficultyLevel: { type: Type.STRING },
+          partyComposition: { type: Type.STRING },
+          startingEquipment: { type: Type.STRING },
+          currentCampaignArc: { type: Type.STRING },
           playerProfile: {
             type: Type.OBJECT,
             properties: {
@@ -232,8 +176,24 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
     keyLocations: data.keyLocations || "",
     characterFlaws: data.characterFlaws || "",
     secretMotive: data.secretMotive || "",
+    speechPattern: data.speechPattern || "",
+    likesAndDislikes: data.likesAndDislikes || "",
+    coreBeliefs: data.coreBeliefs || "",
+    quirks: data.quirks || "",
     gameSystem: data.gameSystem || "",
-    questObjective: data.questObjective || ""
+    questObjective: data.questObjective || "",
+    scenarioStakes: data.scenarioStakes || "",
+    scenarioConflict: data.scenarioConflict || "",
+    timePeriod: data.timePeriod || "",
+    factions: data.factions || "",
+    magicOrTechnologyLevel: data.magicOrTechnologyLevel || "",
+    incitingIncident: data.incitingIncident || "",
+    dungeonMasterStyle: data.dungeonMasterStyle || "",
+    rulesComplexity: data.rulesComplexity || "",
+    difficultyLevel: data.difficultyLevel || "",
+    partyComposition: data.partyComposition || "",
+    startingEquipment: data.startingEquipment || "",
+    currentCampaignArc: data.currentCampaignArc || ""
   };
 }
 
@@ -251,9 +211,12 @@ The character should be the central focus, looking towards the camera.`;
   const response = await withRetry(() => ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
-      parts: [
-        { text: prompt }
-      ]
+      parts: [{ text: prompt }]
+    },
+    config: {
+      imageConfig: {
+        aspectRatio: "1:1"
+      }
     }
   }));
   
@@ -279,9 +242,12 @@ The subject should be the central focus, capturing the essence of the descriptio
   const response = await withRetry(() => ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
-      parts: [
-        { text: prompt }
-      ]
+      parts: [{ text: prompt }]
+    },
+    config: {
+      imageConfig: {
+        aspectRatio: "1:1"
+      }
     }
   }));
   
@@ -306,9 +272,12 @@ Style: RPG item icon, digital art, detailed, atmospheric, professional concept a
   const response = await withRetry(() => ai.models.generateContent({
     model: 'gemini-2.5-flash-image',
     contents: {
-      parts: [
-        { text: prompt }
-      ]
+      parts: [{ text: prompt }]
+    },
+    config: {
+      imageConfig: {
+        aspectRatio: "1:1"
+      }
     }
   }));
   
@@ -442,7 +411,7 @@ export async function refineTraits(profile: CharacterProfile): Promise<any> {
 export async function summarizeHistory(history: any[], previousSummary: string = ""): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Summarize the following story history. Keep it concise but include key events, character development, and important details.
 Previous Summary: ${previousSummary}
 New Events:
@@ -452,72 +421,19 @@ Please provide an updated summary.`
   return response.text?.trim() || previousSummary;
 }
 
-export async function generateTextReply(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = [], currentSummary: string = ""): Promise<string> {
-  const ai = getGenAI();
-  
-  const codexContext = codexEntries.length > 0 
-    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
-    : '';
-
-  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
-
-  const systemInstruction = `You are playing the role of the following character. Stay in character at all times. Never break character.
-Name: ${profile.name}
-Personality: ${profile.personality}
-Backstory: ${profile.backstory}
-Appearance: ${profile.appearance}
-Tone: ${profile.storyTone}
-Relationship with player: ${profile.relationship}
-Player Name: ${profile.playerProfile?.name || 'The Protagonist'}
-Player Description: ${profile.playerProfile?.description || 'A mysterious traveler'}
-${codexContext}${summaryContext}
-If the player provides a [Director's Note: ...], use it to guide your next response, actions, or the story's direction. If the note asks a direct question, requests brainstorming, or requires an out-of-character (OOC) reply, you may provide an OOC response. You MUST wrap any OOC response in <ooc> and </ooc> tags at the very end of your message. The rest of your response must remain strictly in-character.
-`;
-  const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
-    config: { systemInstruction },
-    history: history
-      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
-      .map(m => ({
-        role: m.role,
-        parts: m.parts
-      }))
-  });
-  
-  const response = await withRetry(() => chat.sendMessage({ message: userInput }));
-  return response.text || "";
+export async function streamOpenRouter(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = [], currentSummary: string = "") {
+  return generateTextReplyStream(history, profile, userInput, codexEntries, currentSummary);
 }
 
 export async function* generateTextReplyStream(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = [], currentSummary: string = "") {
   const ai = getGenAI();
   
-  const codexContext = codexEntries.length > 0 
-    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
-    : '';
+  const systemInstruction = buildSystemInstruction(profile, codexEntries, currentSummary);
 
-  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
-
-  const systemInstruction = `You are playing the role of the following character. Stay in character at all times. Never break character.
-Name: ${profile.name}
-Personality: ${profile.personality}
-Backstory: ${profile.backstory}
-Appearance: ${profile.appearance}
-Tone: ${profile.storyTone}
-Relationship with player: ${profile.relationship}
-Player Name: ${profile.playerProfile?.name || 'The Protagonist'}
-Player Description: ${profile.playerProfile?.description || 'A mysterious traveler'}
-${codexContext}${summaryContext}
-If the player provides a [Director's Note: ...], use it to guide your next response, actions, or the story's direction. If the note asks a direct question, requests brainstorming, or requires an out-of-character (OOC) reply, you may provide an OOC response. You MUST wrap any OOC response in <ooc> and </ooc> tags at the very end of your message. The rest of your response must remain strictly in-character.
-`;
   const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     config: { systemInstruction },
-    history: history
-      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
-      .map(m => ({
-        role: m.role,
-        parts: m.parts
-      }))
+    history: buildHistory(history)
   });
   
   const responseStream = await chat.sendMessageStream({ message: userInput });
@@ -546,14 +462,9 @@ Your task is to suggest a compelling next action or dialogue for the player char
 Return ONLY the suggested text, ready to be used as user input. Make it immersive, descriptive, and perfectly in-character for the player. Do not include quotes, explanations, or any other text.`;
 
   const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     config: { systemInstruction },
-    history: history
-      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
-      .map(m => ({
-        role: m.role,
-        parts: m.parts
-      }))
+    history: buildHistory(history)
   });
   
   const response = await withRetry(() => chat.sendMessage({ message: `Suggest the next action or dialogue for my character.` }));
@@ -584,7 +495,7 @@ Return them as a JSON array of strings. Each string should be a complete, immers
 Return ONLY the JSON. No other text.`;
 
   const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     config: { 
       systemInstruction,
       responseMimeType: "application/json",
@@ -593,22 +504,12 @@ Return ONLY the JSON. No other text.`;
         items: { type: Type.STRING }
       }
     },
-    history: history
-      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
-      .map(m => ({
-        role: m.role,
-        parts: m.parts
-      }))
+    history: buildHistory(history)
   });
   
   const response = await withRetry(() => chat.sendMessage({ message: `Give me 3 possible next actions.` }));
-  try {
-    const text = response.text?.trim() || "[]";
-    return JSON.parse(text);
-  } catch (e) {
-    console.error("Failed to parse multiple suggestions:", e);
-    return [];
-  }
+  const text = response.text?.trim() || "[]";
+  return JSON.parse(text);
 }
 
 export async function refineInput(input: string, profile: CharacterProfile, history: any[], customInstructions?: string): Promise<string> {
@@ -632,14 +533,9 @@ Your task is to refine the player's next input to be more descriptive, immersive
 Return ONLY the refined text. Do not include quotes, explanations, or any other text.`;
 
   const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     config: { systemInstruction },
-    history: history
-      .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
-      .map(m => ({
-        role: m.role,
-        parts: m.parts
-      }))
+    history: buildHistory(history)
   });
   
   const response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
@@ -682,7 +578,7 @@ export async function extractCodexEntries(history: any[], profile: CharacterProf
   const existingTitles = existingEntries.map(e => e.title).join(', ');
   
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Analyze the following roleplay history and character profile. Identify any significant new lore, locations, items, or mechanics that should be added to the world codex. 
 Do not suggest entries that already exist: [${existingTitles}]
 
@@ -710,18 +606,13 @@ Return a JSON array of new codex entries. Each entry must have:
     }
   }));
   
-  try {
-    return JSON.parse(response.text || "[]");
-  } catch (e) {
-    console.error("Failed to parse extracted codex entries", e);
-    return [];
-  }
+  return JSON.parse(response.text || "[]");
 }
 
 export async function refineCodexEntry(entry: Partial<CodexEntry>, profile: CharacterProfile): Promise<Partial<CodexEntry>> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Refine this codex entry to be more descriptive, immersive, and consistent with the world of ${profile.name}.
 Current Entry: ${JSON.stringify(entry)}
 World Context: ${profile.worldAtmosphere || 'Not specified'}
@@ -751,13 +642,13 @@ Return the refined entry as JSON with the same fields (title, content, category)
 export async function updateCharacterProfilesFromHistory(history: any[], profile: CharacterProfile): Promise<Partial<CharacterProfile>> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: "gemini-3.1-flash-lite-preview",
     contents: `Analyze the following roleplay history and suggest updates to the character's profile based on recent events, character development, and changes in relationships.
 Current Profile: ${JSON.stringify(profile)}
 Recent History: ${JSON.stringify(history.slice(-15))}
 
 Return a JSON object with any fields that should be updated. Only include fields that have meaningful changes.
-Fields you can update: personality, backstory, appearance, relationship, worldAtmosphere, keyLocations, characterFlaws, secretMotive, questObjective.`,
+Fields you can update: personality, backstory, appearance, relationship, worldAtmosphere, keyLocations, characterFlaws, secretMotive, questObjective, scenarioStakes, scenarioConflict, dungeonMasterStyle, rulesComplexity, speechPattern, likesAndDislikes, coreBeliefs, quirks, timePeriod, factions, magicOrTechnologyLevel, incitingIncident, difficultyLevel, partyComposition, startingEquipment, currentCampaignArc.`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -771,18 +662,29 @@ Fields you can update: personality, backstory, appearance, relationship, worldAt
           keyLocations: { type: Type.STRING },
           characterFlaws: { type: Type.STRING },
           secretMotive: { type: Type.STRING },
-          questObjective: { type: Type.STRING }
+          speechPattern: { type: Type.STRING },
+          likesAndDislikes: { type: Type.STRING },
+          coreBeliefs: { type: Type.STRING },
+          quirks: { type: Type.STRING },
+          questObjective: { type: Type.STRING },
+          scenarioStakes: { type: Type.STRING },
+          scenarioConflict: { type: Type.STRING },
+          timePeriod: { type: Type.STRING },
+          factions: { type: Type.STRING },
+          magicOrTechnologyLevel: { type: Type.STRING },
+          incitingIncident: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplexity: { type: Type.STRING },
+          difficultyLevel: { type: Type.STRING },
+          partyComposition: { type: Type.STRING },
+          startingEquipment: { type: Type.STRING },
+          currentCampaignArc: { type: Type.STRING }
         }
       }
     }
   }));
   
-  try {
-    return JSON.parse(response.text || "{}");
-  } catch (e) {
-    console.error("Failed to parse character profile updates", e);
-    return {};
-  }
+  return JSON.parse(response.text || "{}");
 }
 
 export async function generateVeoAnimation() {

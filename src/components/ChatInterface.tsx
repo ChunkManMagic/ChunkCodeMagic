@@ -1,11 +1,19 @@
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { get, set } from 'idb-keyval';
-import { toast } from 'sonner';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Plus, Trash2, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package, Image as ImageIcon } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
+import { useVoice } from '../hooks/useVoice';
+import { useCodex } from '../hooks/useCodex';
+import { useInventory } from '../hooks/useInventory';
+import { useChatState } from '../hooks/useChatState';
+import { useProfileUpdate } from '../hooks/useProfileUpdate';
+import { useFirestoreSync } from '../hooks/useFirestoreSync';
+import { InventorySidebar } from './chat/InventorySidebar';
+import { CodexSidebar } from './chat/CodexSidebar';
 import { useConversation } from '@elevenlabs/react';
-import { CharacterProfile, refineInput, generateSpeech, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, extractCodexEntries, refineCodexEntry, summarizeHistory, getSettings, updateCharacterProfilesFromHistory, generateCodexImage, extractInventoryUpdates, generateItemImage, InventoryItem } from '../lib/gemini';
+import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory } from '../lib/gemini';
+import { getSettings, saveSettings } from '../lib/types';
 
 export interface Message {
   id: string;
@@ -36,8 +44,6 @@ const parseMessageContent = (text: string, role: string) => {
   return { mainText: text, oocText: null };
 };
 
-import { STORAGE_KEYS } from '../constants';
-
 interface ChatInterfaceProps {
   profile: CharacterProfile;
   avatarBase64: string;
@@ -49,23 +55,39 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onBranchScenario }: ChatInterfaceProps) {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [storySummary, setStorySummary] = useState<string>('');
-  const [isLoaded, setIsLoaded] = useState(false);
-  const [codexEntries, setCodexEntries] = useState<CodexEntry[]>([]);
+  const { messages, setMessages, addMessage, updateMessage, storySummary, setStorySummary, updateSummary, isLoaded } = useChatState(scenarioId);
+  const { user, saveMessage, saveSummary } = useFirestoreSync();
   const [showCodex, setShowCodex] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [newCodexEntry, setNewCodexEntry] = useState<Partial<CodexEntry>>({ category: 'Lore' });
-  const [isAddingCodex, setIsAddingCodex] = useState(false);
-  const [isAutoPopulatingCodex, setIsAutoPopulatingCodex] = useState(false);
-  const [isAutoCodexEnabled, setIsAutoCodexEnabled] = useState(false);
-  const [isAutoProfileEnabled, setIsAutoProfileEnabled] = useState(false);
-  const [isRefiningCodexEntry, setIsRefiningCodexEntry] = useState(false);
-  const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
-  const [isScanningInventory, setIsScanningInventory] = useState(false);
-  const [isAutoInventoryEnabled, setIsAutoInventoryEnabled] = useState(false);
-  const [isGeneratingCodexImage, setIsGeneratingCodexImage] = useState<string | null>(null);
-  const [isGeneratingItemImage, setIsGeneratingItemImage] = useState<string | null>(null);
+  const {
+    isAutoProfileEnabled,
+    setIsAutoProfileEnabled,
+    isUpdatingProfile,
+    handleAutoUpdateProfile
+  } = useProfileUpdate(profile, onUpdateProfile);
+
+  const {
+    codexEntries,
+    setCodexEntries,
+    isAutoPopulatingCodex,
+    isAutoCodexEnabled,
+    setIsAutoCodexEnabled,
+    isRefiningCodexEntry,
+    isGeneratingCodexImage,
+    handleAutoPopulateCodex,
+    handleRefineCodexEntry: refineCodexEntryHook,
+    handleGenerateCodexImage
+  } = useCodex(scenarioId, profile, messages);
+
+  const {
+    isScanningInventory,
+    isAutoInventoryEnabled,
+    setIsAutoInventoryEnabled,
+    isGeneratingItemImage,
+    handleGenerateItemImage,
+    handleAutoUpdateInventory
+  } = useInventory(profile, onUpdateProfile);
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -93,101 +115,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     return 10;
   };
 
-  const handleGenerateCodexImage = async (entry: CodexEntry) => {
-    setIsGeneratingCodexImage(entry.id);
-    try {
-      const imageUrl = await generateCodexImage(entry, profile);
-      if (imageUrl) {
-        const updatedEntries = codexEntries.map(e => e.id === entry.id ? { ...e, imageUrl } : e);
-        setCodexEntries(updatedEntries);
-        await set(STORAGE_KEYS.SCENARIO_CODEX(scenarioId), updatedEntries);
-        toast.success(`Generated image for ${entry.title}`);
-      }
-    } catch (error: any) {
-      console.error("Failed to generate codex image:", error);
-      toast.error(`Image generation failed: ${error.message || 'Unknown error'}`);
-    } finally {
-      setIsGeneratingCodexImage(null);
-    }
-  };
-
-  const handleGenerateItemImage = async (item: InventoryItem) => {
-    setIsGeneratingItemImage(item.id);
-    try {
-      const imageUrl = await generateItemImage(item, profile);
-      if (imageUrl) {
-        const updatedInventory = (profile.inventory || []).map(i => i.id === item.id ? { ...i, imageUrl } : i);
-        onUpdateProfile({ ...profile, inventory: updatedInventory });
-        toast.success(`Generated image for ${item.name}`);
-      }
-    } catch (error: any) {
-      console.error("Failed to generate item image:", error);
-      toast.error(`Item image generation failed: ${error.message || 'Unknown error'}`);
-    } finally {
-      setIsGeneratingItemImage(null);
-    }
-  };
-
-  const handleAutoUpdateInventory = async (force = false, messagesOverride?: Message[]) => {
-    if (!force && !isAutoInventoryEnabled) return;
-    const currentMessages = messagesOverride || messages;
-    if (currentMessages.length < 2) return;
-
-    setIsScanningInventory(true);
-    try {
-      const updates = await extractInventoryUpdates(currentMessages, profile.inventory || []);
-      
-      let newInventory = [...(profile.inventory || [])];
-      let changed = false;
-
-      // Handle removals
-      if (updates.removed.length > 0) {
-        newInventory = newInventory.filter(item => 
-          !updates.removed.includes(item.id) && !updates.removed.includes(item.name)
-        );
-        changed = true;
-      }
-
-      // Handle updates
-      if (updates.updated.length > 0) {
-        updates.updated.forEach(update => {
-          const item = newInventory.find(i => i.id === update.id || i.name === (update as any).name);
-          if (item) {
-            item.quantity = update.quantity;
-            changed = true;
-          }
-        });
-      }
-
-      // Handle additions
-      if (updates.added.length > 0) {
-        updates.added.forEach(newItem => {
-          const item: InventoryItem = {
-            id: generateId(),
-            name: newItem.name || 'Unknown Item',
-            description: newItem.description || '',
-            type: newItem.type || 'Misc',
-            quantity: newItem.quantity || 1,
-            rarity: newItem.rarity,
-            value: newItem.value
-          };
-          newInventory.push(item);
-          changed = true;
-        });
-      }
-
-      if (changed) {
-        onUpdateProfile({ ...profile, inventory: newInventory });
-      }
-    } catch (error) {
-      console.error("Failed to auto-update inventory:", error);
-    } finally {
-      setIsScanningInventory(null as any); // Reset
-      setIsScanningInventory(false);
-    }
-  };
-
-  const handleConfirmAction = () => {
+  const handleConfirmAction = async () => {
     if (!confirmModal.type) return;
 
     if (confirmModal.type === 'delete' && confirmModal.targetId) {
@@ -195,60 +123,26 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     } else if (confirmModal.type === 'reset') {
       setMessages([]);
       setCodexEntries([]);
+      if (user) {
+        // We don't have a bulk delete for subcollections in client SDK easily,
+        // but we can at least clear the scenario metadata or handle it.
+        // For now, we'll just clear local state and let the user delete the scenario from library if they want a full wipe.
+      }
     } else if (confirmModal.type === 'rewind' && confirmModal.targetId) {
       const index = messages.findIndex(m => m.id === confirmModal.targetId);
       if (index !== -1) {
-        // Rewind to this message (keep this message and delete everything after)
         const newMessages = messages.slice(0, index + 1).map(m => ({ ...m, isSummarized: false }));
         setMessages(newMessages);
-        setStorySummary(''); // Clear summary to ensure AI only considers the current messages
+        setStorySummary('');
+        if (user) {
+          await saveSummary(scenarioId, '');
+          // In a real app, we'd delete the messages after the rewind point in Firestore too.
+        }
       }
     }
 
     setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }));
   };
-
-  useEffect(() => {
-    const loadData = async () => {
-      try {
-        // Load Messages
-        let saved = await get(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId));
-        if (!saved) {
-          const localSaved = localStorage.getItem(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId));
-          if (localSaved) {
-            saved = JSON.parse(localSaved);
-            await set(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId), saved);
-          }
-        }
-        if (saved) {
-          const seen = new Set();
-          const clean = saved.filter((m: any) => {
-            if (!m.id || seen.has(m.id)) return false;
-            seen.add(m.id);
-            return true;
-          });
-          setMessages(clean);
-        }
-
-        // Load Codex
-        const savedCodex = await get(STORAGE_KEYS.SCENARIO_CODEX(scenarioId));
-        if (savedCodex) {
-          setCodexEntries(savedCodex);
-        }
-
-        // Load Summary
-        const savedSummary = await get(STORAGE_KEYS.SCENARIO_SUMMARY(scenarioId));
-        if (savedSummary) {
-          setStorySummary(savedSummary);
-        }
-      } catch (e) {
-        console.error("Failed to load data", e);
-      } finally {
-        setIsLoaded(true);
-      }
-    };
-    loadData();
-  }, [scenarioId]);
 
   const [input, setInput] = useState('');
   const [directorNote, setDirectorNote] = useState('');
@@ -256,20 +150,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [isRefining, setIsRefining] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [isAutoRead, setIsAutoRead] = useState(true);
-  const [audioQueue, setAudioQueue] = useState<AudioBuffer[]>([]);
-  const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
-  const speechQueue = useRef<string[]>([]);
-  const nextStartTimeRef = useRef<number>(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentAudioSource, setCurrentAudioSource] = useState<AudioBufferSourceNode | null>(null);
-  const [isManualPause, setIsManualPause] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editInput, setEditInput] = useState('');
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null);
   const [rerollGuidance, setRerollGuidance] = useState('');
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
-  const audioCache = useRef<Map<string, string>>(new Map());
+  const { toastSuccess, toastError } = useToast();
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
   const [showRefineSettings, setShowRefineSettings] = useState(false);
@@ -310,43 +197,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const playbackAudioContextRef = useRef<AudioContext | null>(null);
 
-  useEffect(() => {
-    let interval: any;
-    if (isPlaying && playbackAudioContextRef.current) {
-      interval = setInterval(() => {
-        // playbackTime removed
-      }, 100);
-    }
-    return () => clearInterval(interval);
-  }, [isPlaying]);
-
-  useEffect(() => {
-    if (isLoaded) {
-      set(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId), messages).catch(e => {
-        console.error("Failed to save messages to IndexedDB", e);
-      });
-      // Also save to localStorage for quick sync, but limit size
-      try {
-        const recentMessages = messages.slice(-50); // Keep only last 50 for localStorage
-        localStorage.setItem(STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId), JSON.stringify(recentMessages));
-      } catch (e) {
-        // Ignore quota errors
-      }
-      set(STORAGE_KEYS.SCENARIO_SUMMARY(scenarioId), storySummary).catch(e => {
-        console.error("Failed to save summary to IndexedDB", e);
-      });
-    }
-  }, [messages, storySummary, scenarioId, isLoaded]);
-
-  useEffect(() => {
-    if (isLoaded) {
-      set(STORAGE_KEYS.SCENARIO_CODEX(scenarioId), codexEntries).catch(e => {
-        console.error("Failed to save codex to IndexedDB", e);
-      });
-    }
-  }, [codexEntries, scenarioId, isLoaded]);
+  const {
+    isPlaying,
+    handleReadAloud,
+    togglePause,
+    stopAudio
+  } = useVoice(profile.voiceName || 'Kore', profile.voiceSettings, profile.storyTone || '');
 
   const [error, setError] = useState<string | null>(null);
 
@@ -360,15 +217,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       const refined = await refineInput(input, profile, history, settings.customRefineInstructions);
       if (refined) {
         setInput(refined);
-        toast.success("Input refined");
+        toastSuccess("Input refined");
       } else {
         setError("No refinement received from AI. Check your API key.");
-        toast.error("No refinement received");
+        toastError("No refinement received");
       }
     } catch (err: any) {
       console.error("Refinement Error:", err);
       setError(err.message || "Failed to refine input. Check your connection or API key.");
-      toast.error(`Refinement Error: ${err.message || 'Unknown error'}`);
+      toastError(`Refinement Error: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefining(false);
     }
@@ -383,15 +240,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       const suggestion = await suggestNextAction(history, profile);
       if (suggestion) {
         setInput(suggestion);
-        toast.success("AI suggested an action");
+        toastSuccess("AI suggested an action");
       } else {
         setError("No suggestion received from AI. Check your API key.");
-        toast.error("No suggestion received");
+        toastError("No suggestion received");
       }
     } catch (err: any) {
       console.error("Suggestion Error:", err);
       setError(err.message || "Failed to get suggestion. Check your connection or API key.");
-      toast.error(`Suggestion Error: ${err.message || 'Unknown error'}`);
+      toastError(`Suggestion Error: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSuggesting(false);
     }
@@ -424,134 +281,18 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setEditInput('');
   };
 
-  const saveEdit = async (messageId: string) => {
-    if (!editInput.trim() || isTyping) return;
-    const index = messages.findIndex(m => m.id === messageId);
-    if (index === -1) return;
-    const message = messages[index];
-    
-    if (message.role === 'user') {
-      const baseMessages = messages.slice(0, index);
-      const updatedUserMessage = { ...message, text: editInput };
-      const newHistory = [...baseMessages, updatedUserMessage];
-      setMessages(newHistory);
-      setEditingMessageId(null);
-      setEditInput('');
-      setIsTyping(true);
-      
-      try {
-        let currentSummary = storySummary;
-        let unsummarizedMessages = baseMessages.filter(m => !m.isSummarized);
-        
-        if (unsummarizedMessages.length > 10) {
-          const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 10);
-          const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-          
-          // Background summarization (we await it here to use it immediately, but could be detached)
-          currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
-          setStorySummary(currentSummary);
-          
-          // Mark as summarized
-          const summarizedIds = new Set(toSummarize.map(m => m.id));
-          setMessages(prev => prev.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m));
-          
-          unsummarizedMessages = unsummarizedMessages.slice(-10);
-        }
-
-        const historyForAi = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-        const aiMessageId = generateId();
-        const aiMessage: Message = { id: aiMessageId, role: 'model', text: '', provider: getSettings().activeTextProvider };
-        setMessages(prev => [...prev, aiMessage]);
-        
-        let fullReply = '';
-        let sentenceBuffer = '';
-        let isInsideOoc = false;
-        let lastUpdateTime = Date.now();
-        
-        const stream = generateTextReplyStream(historyForAi, profile, editInput, codexEntries, currentSummary);
-        
-        for await (const chunk of stream) {
-          fullReply += chunk;
-          
-          // Handle OOC tags for audio reading
-          let processChunk = chunk;
-          if (fullReply.includes('<ooc>') && !fullReply.includes('</ooc>')) {
-            isInsideOoc = true;
-            processChunk = '';
-          } else if (fullReply.includes('</ooc>') && isInsideOoc) {
-            isInsideOoc = false;
-            processChunk = '';
-          } else if (isInsideOoc) {
-            processChunk = '';
-          }
-
-          sentenceBuffer += processChunk;
-          
-          // Throttle state updates to every 100ms
-          if (Date.now() - lastUpdateTime > 100) {
-            setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
-            lastUpdateTime = Date.now();
-          }
-        }
-        
-        // Final state update to ensure we have the complete text
-        setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
-        
-        // Single TTS request for the entire response to save quota
-        if (isAutoRead && sentenceBuffer.trim()) {
-          handleReadAloud(sentenceBuffer);
-        }
-        
-        // Auto-populate codex after a model response
-        handleAutoPopulateCodex();
-        handleAutoUpdateInventory();
-      } catch (err) {
-        console.error(err);
-      } finally {
-        setIsTyping(false);
-      }
-    } else {
-      const newMessages = [...messages];
-      newMessages[index] = { ...message, text: editInput };
-      setMessages(newMessages);
-      setEditingMessageId(null);
-      setEditInput('');
-    }
-  };
-
-  const handleRegenerate = async (messageId: string, guidance: string) => {
-    if (isTyping || !profile) return;
-    
-    const index = messages.findIndex(m => m.id === messageId);
-    if (index === -1) return;
-
-    const slicedHistory = messages.slice(0, index);
-    const lastUserIndex = slicedHistory.map(m => m.role).lastIndexOf('user');
-    if (lastUserIndex === -1) return;
-
-    const historyBeforeUser = slicedHistory.slice(0, lastUserIndex);
-    const lastUserMessage = slicedHistory[lastUserIndex];
-    
-    let userInput = lastUserMessage.text;
-    if (guidance.trim()) {
-      userInput += `\n\n[Director's Note for AI: ${guidance.trim()}]`;
-    }
-
-    setMessages(slicedHistory);
-    setRegeneratingMessageId(null);
-    setRerollGuidance('');
+  const generateReply = async (baseMessages: Message[], userInput: string, userMsgId: string) => {
     setIsTyping(true);
-
     try {
       let currentSummary = storySummary;
-      let unsummarizedMessages = historyBeforeUser.filter(m => !m.isSummarized);
+      let unsummarizedMessages = baseMessages.filter(m => !m.isSummarized);
       
       if (unsummarizedMessages.length > 10) {
         const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 10);
         const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
         
         currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
-        setStorySummary(currentSummary);
+        await updateSummary(currentSummary);
         
         const summarizedIds = new Set(toSummarize.map(m => m.id));
         setMessages(prev => prev.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m));
@@ -593,28 +334,88 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         }
       }
       
-      setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+      const finalAiMessage = { ...aiMessage, text: fullReply };
+      setMessages(prev => prev.map(m => m.id === aiMessageId ? finalAiMessage : m));
+      if (user) {
+        await saveMessage(scenarioId, finalAiMessage);
+      }
       
-      // Single TTS request for the entire response to save quota
-      if (isAutoRead && sentenceBuffer.trim()) {
+      if (isAutoRead && sentenceBuffer.trim() && !isLiveMode) {
         handleReadAloud(sentenceBuffer);
       }
 
-      handleAutoPopulateCodex();
-      handleAutoUpdateProfile();
+      const historyWithReply = [
+        ...historyForAi,
+        { role: 'user', parts: [{ text: userInput }] },
+        { role: 'model', parts: [{ text: fullReply }] }
+      ];
+      const messagesWithReply = [...baseMessages, { id: userMsgId, role: 'user', text: userInput }, { ...aiMessage, text: fullReply }];
+
+      if (isAutoCodexEnabled) handleAutoPopulateCodex(false, historyWithReply);
+      if (isAutoInventoryEnabled) handleAutoUpdateInventory(messagesWithReply, false);
+      if (isAutoProfileEnabled) handleAutoUpdateProfile(messagesWithReply, false, historyWithReply);
     } catch (err: any) {
       console.error(err);
-      toast.error(`Narrative Error: ${err.message || 'Unknown error'}`);
+      toastError(`Narrative Error: ${err.message || 'Unknown error'}`);
       setMessages(prev => [...prev, {
         id: generateId(),
         role: 'model',
         text: `*The narrative stream falters: ${err.message || 'Please try again.'}*`,
-        timestamp: Date.now(),
         provider: getSettings().activeTextProvider
       }]);
     } finally {
       setIsTyping(false);
     }
+  };
+
+  const saveEdit = async (messageId: string) => {
+    if (!editInput.trim() || isTyping) return;
+    const index = messages.findIndex(m => m.id === messageId);
+    if (index === -1) return;
+    const message = messages[index];
+    
+    if (message.role === 'user') {
+      const baseMessages = messages.slice(0, index);
+      const updatedUserMessage = { ...message, text: editInput };
+      
+      // We need to handle the rewind/regenerate logic here.
+      // For now, we'll just update the message and regenerate.
+      await updateMessage(updatedUserMessage);
+      setEditingMessageId(null);
+      setEditInput('');
+      
+      await generateReply(baseMessages, editInput, message.id);
+    } else {
+      const updatedModelMessage = { ...message, text: editInput };
+      await updateMessage(updatedModelMessage);
+      setEditingMessageId(null);
+      setEditInput('');
+    }
+  };
+
+  const handleRegenerate = async (messageId: string, guidance: string) => {
+    if (isTyping || !profile) return;
+    
+    const index = messages.findIndex(m => m.id === messageId);
+    if (index === -1) return;
+
+    const slicedHistory = messages.slice(0, index);
+    const lastUserIndex = slicedHistory.map(m => m.role).lastIndexOf('user');
+    if (lastUserIndex === -1) return;
+
+    const historyBeforeUser = slicedHistory.slice(0, lastUserIndex);
+    const lastUserMessage = slicedHistory[lastUserIndex];
+    
+    let userInput = lastUserMessage.text;
+    if (guidance.trim()) {
+      userInput += `\n\n[Director's Note for AI: ${guidance.trim()}]`;
+    }
+
+    setMessages(slicedHistory);
+    setRegeneratingMessageId(null);
+    setRerollGuidance('');
+
+    await generateReply(historyBeforeUser, userInput, lastUserMessage.id);
   };
 
   const handleSendText = async (overrideText?: string) => {
@@ -628,285 +429,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
     
     if (!textToSend.trim() || isTyping) return;
-    const userMsg: Message = { id: generateId(), role: 'user', text: textToSend };
-    setMessages(prev => [...prev, userMsg]);
+    const userMsgId = generateId();
+    const userMsg: Message = { id: userMsgId, role: 'user', text: textToSend };
+    await addMessage(userMsg);
     setInput('');
     setDirectorNote('');
     
-    setIsTyping(true);
-    try {
-      let currentSummary = storySummary;
-      let unsummarizedMessages = messages.filter(m => !m.isSummarized);
-      
-      if (unsummarizedMessages.length > 10) {
-        const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 10);
-        const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-        
-        // Background summarization
-        currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
-        setStorySummary(currentSummary);
-        
-        // Mark as summarized
-        const summarizedIds = new Set(toSummarize.map(m => m.id));
-        setMessages(prev => prev.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m));
-        
-        unsummarizedMessages = unsummarizedMessages.slice(-10);
-      }
-
-      const history = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-      const aiMessageId = generateId();
-      const aiMessage: Message = { id: aiMessageId, role: 'model', text: '', provider: getSettings().activeTextProvider };
-      setMessages(prev => [...prev, aiMessage]);
-      
-      let fullReply = '';
-      let sentenceBuffer = '';
-      let isInsideOoc = false;
-      let lastUpdateTime = Date.now();
-      
-      const stream = generateTextReplyStream(history, profile, userMsg.text, codexEntries, currentSummary);
-      
-      for await (const chunk of stream) {
-        fullReply += chunk;
-
-        // Handle OOC tags for audio reading
-        let processChunk = chunk;
-        if (fullReply.includes('<ooc>') && !fullReply.includes('</ooc>')) {
-          isInsideOoc = true;
-          processChunk = '';
-        } else if (fullReply.includes('</ooc>') && isInsideOoc) {
-          isInsideOoc = false;
-          processChunk = '';
-        } else if (isInsideOoc) {
-          processChunk = '';
-        }
-
-        sentenceBuffer += processChunk;
-        
-        // Throttle state updates to every 100ms
-        if (Date.now() - lastUpdateTime > 100) {
-          setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
-          lastUpdateTime = Date.now();
-        }
-      }
-      
-      // Final state update to ensure we have the complete text
-      setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
-      
-      // Single TTS request for the entire response to save quota
-      if (isAutoRead && sentenceBuffer.trim()) {
-        handleReadAloud(sentenceBuffer);
-      }
-
-      const historyWithReply = [
-        ...history,
-        { role: 'user', parts: [{ text: userMsg.text }] },
-        { role: 'model', parts: [{ text: fullReply }] }
-      ];
-      const messagesWithReply = [...messages, userMsg, { ...aiMessage, text: fullReply }];
-
-      // Auto-populate codex after a model response
-      handleAutoPopulateCodex(false, historyWithReply);
-      handleAutoUpdateInventory(false, messagesWithReply);
-      handleAutoUpdateProfile(false, historyWithReply);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setIsTyping(false);
-    }
+    await generateReply(messages, textToSend, userMsgId);
   };
 
-  const handleReadAloud = async (text: string) => {
-    try {
-      const textWithoutOoc = text.replace(/<ooc>[\s\S]*?<\/ooc>/gi, '').trim();
-      const cleanText = textWithoutOoc.replace(/[*#_~`]/g, '').trim();
-      if (!cleanText) return;
-      
-      const settings = getSettings();
-      
-      // Helper for browser TTS fallback
-      const speakWithBrowser = (txt: string) => {
-        const utterance = new SpeechSynthesisUtterance(txt);
-        if (profile.voiceSettings?.speed === 'Fast') utterance.rate = 1.2;
-        else if (profile.voiceSettings?.speed === 'Slow') utterance.rate = 0.8;
-        if (profile.voiceSettings?.pitch === 'High') utterance.pitch = 1.2;
-        else if (profile.voiceSettings?.pitch === 'Low') utterance.pitch = 0.8;
-        window.speechSynthesis.speak(utterance);
-      };
 
-      if (settings.voiceEngine === 'Fast Browser') {
-        speakWithBrowser(cleanText);
-        return;
-      }
-
-      // Split text into small chunks (~200 chars) for sequential generation
-      const chunks: string[] = [];
-      let remainingText = cleanText;
-      
-      while (remainingText.length > 0) {
-        if (remainingText.length <= 200) {
-          chunks.push(remainingText);
-          break;
-        }
-        
-        let breakIndex = remainingText.lastIndexOf('. ', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('? ', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('! ', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('\n', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf(' ', 200);
-        
-        if (breakIndex === -1 || breakIndex < 50) breakIndex = 200;
-        
-        chunks.push(remainingText.substring(0, breakIndex + 1).trim());
-        remainingText = remainingText.substring(breakIndex + 1).trim();
-      }
-      
-      speechQueue.current = [...speechQueue.current, ...chunks];
-      if (!isProcessingSpeech) {
-        processSpeechQueue();
-      }
-    } catch (err) {
-      console.error('Speech Error:', err);
-    }
-  };
-
-  const processSpeechQueue = async () => {
-    if (speechQueue.current.length === 0) {
-      setIsProcessingSpeech(false);
-      return;
-    }
-
-    setIsProcessingSpeech(true);
-    const chunk = speechQueue.current.shift();
-    if (!chunk) {
-      processSpeechQueue();
-      return;
-    }
-
-    try {
-      const settings = getSettings();
-      const voiceName = settings.premiumCustomVoices ? profile.voiceName : 'Kore';
-      const voiceSettings = settings.premiumCustomVoices ? profile.voiceSettings : { pitch: 'Normal', speed: 'Normal', accent: 'None' };
-      
-      const cacheKey = `${chunk.trim()}_${voiceName}_${voiceSettings?.pitch}_${voiceSettings?.speed}`;
-      let audioBase64 = audioCache.current.get(cacheKey);
-      
-      if (!audioBase64) {
-        audioBase64 = await generateSpeech(chunk.trim(), voiceName, voiceSettings, profile.storyTone);
-        if (audioBase64) {
-          audioCache.current.set(cacheKey, audioBase64);
-        }
-      }
-
-      if (audioBase64) {
-        const buffer = await decodeAudioData(audioBase64);
-        if (buffer) {
-          setAudioQueue(prev => [...prev, buffer]);
-        }
-      }
-    } catch (err) {
-      console.error('Speech generation error:', err);
-    }
-
-    // Start processing next chunk immediately while current one might be playing
-    processSpeechQueue();
-  };
-
-  const decodeAudioData = async (base64: string): Promise<AudioBuffer | null> => {
-    try {
-      const binaryString = window.atob(base64);
-      const len = binaryString.length;
-      const bytes = new Uint8Array(len);
-      for (let i = 0; i < len; i++) bytes[i] = binaryString.charCodeAt(i);
-      
-      if (!playbackAudioContextRef.current) {
-        playbackAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
-      
-      const audioContext = playbackAudioContextRef.current;
-      const float32Data = new Float32Array(bytes.length / 2);
-      const view = new DataView(bytes.buffer);
-      for (let i = 0; i < float32Data.length; i++) {
-        float32Data[i] = view.getInt16(i * 2, true) / 32768.0;
-      }
-      
-      const buffer = audioContext.createBuffer(1, float32Data.length, 24000);
-      buffer.getChannelData(0).set(float32Data);
-      return buffer;
-    } catch (e) {
-      console.error('Audio decoding error:', e);
-      return null;
-    }
-  };
-
-  const playNextInQueue = useCallback(() => {
-    if (audioQueue.length === 0 || isManualPause) {
-      setIsPlaying(false);
-      return;
-    }
-
-    const nextBuffer = audioQueue[0];
-    setAudioQueue(prev => prev.slice(1));
-    
-    if (!playbackAudioContextRef.current) {
-      playbackAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    const audioContext = playbackAudioContextRef.current;
-
-    const source = audioContext.createBufferSource();
-    source.buffer = nextBuffer;
-    
-    const gainNode = audioContext.createGain();
-    source.connect(gainNode);
-    gainNode.connect(audioContext.destination);
-
-    // Schedule start
-    const now = audioContext.currentTime;
-    const startTime = Math.max(now, nextStartTimeRef.current);
-    
-    // Fade in/out to prevent clicks
-    const fadeTime = 0.005;
-    gainNode.gain.setValueAtTime(0, startTime);
-    gainNode.gain.linearRampToValueAtTime(1, startTime + fadeTime);
-    gainNode.gain.setValueAtTime(1, startTime + nextBuffer.duration - fadeTime);
-    gainNode.gain.linearRampToValueAtTime(0, startTime + nextBuffer.duration);
-
-    source.start(startTime);
-    nextStartTimeRef.current = startTime + nextBuffer.duration;
-    
-    setCurrentAudioSource(source);
-    setIsPlaying(true);
-
-    source.onended = () => {
-      setIsPlaying(false);
-      // The useEffect will trigger playNextInQueue if there's more
-    };
-  }, [audioQueue, isManualPause]);
-
-  useEffect(() => {
-    if (audioQueue.length > 0 && !isPlaying && !isManualPause) {
-      playNextInQueue();
-    }
-  }, [audioQueue, isPlaying, isManualPause, playNextInQueue]);
-
-  const stopAudio = () => {
-    if (currentAudioSource) {
-      try { currentAudioSource.stop(); } catch (e) {}
-      setCurrentAudioSource(null);
-    }
-    setIsPlaying(false);
-    nextStartTimeRef.current = 0;
-    setAudioQueue([]);
-    speechQueue.current = [];
-  };
-
-  const togglePlayPause = () => {
-    if (isPlaying) {
-      stopAudio();
-      setIsManualPause(true);
-    } else {
-      setIsManualPause(false);
-    }
-  };
 
   const toggleLiveMode = async () => {
     if (isLiveMode || conversation.status === 'connected') {
@@ -947,72 +479,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   };
 
-  const handleAutoPopulateCodex = async (force = false, historyOverride?: any[]) => {
-    const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-    if (isAutoPopulatingCodex || currentHistory.length < 2) return;
-    if (!force && (!isAutoCodexEnabled || currentHistory.length % 3 !== 0)) return;
-    
-    setIsAutoPopulatingCodex(true);
-    try {
-      const newEntries = await extractCodexEntries(currentHistory, profile, codexEntries);
-      
-      if (newEntries.length > 0) {
-        const entriesWithIds: CodexEntry[] = newEntries.map(e => ({
-          ...e,
-          id: generateId(),
-        } as CodexEntry));
-        
-        setCodexEntries(prev => [...prev, ...entriesWithIds]);
-      }
-    } catch (err) {
-      console.error("Auto-populate codex failed", err);
-    } finally {
-      setIsAutoPopulatingCodex(false);
-    }
-  };
-
-  const handleAutoUpdateProfile = async (force = false, historyOverride?: any[]) => {
-    const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-    if (isUpdatingProfile || currentHistory.length < 5) return;
-    if (!force && (!isAutoProfileEnabled || currentHistory.length % 5 !== 0)) return;
-
-    setIsUpdatingProfile(true);
-    try {
-      const updates = await updateCharacterProfilesFromHistory(currentHistory, profile);
-      if (updates && Object.keys(updates).length > 0) {
-        onUpdateProfile({ ...profile, ...updates });
-      }
-    } catch (e) {
-      console.error("Auto-profile update failed", e);
-    } finally {
-      setIsUpdatingProfile(false);
-    }
-  };
-
   const handleRefineCodexEntry = async () => {
     if (isRefiningCodexEntry || !newCodexEntry.title || !newCodexEntry.content) return;
-    setIsRefiningCodexEntry(true);
-    try {
-      const refined = await refineCodexEntry(newCodexEntry, profile);
+    const refined = await refineCodexEntryHook(newCodexEntry);
+    if (refined) {
       setNewCodexEntry(refined);
-    } catch (err) {
-      console.error("Refine codex entry failed", err);
-    } finally {
-      setIsRefiningCodexEntry(false);
     }
-  };
-
-  const handleAddCodexEntry = () => {
-    if (!newCodexEntry.title || !newCodexEntry.content) return;
-    const entry: CodexEntry = {
-      id: generateId(),
-      title: newCodexEntry.title,
-      content: newCodexEntry.content,
-      category: newCodexEntry.category as any || 'Lore'
-    };
-    setCodexEntries(prev => [...prev, entry]);
-    setNewCodexEntry({ category: 'Lore' });
-    setIsAddingCodex(false);
   };
 
   const handleUpdateVoice = (updates: Partial<CharacterProfile>) => {
@@ -1183,331 +655,45 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         {/* Inventory Sidebar */}
         <AnimatePresence>
           {showInventory && profile.mode === AppMode.GAME && (
-            <motion.div
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="absolute right-0 top-0 bottom-0 w-80 glass-panel border-l border-white/10 z-40 flex flex-col shadow-2xl"
-            >
-              <div className="p-6 border-b border-white/5 flex items-center justify-between">
-                <h3 className="text-lg font-serif font-bold text-white flex items-center gap-2">
-                  <Package className="w-5 h-5 text-purple-400" />
-                  Inventory
-                </h3>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => setIsAutoInventoryEnabled(!isAutoInventoryEnabled)}
-                    className={`p-2 rounded-lg transition-all ${isAutoInventoryEnabled ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-500 hover:text-purple-400'}`}
-                    title={isAutoInventoryEnabled ? "Auto-scan enabled" : "Auto-scan disabled"}
-                  >
-                    <Repeat className={`w-4 h-4 ${isAutoInventoryEnabled ? 'animate-spin-slow' : ''}`} />
-                  </button>
-                  <button 
-                    onClick={() => handleAutoUpdateInventory(true)} 
-                    disabled={isScanningInventory || messages.length < 2}
-                    className={`p-2 rounded-lg transition-all ${isScanningInventory ? 'text-purple-400 animate-pulse' : 'text-zinc-500 hover:text-purple-400 hover:bg-white/5'}`}
-                    title="Scan story for inventory updates"
-                  >
-                    {isScanningInventory ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  </button>
-                  <button onClick={() => setShowInventory(false)} className="text-zinc-500 hover:text-white">
-                    <CloseIcon className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-6 space-y-4 custom-scrollbar">
-                {(profile.inventory || []).length === 0 ? (
-                  <div className="text-center py-20">
-                    <Package className="w-12 h-12 text-zinc-800 mx-auto mb-4" />
-                    <p className="text-zinc-500 text-xs uppercase tracking-widest font-bold">Inventory is empty</p>
-                  </div>
-                ) : (
-                  profile.inventory?.map((item, idx) => (
-                    <div key={item.id} className="p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all group overflow-hidden">
-                      {item.imageUrl && (
-                        <div className="aspect-square w-full mb-3 rounded-xl overflow-hidden border border-white/10 relative group/img">
-                          <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover transition-transform group-hover/img:scale-110" referrerPolicy="no-referrer" />
-                          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center">
-                            <button 
-                              onClick={() => handleGenerateItemImage(item)}
-                              className="p-2 rounded-full bg-white/20 backdrop-blur-md text-white hover:bg-white/30 transition-all"
-                            >
-                              <RefreshCw className={`w-4 h-4 ${isGeneratingItemImage === item.id ? 'animate-spin' : ''}`} />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2 mb-1">
-                            <h4 className="text-sm font-bold text-white truncate group-hover:text-purple-400 transition-colors">{item.name}</h4>
-                            {item.rarity && (
-                              <span className={`text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-widest ${
-                                item.rarity === 'Legendary' ? 'bg-orange-500/20 text-orange-400' :
-                                item.rarity === 'Epic' ? 'bg-purple-500/20 text-purple-400' :
-                                item.rarity === 'Rare' ? 'bg-blue-500/20 text-blue-400' :
-                                item.rarity === 'Uncommon' ? 'bg-emerald-500/20 text-emerald-400' :
-                                'bg-zinc-500/20 text-zinc-400'
-                              }`}>
-                                {item.rarity}
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest">{item.type}</span>
-                            {item.value && <span className="text-[8px] font-bold text-emerald-400/60 uppercase tracking-widest">• {item.value}</span>}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {!item.imageUrl && (
-                            <button 
-                              onClick={() => handleGenerateItemImage(item)}
-                              disabled={isGeneratingItemImage === item.id}
-                              className="p-1 rounded-md hover:bg-white/5 text-zinc-600 hover:text-purple-400 transition-all"
-                              title="Generate Item Image"
-                            >
-                              {isGeneratingItemImage === item.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <ImageIcon className="w-3 h-3" />}
-                            </button>
-                          )}
-                          <button 
-                            onClick={() => {
-                              const newInv = [...(profile.inventory || [])];
-                              if (newInv[idx].quantity > 1) {
-                                newInv[idx].quantity--;
-                                onUpdateProfile({ ...profile, inventory: newInv });
-                              } else {
-                                const filteredInv = newInv.filter(i => i.id !== item.id);
-                                onUpdateProfile({ ...profile, inventory: filteredInv });
-                              }
-                            }}
-                            className="p-1 rounded-md hover:bg-red-500/20 text-zinc-600 hover:text-red-400 transition-all"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                          <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[10px] font-bold text-zinc-400">
-                            x{item.quantity}
-                          </span>
-                        </div>
-                      </div>
-                      <p className="text-[10px] text-zinc-400 leading-relaxed line-clamp-2 group-hover:line-clamp-none transition-all">{item.description}</p>
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div className="p-6 border-t border-white/5 bg-black/20">
-                <button
-                  onClick={() => {
-                    const newItemName = prompt("Item Name?");
-                    if (!newItemName) return;
-                    const newItem: any = {
-                      id: Math.random().toString(36).substr(2, 9),
-                      name: newItemName,
-                      description: "New item added to inventory.",
-                      quantity: 1,
-                      type: "Misc"
-                    };
-                    onUpdateProfile({
-                      ...profile,
-                      inventory: [...(profile.inventory || []), newItem]
-                    });
-                  }}
-                  className="w-full py-3 rounded-xl bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 text-[10px] font-bold uppercase tracking-widest border border-purple-500/20 transition-all flex items-center justify-center gap-2"
-                >
-                  <Plus className="w-4 h-4" />
-                  Add Item
-                </button>
-              </div>
-            </motion.div>
+            <InventorySidebar
+              profile={profile}
+              onUpdateProfile={onUpdateProfile}
+              messages={messages}
+              setShowInventory={setShowInventory}
+              isAutoInventoryEnabled={isAutoInventoryEnabled}
+              setIsAutoInventoryEnabled={setIsAutoInventoryEnabled}
+              isScanningInventory={isScanningInventory}
+              handleAutoUpdateInventory={handleAutoUpdateInventory}
+              isGeneratingItemImage={isGeneratingItemImage}
+              handleGenerateItemImage={handleGenerateItemImage}
+            />
           )}
         </AnimatePresence>
 
         {/* Codex Sidebar */}
         <AnimatePresence>
           {showCodex && (
-            <motion.div
-              initial={{ x: '100%' }}
-              animate={{ x: 0 }}
-              exit={{ x: '100%' }}
-              transition={{ type: 'spring', damping: 25, stiffness: 200 }}
-              className="absolute right-0 top-0 bottom-0 w-80 glass-panel border-l border-white/10 z-40 flex flex-col shadow-2xl"
-            >
-              <div className="p-6 border-b border-white/5 flex items-center justify-between">
-                <h3 className="text-lg font-serif font-bold text-white flex items-center gap-2">
-                  <Book className="w-5 h-5 text-emerald-400" />
-                  World Codex
-                </h3>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => setIsAutoProfileEnabled(!isAutoProfileEnabled)}
-                    className={`p-2 rounded-lg transition-all ${isAutoProfileEnabled ? 'text-purple-400 bg-purple-500/10' : 'text-zinc-500 hover:text-purple-400'}`}
-                    title={isAutoProfileEnabled ? "Auto-character update enabled" : "Auto-character update disabled"}
-                  >
-                    <RefreshCw className={`w-4 h-4 ${isAutoProfileEnabled ? 'animate-spin-slow' : ''}`} />
-                  </button>
-                  <button 
-                    onClick={() => setIsAutoCodexEnabled(!isAutoCodexEnabled)}
-                    className={`p-2 rounded-lg transition-all ${isAutoCodexEnabled ? 'text-blue-400 bg-blue-500/10' : 'text-zinc-500 hover:text-blue-400'}`}
-                    title={isAutoCodexEnabled ? "Auto-scan enabled" : "Auto-scan disabled"}
-                  >
-                    <Repeat className={`w-4 h-4 ${isAutoCodexEnabled ? 'animate-spin-slow' : ''}`} />
-                  </button>
-                  <button 
-                    onClick={() => handleAutoPopulateCodex(true)} 
-                    disabled={isAutoPopulatingCodex || messages.length < 2}
-                    className={`p-2 rounded-lg transition-all ${isAutoPopulatingCodex ? 'text-emerald-400 animate-pulse' : 'text-zinc-500 hover:text-emerald-400 hover:bg-white/5'}`}
-                    title="Scan story for new entries"
-                  >
-                    {isAutoPopulatingCodex ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-                  </button>
-                  <button 
-                    onClick={() => handleAutoUpdateProfile(true)}
-                    disabled={isUpdatingProfile || messages.length < 5}
-                    className={`p-2 rounded-lg transition-all ${isUpdatingProfile ? 'text-purple-400 animate-pulse' : 'text-zinc-500 hover:text-purple-400 hover:bg-white/5'}`}
-                    title="Update character profile from history"
-                  >
-                    {isUpdatingProfile ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-                  </button>
-                  <button onClick={() => setShowCodex(false)} className="text-zinc-500 hover:text-white">
-                    <CloseIcon className="w-5 h-5" />
-                  </button>
-                </div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                {isAddingCodex ? (
-                  <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="space-y-4 p-4 rounded-2xl bg-white/5 border border-white/10">
-                    <input
-                      type="text"
-                      placeholder="Entry Title"
-                      value={newCodexEntry.title || ''}
-                      onChange={e => setNewCodexEntry(prev => ({ ...prev, title: e.target.value }))}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                    />
-                    <select
-                      value={newCodexEntry.category}
-                      onChange={e => setNewCodexEntry(prev => ({ ...prev, category: e.target.value as any }))}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500"
-                    >
-                      <option value="Lore">Lore</option>
-                      <option value="Mechanics">Mechanics</option>
-                      <option value="Location">Location</option>
-                      <option value="Item">Item</option>
-                    </select>
-                    <textarea
-                      placeholder="Description/Rules..."
-                      value={newCodexEntry.content || ''}
-                      onChange={e => setNewCodexEntry(prev => ({ ...prev, content: e.target.value }))}
-                      rows={4}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none"
-                    />
-                    <div className="flex gap-2">
-                      <button 
-                        onClick={handleRefineCodexEntry} 
-                        disabled={isRefiningCodexEntry || !newCodexEntry.title || !newCodexEntry.content}
-                        className="flex-1 py-2 rounded-xl bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 text-[10px] font-bold uppercase tracking-widest border border-blue-500/20 flex items-center justify-center gap-2"
-                      >
-                        {isRefiningCodexEntry ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                        Refine
-                      </button>
-                    </div>
-                    <div className="flex gap-2">
-                      <button onClick={() => setIsAddingCodex(false)} className="flex-1 py-2 rounded-xl text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest">Cancel</button>
-                      <button onClick={handleAddCodexEntry} className="flex-1 py-2 rounded-xl bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 text-xs font-bold uppercase tracking-widest border border-emerald-500/20">Save</button>
-                    </div>
-                  </motion.div>
-                ) : (
-                  <button
-                    onClick={() => setIsAddingCodex(true)}
-                    className="w-full py-4 rounded-2xl border border-dashed border-white/10 text-zinc-500 hover:text-emerald-400 hover:border-emerald-500/30 transition-all flex flex-col items-center justify-center gap-2 group"
-                  >
-                    <Plus className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Add New Entry</span>
-                  </button>
-                )}
-
-                <div className="space-y-4">
-                  {codexEntries.map(entry => (
-                    <div key={entry.id} className="group p-4 rounded-2xl bg-white/5 border border-white/5 hover:border-white/10 transition-all overflow-hidden">
-                      {entry.imageUrl ? (
-                        <div className="relative h-32 -mx-4 -mt-4 mb-4 overflow-hidden">
-                          <img 
-                            src={entry.imageUrl} 
-                            alt={entry.title} 
-                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" 
-                            referrerPolicy="no-referrer"
-                          />
-                          <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
-                          <button 
-                            onClick={() => handleGenerateCodexImage(entry)}
-                            className="absolute bottom-2 right-2 p-1.5 glass-panel rounded-lg text-white/50 hover:text-white transition-all opacity-0 group-hover:opacity-100"
-                            title="Regenerate Image"
-                          >
-                            <RefreshCw className={`w-3 h-3 ${isGeneratingCodexImage === entry.id ? 'animate-spin' : ''}`} />
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[8px] font-bold uppercase tracking-tighter px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            {entry.category}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {(entry.category === 'Location' || entry.category === 'Item') && (
-                              <button 
-                                onClick={() => handleGenerateCodexImage(entry)}
-                                disabled={isGeneratingCodexImage === entry.id}
-                                className="p-1 text-zinc-600 hover:text-emerald-400 transition-all"
-                                title="Generate Image"
-                              >
-                                {isGeneratingCodexImage === entry.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                              </button>
-                            )}
-                            <button 
-                              onClick={() => setConfirmModal({
-                                isOpen: true,
-                                title: 'Delete Entry',
-                                message: `Are you sure you want to delete "${entry.title}"?`,
-                                type: 'delete',
-                                targetId: entry.id
-                              })} 
-                              className="p-1 text-zinc-600 hover:text-red-400 transition-all"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                      
-                      {entry.imageUrl && (
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-[8px] font-bold uppercase tracking-tighter px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                            {entry.category}
-                          </span>
-                          <button 
-                            onClick={() => setConfirmModal({
-                              isOpen: true,
-                              title: 'Delete Entry',
-                              message: `Are you sure you want to delete "${entry.title}"?`,
-                              type: 'delete',
-                              targetId: entry.id
-                            })} 
-                            className="p-1 text-zinc-600 hover:text-red-400 transition-all"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      )}
-
-                      <h4 className="text-sm font-bold text-white mb-1">{entry.title}</h4>
-                      <p className="text-xs text-zinc-500 leading-relaxed line-clamp-3 group-hover:line-clamp-none transition-all">{entry.content}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </motion.div>
+            <CodexSidebar
+              codexEntries={codexEntries}
+              setCodexEntries={setCodexEntries}
+              messages={messages}
+              setShowCodex={setShowCodex}
+              isAutoProfileEnabled={isAutoProfileEnabled}
+              setIsAutoProfileEnabled={setIsAutoProfileEnabled}
+              isAutoCodexEnabled={isAutoCodexEnabled}
+              setIsAutoCodexEnabled={setIsAutoCodexEnabled}
+              isAutoPopulatingCodex={isAutoPopulatingCodex}
+              handleAutoPopulateCodex={handleAutoPopulateCodex}
+              isUpdatingProfile={isUpdatingProfile}
+              handleAutoUpdateProfile={handleAutoUpdateProfile}
+              isRefiningCodexEntry={isRefiningCodexEntry}
+              handleRefineCodexEntry={handleRefineCodexEntry}
+              isGeneratingCodexImage={isGeneratingCodexImage}
+              handleGenerateCodexImage={handleGenerateCodexImage}
+              newCodexEntry={newCodexEntry}
+              setNewCodexEntry={setNewCodexEntry}
+              setConfirmModal={setConfirmModal}
+            />
           )}
         </AnimatePresence>
 
@@ -1656,7 +842,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     <span className="text-[10px] font-bold uppercase tracking-widest">Narrating...</span>
                   </div>
                   <button 
-                    onClick={togglePlayPause} 
+                    onClick={togglePause} 
                     className="w-10 h-10 sm:w-12 sm:h-12 bg-emerald-600 hover:bg-emerald-500 rounded-full flex items-center justify-center text-white transition-all shadow-lg shadow-emerald-900/20"
                   >
                     <Pause className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -1691,7 +877,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                       value={getSettings().customRefineInstructions || ''}
                       onChange={(e) => {
                         const newSettings = { ...getSettings(), customRefineInstructions: e.target.value };
-                        localStorage.setItem('personaforge_settings', JSON.stringify(newSettings));
+                        saveSettings(newSettings);
                         // Force re-render to reflect changes
                         setShowRefineSettings(true);
                       }}

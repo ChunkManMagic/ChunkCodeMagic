@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { toast } from 'sonner';
-import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile } from '../lib/gemini';
-import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2 } from 'lucide-react';
+import { useToast } from '../hooks/useToast';
+import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech } from '../lib/gemini';
+import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2 } from 'lucide-react';
 
 interface CharacterEditorProps {
   profile: CharacterProfile;
@@ -16,6 +16,45 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
   const [avatar, setAvatar] = useState<string>(initialAvatar);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
+  const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
+  const { toastSuccess, toastError } = useToast();
+
+  const handlePreviewVoice = async () => {
+    if (isPreviewingVoice) return;
+    setIsPreviewingVoice(true);
+    try {
+      const text = `Hello there! I am ${profile.name || 'your character'}. This is how my voice sounds.`;
+      const base64Audio = await generateSpeech(text, profile.voiceName || 'Kore', profile.voiceSettings, profile.storyTone || 'Neutral');
+      if (base64Audio) {
+        const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const binaryString = window.atob(base64Audio);
+        const len = binaryString.length;
+        const bytes = new Uint8Array(len);
+        for (let i = 0; i < len; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        
+        const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(ctx.destination);
+        
+        source.onended = () => {
+          setIsPreviewingVoice(false);
+          ctx.close();
+        };
+        
+        source.start(0);
+      } else {
+        setIsPreviewingVoice(false);
+        toastError("Failed to generate voice preview");
+      }
+    } catch (err: any) {
+      console.error("Voice preview error:", err);
+      toastError(`Voice preview failed: ${err.message || 'Unknown error'}`);
+      setIsPreviewingVoice(false);
+    }
+  };
 
   const handleSave = () => {
     onSave(profile, avatar);
@@ -26,10 +65,10 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     try {
       const newAvatar = await generateAvatar(profile);
       setAvatar(newAvatar);
-      toast.success("Avatar regenerated!");
+      toastSuccess("Avatar regenerated!");
     } catch (err: any) {
       console.error("Failed to regenerate avatar", err);
-      toast.error(`Failed to regenerate avatar: ${err.message || 'Unknown error'}`);
+      toastError(`Failed to regenerate avatar: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRegenerating(false);
     }
@@ -53,10 +92,10 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
         }
         return { ...prev, [field]: refined };
       });
-      toast.success(`${field.toString().replace('player_', '')} refined`);
+      toastSuccess(`${field.toString().replace('player_', '')} refined`);
     } catch (err: any) {
       console.error("Refine field error:", err);
-      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
+      toastError(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -67,10 +106,10 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     try {
       const refinedTraits = await refineTraits(profile);
       setProfile(prev => ({ ...prev, traits: refinedTraits }));
-      toast.success("Traits refined");
+      toastSuccess("Traits refined");
     } catch (err: any) {
       console.error("Refine traits error:", err);
-      toast.error(`Refinement failed: ${err.message || 'Unknown error'}`);
+      toastError(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
     }
@@ -167,10 +206,20 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
 
           {/* Voice Settings */}
           <div className="glass-panel p-6 rounded-[2rem] border border-white/5 space-y-6">
-            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
-              <RotateCcw className="w-3 h-3" />
-              Voice Persona
-            </h3>
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
+                <RotateCcw className="w-3 h-3" />
+                Voice Persona
+              </h3>
+              <button
+                onClick={handlePreviewVoice}
+                disabled={isPreviewingVoice}
+                className="text-[10px] font-bold text-blue-400 hover:text-blue-300 flex items-center gap-1 disabled:opacity-50"
+              >
+                {isPreviewingVoice ? <Loader2 className="w-3 h-3 animate-spin" /> : <Volume2 className="w-3 h-3" />}
+                PREVIEW
+              </button>
+            </div>
             <div className="grid grid-cols-5 gap-1.5">
               {['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'].map(v => (
                 <button
@@ -332,7 +381,13 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                   <>
                     {[
                       { label: 'World Atmosphere', field: 'worldAtmosphere' },
-                      { label: 'Key Locations', field: 'keyLocations' }
+                      { label: 'Key Locations', field: 'keyLocations' },
+                      { label: 'Scenario Stakes', field: 'scenarioStakes' },
+                      { label: 'Core Conflict', field: 'scenarioConflict' },
+                      { label: 'Time Period', field: 'timePeriod' },
+                      { label: 'Factions', field: 'factions' },
+                      { label: 'Magic / Tech Level', field: 'magicOrTechnologyLevel' },
+                      { label: 'Inciting Incident', field: 'incitingIncident' }
                     ].map(item => (
                       <div key={item.field}>
                         <div className="flex justify-between items-center mb-2">
@@ -361,7 +416,11 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                   <>
                     {[
                       { label: 'Character Flaws', field: 'characterFlaws' },
-                      { label: 'Secret Motive', field: 'secretMotive' }
+                      { label: 'Secret Motive', field: 'secretMotive' },
+                      { label: 'Speech Pattern', field: 'speechPattern' },
+                      { label: 'Likes & Dislikes', field: 'likesAndDislikes' },
+                      { label: 'Core Beliefs', field: 'coreBeliefs' },
+                      { label: 'Quirks', field: 'quirks' }
                     ].map(item => (
                       <div key={item.field}>
                         <div className="flex justify-between items-center mb-2">
@@ -388,34 +447,36 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
 
                 {profile.mode === AppMode.GAME && (
                   <>
-                    <div>
-                      <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Game System</label>
-                      <input 
-                        type="text"
-                        className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                        value={profile.gameSystem}
-                        onChange={e => setProfile({...profile, gameSystem: e.target.value})}
-                      />
-                    </div>
-                    <div>
-                      <div className="flex justify-between items-center mb-2">
-                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Quest Objective</label>
-                        <button 
-                          onClick={() => handleRefineField('questObjective')}
-                          disabled={isRefiningField !== null}
-                          className="text-[9px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                        >
-                          {isRefiningField === 'questObjective' ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                          REFINE
-                        </button>
+                    {[
+                      { label: 'Game System', field: 'gameSystem' },
+                      { label: 'Quest Objective', field: 'questObjective' },
+                      { label: 'DM Style', field: 'dungeonMasterStyle' },
+                      { label: 'Rules Complexity', field: 'rulesComplexity' },
+                      { label: 'Difficulty Level', field: 'difficultyLevel' },
+                      { label: 'Party Composition', field: 'partyComposition' },
+                      { label: 'Starting Equipment', field: 'startingEquipment' },
+                      { label: 'Current Campaign Arc', field: 'currentCampaignArc' }
+                    ].map(item => (
+                      <div key={item.field}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
+                          <button 
+                            onClick={() => handleRefineField(item.field as any)}
+                            disabled={isRefiningField !== null}
+                            className="text-[9px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
+                          >
+                            {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
+                            REFINE
+                          </button>
+                        </div>
+                        <textarea 
+                          rows={3}
+                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
+                          value={(profile as any)[item.field]}
+                          onChange={e => setProfile({...profile, [item.field]: e.target.value})}
+                        />
                       </div>
-                      <textarea 
-                        rows={3}
-                        className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
-                        value={profile.questObjective}
-                        onChange={e => setProfile({...profile, questObjective: e.target.value})}
-                      />
-                    </div>
+                    ))}
                   </>
                 )}
               </div>

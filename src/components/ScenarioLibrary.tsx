@@ -1,6 +1,7 @@
 import { motion } from 'motion/react';
 import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3 } from 'lucide-react';
-import { Scenario, AppMode } from '../lib/gemini';
+import { AppMode } from '../lib/gemini';
+import { Scenario } from '../lib/types';
 
 interface ScenarioLibraryProps {
   scenarios: Scenario[];
@@ -56,7 +57,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDelete, onNew, 
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {scenarios.sort((a, b) => b.lastUpdated - a.lastUpdated).map((scenario) => (
+          {scenarios.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0)).map((scenario) => (
             <motion.div
               key={scenario.id}
               initial={{ opacity: 0, y: 20 }}
