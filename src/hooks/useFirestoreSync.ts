@@ -11,6 +11,7 @@ import {
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth } from '../firebase';
 import { Scenario, Message, CodexEntry, InventoryItem } from '../lib/types';
+import { compressImage } from '../lib/utils';
 
 export function useFirestoreSync() {
   const [user, setUser] = useState<User | null>(null);
@@ -57,17 +58,31 @@ export function useFirestoreSync() {
     });
   }, [user]);
 
-  const saveScenario = async (scenario: Scenario) => {
-    if (!user) return;
+  const saveScenario = useCallback(async (scenario: Scenario): Promise<Scenario> => {
+    if (!user) return scenario;
     try {
-      await setDoc(doc(db, 'users', user.uid, 'scenarios', scenario.id), scenario);
+      const finalScenario = { ...scenario };
+      if (finalScenario.avatarBase64 && finalScenario.avatarBase64.length > 500000) {
+        finalScenario.avatarBase64 = await compressImage(finalScenario.avatarBase64, 512, 0.7);
+      }
+
+      if (finalScenario.profile) {
+        // Remove inventory from profile to prevent document size bloat
+        // Inventory is stored in a separate subcollection
+        const profileWithoutInventory = { ...finalScenario.profile };
+        delete profileWithoutInventory.inventory;
+        finalScenario.profile = profileWithoutInventory;
+      }
+
+      await setDoc(doc(db, 'users', user.uid, 'scenarios', finalScenario.id), finalScenario);
+      return finalScenario;
     } catch (error) {
       console.error("Firestore Error (Save Scenario):", error);
       throw error;
     }
-  };
+  }, [user]);
 
-  const deleteScenario = async (scenarioId: string) => {
+  const deleteScenario = useCallback(async (scenarioId: string) => {
     if (!user) return;
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId));
@@ -77,7 +92,7 @@ export function useFirestoreSync() {
       console.error("Firestore Error (Delete Scenario):", error);
       throw error;
     }
-  };
+  }, [user]);
 
   const syncMessages = useCallback((scenarioId: string, callback: (messages: Message[]) => void) => {
     if (!user) return () => {};
@@ -96,7 +111,7 @@ export function useFirestoreSync() {
     });
   }, [user]);
 
-  const saveMessage = async (scenarioId: string, message: Message) => {
+  const saveMessage = useCallback(async (scenarioId: string, message: Message) => {
     if (!user) return;
     try {
       await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', message.id), {
@@ -107,9 +122,9 @@ export function useFirestoreSync() {
       console.error("Firestore Error (Save Message):", error);
       throw error;
     }
-  };
+  }, [user]);
 
-  const deleteMessage = async (scenarioId: string, messageId: string) => {
+  const deleteMessage = useCallback(async (scenarioId: string, messageId: string) => {
     if (!user) return;
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', messageId));
@@ -117,7 +132,7 @@ export function useFirestoreSync() {
       console.error("Firestore Error (Delete Message):", error);
       throw error;
     }
-  };
+  }, [user]);
 
   const syncCodex = useCallback((scenarioId: string, callback: (entries: CodexEntry[]) => void) => {
     if (!user) return () => {};
@@ -132,15 +147,19 @@ export function useFirestoreSync() {
     });
   }, [user]);
 
-  const saveCodexEntry = async (scenarioId: string, entry: CodexEntry) => {
+  const saveCodexEntry = useCallback(async (scenarioId: string, entry: CodexEntry) => {
     if (!user) return;
     try {
-      await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'codex', entry.id), entry);
+      const finalEntry = { ...entry };
+      if (finalEntry.imageUrl && finalEntry.imageUrl.length > 500000) {
+        finalEntry.imageUrl = await compressImage(finalEntry.imageUrl, 512, 0.7);
+      }
+      await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'codex', finalEntry.id), finalEntry);
     } catch (error) {
       console.error("Firestore Error (Save Codex):", error);
       throw error;
     }
-  };
+  }, [user]);
 
   const syncInventory = useCallback((scenarioId: string, callback: (items: InventoryItem[]) => void) => {
     if (!user) return () => {};
@@ -155,15 +174,29 @@ export function useFirestoreSync() {
     });
   }, [user]);
 
-  const saveInventoryItem = async (scenarioId: string, item: InventoryItem) => {
+  const saveInventoryItem = useCallback(async (scenarioId: string, item: InventoryItem) => {
     if (!user) return;
     try {
-      await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', item.id), item);
+      const finalItem = { ...item };
+      if (finalItem.imageUrl && finalItem.imageUrl.length > 500000) {
+        finalItem.imageUrl = await compressImage(finalItem.imageUrl, 512, 0.7);
+      }
+      await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', finalItem.id), finalItem);
     } catch (error) {
       console.error("Firestore Error (Save Inventory):", error);
       throw error;
     }
-  };
+  }, [user]);
+
+  const deleteInventoryItem = useCallback(async (scenarioId: string, itemId: string) => {
+    if (!user) return;
+    try {
+      await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', itemId));
+    } catch (error) {
+      console.error("Firestore Error (Delete Inventory):", error);
+      throw error;
+    }
+  }, [user]);
 
   const syncSummary = useCallback((scenarioId: string, callback: (summary: string) => void) => {
     if (!user) return () => {};
@@ -177,7 +210,7 @@ export function useFirestoreSync() {
     });
   }, [user]);
 
-  const saveSummary = async (scenarioId: string, text: string) => {
+  const saveSummary = useCallback(async (scenarioId: string, text: string) => {
     if (!user) return;
     try {
       await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'summary', 'current'), {
@@ -188,7 +221,7 @@ export function useFirestoreSync() {
       console.error("Firestore Error (Save Summary):", error);
       throw error;
     }
-  };
+  }, [user]);
 
   return {
     user,
@@ -203,6 +236,7 @@ export function useFirestoreSync() {
     saveCodexEntry,
     syncInventory,
     saveInventoryItem,
+    deleteInventoryItem,
     syncSummary,
     saveSummary
   };

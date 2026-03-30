@@ -34,7 +34,14 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           bytes[i] = binaryString.charCodeAt(i);
         }
         
-        const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+        // Decode 16-bit PCM
+        const int16Array = new Int16Array(bytes.buffer);
+        const audioBuffer = ctx.createBuffer(1, int16Array.length, 24000);
+        const channelData = audioBuffer.getChannelData(0);
+        for (let i = 0; i < int16Array.length; i++) {
+          channelData[i] = int16Array[i] / 32768.0;
+        }
+
         const source = ctx.createBufferSource();
         source.buffer = audioBuffer;
         source.connect(ctx.destination);

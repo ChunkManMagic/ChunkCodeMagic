@@ -395,7 +395,7 @@ export default function App() {
 
   const handleCharacterCreated = async (profile: CharacterProfile, avatarBase64: string) => {
     try {
-      const newScenario: Scenario = {
+      let newScenario: Scenario = {
         id: generateId(),
         profile,
         avatarBase64,
@@ -403,7 +403,7 @@ export default function App() {
       };
 
       if (user) {
-        await saveScenario(newScenario);
+        newScenario = await saveScenario(newScenario);
       }
 
       setScenarios(prev => [...prev, newScenario]);
@@ -425,7 +425,7 @@ export default function App() {
 
   const handleSaveEdit = async (profile: CharacterProfile, avatarBase64: string) => {
     if (!currentScenarioId) return;
-    const updatedScenario = {
+    let updatedScenario = {
       ...currentScenario!,
       profile,
       avatarBase64,
@@ -433,7 +433,7 @@ export default function App() {
     };
 
     if (user) {
-      await saveScenario(updatedScenario);
+      updatedScenario = await saveScenario(updatedScenario);
     }
 
     setScenarios(prev => prev.map(s => 
@@ -443,9 +443,9 @@ export default function App() {
     toastSuccess("Character updated successfully!");
   };
 
-  const handleCarryOver = (profile: CharacterProfile, avatarBase64: string) => {
+  const handleCarryOver = async (profile: CharacterProfile, avatarBase64: string) => {
     // Create a new scenario with the same character but new ID (empty messages)
-    const newScenario: Scenario = {
+    let newScenario: Scenario = {
       id: generateId(),
       profile: {
         ...profile,
@@ -455,6 +455,11 @@ export default function App() {
       avatarBase64,
       lastUpdated: Date.now()
     };
+
+    if (user) {
+      newScenario = await saveScenario(newScenario);
+    }
+
     setScenarios(prev => [...prev, newScenario]);
     setCurrentScenarioId(newScenario.id);
     setIsCreating(false);
@@ -464,14 +469,31 @@ export default function App() {
 
   const handleUpdateProfile = async (profile: CharacterProfile) => {
     if (!currentScenarioId) return;
-    const updatedScenario = {
+    let updatedScenario = {
       ...currentScenario!,
       profile,
       lastUpdated: Date.now()
     };
 
     if (user) {
-      await saveScenario(updatedScenario);
+      updatedScenario = await saveScenario(updatedScenario);
+    }
+
+    setScenarios(prev => prev.map(s => 
+      s.id === currentScenarioId ? updatedScenario : s
+    ));
+  };
+  
+  const handleUpdateAvatar = async (avatarBase64: string) => {
+    if (!currentScenarioId) return;
+    let updatedScenario = {
+      ...currentScenario!,
+      avatarBase64,
+      lastUpdated: Date.now()
+    };
+
+    if (user) {
+      updatedScenario = await saveScenario(updatedScenario);
     }
 
     setScenarios(prev => prev.map(s => 
@@ -657,6 +679,7 @@ export default function App() {
                 onEditCharacter={() => setIsEditing(true)} 
                 onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
                 onUpdateProfile={handleUpdateProfile}
+                onUpdateAvatar={handleUpdateAvatar}
                 onBranchScenario={handleBranchScenario}
               />
             </ErrorBoundary>

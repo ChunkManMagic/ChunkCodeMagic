@@ -223,6 +223,24 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   </div>
                 </div>
 
+                <div className="bg-white/5 border border-white/10 rounded-2xl p-4 backdrop-blur-md">
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-medium text-white">Auto-Updating Contextual Avatar</span>
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-gradient-to-r from-amber-400 to-orange-500 text-black uppercase">Premium</span>
+                      </div>
+                      <p className="text-xs text-gray-400">Avatar updates automatically based on story context (emotions, background, etc.).</p>
+                    </div>
+                    <button 
+                      onClick={() => handleChange('premiumAutoAvatar', !settings.premiumAutoAvatar)}
+                      className={`w-10 h-5 rounded-full transition-colors relative ${settings.premiumAutoAvatar ? 'bg-indigo-600' : 'bg-zinc-700'}`}
+                    >
+                      <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${settings.premiumAutoAvatar ? 'left-6' : 'left-1'}`} />
+                    </button>
+                  </div>
+                </div>
+
                 {!showWaitlist ? (
                   <button 
                     onClick={() => setShowWaitlist(true)}

@@ -11,4 +11,5 @@ export const STORAGE_KEYS = {
   SCENARIO_MESSAGES: (id: string) => `personaforge_messages_${id}`,
   SCENARIO_CODEX: (id: string) => `personaforge_codex_${id}`,
   SCENARIO_SUMMARY: (id: string) => `personaforge_summary_${id}`,
+  SCENARIO_INVENTORY: (id: string) => `personaforge_inventory_${id}`,
 };

@@ -12,7 +12,7 @@ import { useFirestoreSync } from '../hooks/useFirestoreSync';
 import { InventorySidebar } from './chat/InventorySidebar';
 import { CodexSidebar } from './chat/CodexSidebar';
 import { useConversation } from '@elevenlabs/react';
-import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory } from '../lib/gemini';
+import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory, generateContextualAvatar } from '../lib/gemini';
 import { getSettings, saveSettings } from '../lib/types';
 
 export interface Message {
@@ -51,10 +51,11 @@ interface ChatInterfaceProps {
   onEditCharacter: () => void;
   onCarryOver: () => void;
   onUpdateProfile: (profile: CharacterProfile) => void;
+  onUpdateAvatar: (avatarBase64: string) => void;
   onBranchScenario: (slicedMessages: Message[], codexEntries: CodexEntry[], storySummary: string) => void;
 }
 
-export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onBranchScenario }: ChatInterfaceProps) {
+export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onUpdateAvatar, onBranchScenario }: ChatInterfaceProps) {
   const { messages, setMessages, addMessage, updateMessage, storySummary, setStorySummary, updateSummary, isLoaded } = useChatState(scenarioId);
   const { user, saveMessage, saveSummary } = useFirestoreSync();
   const [showCodex, setShowCodex] = useState(false);
@@ -81,13 +82,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   } = useCodex(scenarioId, profile, messages);
 
   const {
+    inventory,
     isScanningInventory,
     isAutoInventoryEnabled,
     setIsAutoInventoryEnabled,
     isGeneratingItemImage,
     handleGenerateItemImage,
-    handleAutoUpdateInventory
-  } = useInventory(profile, onUpdateProfile);
+    handleAutoUpdateInventory,
+    addOrUpdateItem,
+    removeItem
+  } = useInventory(scenarioId, profile, messages);
   // Modal State
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
@@ -281,6 +285,26 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setEditInput('');
   };
 
+  const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
+
+  const handleAutoUpdateAvatar = async (history: Message[]) => {
+    const settings = getSettings();
+    if (!settings.premiumAutoAvatar || isUpdatingAvatar) return;
+    
+    setIsUpdatingAvatar(true);
+    try {
+      const newAvatar = await generateContextualAvatar(profile, history);
+      if (newAvatar) {
+        onUpdateAvatar(newAvatar);
+        toastSuccess("Avatar updated to match story context!");
+      }
+    } catch (err) {
+      console.error("Auto-Avatar Error:", err);
+    } finally {
+      setIsUpdatingAvatar(false);
+    }
+  };
+
   const generateReply = async (baseMessages: Message[], userInput: string, userMsgId: string) => {
     setIsTyping(true);
     try {
@@ -349,11 +373,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         { role: 'user', parts: [{ text: userInput }] },
         { role: 'model', parts: [{ text: fullReply }] }
       ];
-      const messagesWithReply = [...baseMessages, { id: userMsgId, role: 'user', text: userInput }, { ...aiMessage, text: fullReply }];
+      const messagesWithReply: Message[] = [...baseMessages, { id: userMsgId, role: 'user', text: userInput }, { ...aiMessage, text: fullReply }];
 
       if (isAutoCodexEnabled) handleAutoPopulateCodex(false, historyWithReply);
-      if (isAutoInventoryEnabled) handleAutoUpdateInventory(messagesWithReply, false);
+      if (isAutoInventoryEnabled) handleAutoUpdateInventory(false, messagesWithReply);
       if (isAutoProfileEnabled) handleAutoUpdateProfile(messagesWithReply, false, historyWithReply);
+      
+      // Trigger auto-avatar update if enabled
+      handleAutoUpdateAvatar(messagesWithReply);
     } catch (err: any) {
       console.error(err);
       toastError(`Narrative Error: ${err.message || 'Unknown error'}`);
@@ -376,7 +403,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     
     if (message.role === 'user') {
       const baseMessages = messages.slice(0, index);
-      const updatedUserMessage = { ...message, text: editInput };
+      const updatedUserMessage: Message = { ...message, text: editInput };
       
       // We need to handle the rewind/regenerate logic here.
       // For now, we'll just update the message and regenerate.
@@ -656,8 +683,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         <AnimatePresence>
           {showInventory && profile.mode === AppMode.GAME && (
             <InventorySidebar
-              profile={profile}
-              onUpdateProfile={onUpdateProfile}
+              inventory={inventory}
               messages={messages}
               setShowInventory={setShowInventory}
               isAutoInventoryEnabled={isAutoInventoryEnabled}
@@ -666,6 +692,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               handleAutoUpdateInventory={handleAutoUpdateInventory}
               isGeneratingItemImage={isGeneratingItemImage}
               handleGenerateItemImage={handleGenerateItemImage}
+              addOrUpdateItem={addOrUpdateItem}
+              removeItem={removeItem}
             />
           )}
         </AnimatePresence>
@@ -709,8 +737,40 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               referrerPolicy="no-referrer"
             />
             <div className="absolute inset-0 flex items-center justify-center">
-              <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="relative group">
+              <motion.div 
+                initial={{ opacity: 0, y: 20 }} 
+                animate={{ 
+                  opacity: 1, 
+                  y: 0,
+                  scale: getSettings().premiumContextAnimations ? [1, 1.02, 1] : 1
+                }} 
+                transition={{
+                  scale: {
+                    duration: 4,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  },
+                  opacity: { duration: 0.5 },
+                  y: { duration: 0.5 }
+                }}
+                className="relative group"
+              >
                 <img src={avatarBase64} alt={profile.name} className="h-60 w-60 object-cover rounded-3xl shadow-2xl border border-white/10 relative z-10" referrerPolicy="no-referrer" />
+                
+                {/* Loading overlay for Avatar Update */}
+                <AnimatePresence>
+                  {isUpdatingAvatar && (
+                    <motion.div 
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="absolute inset-0 z-20 bg-black/60 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center border border-emerald-500/30"
+                    >
+                      <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mb-2" />
+                      <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Updating Avatar...</span>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </motion.div>
             </div>
           </div>

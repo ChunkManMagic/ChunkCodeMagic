@@ -118,6 +118,7 @@ export interface AppSettings {
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;
+  premiumAutoAvatar?: boolean;
   schemaVersion?: number;
 }
 
@@ -147,6 +148,7 @@ export const defaultSettings: AppSettings = {
   voiceEngine: 'Cinematic',
   premiumCustomVoices: true,
   premiumContextAnimations: true,
+  premiumAutoAvatar: false,
   schemaVersion: CURRENT_SCHEMA_VERSION
 };
 

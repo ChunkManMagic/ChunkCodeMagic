@@ -1,9 +1,9 @@
-import { useEffect } from 'react';
+import { useEffect, useCallback } from 'react';
 import { get, set, del, keys } from 'idb-keyval';
 import { Scenario } from '../lib/types';
 
 export function useStorage() {
-  const loadData = async <T>(key: string): Promise<T | null> => {
+  const loadData = useCallback(async <T>(key: string): Promise<T | null> => {
     try {
       const val = await get<T>(key);
       return val !== undefined ? val : null;
@@ -11,23 +11,23 @@ export function useStorage() {
       console.error(`Failed to load data for ${key}`, e);
       return null;
     }
-  };
+  }, []);
 
-  const saveData = async <T>(key: string, value: T): Promise<void> => {
+  const saveData = useCallback(async <T>(key: string, value: T): Promise<void> => {
     try {
       await set(key, value);
     } catch (e) {
       console.error(`Failed to save data for ${key}`, e);
     }
-  };
+  }, []);
 
-  const deleteData = async (key: string): Promise<void> => {
+  const deleteData = useCallback(async (key: string): Promise<void> => {
     try {
       await del(key);
     } catch (e) {
       console.error(`Failed to delete data for ${key}`, e);
     }
-  };
+  }, []);
 
   return { loadData, saveData, deleteData };
 }

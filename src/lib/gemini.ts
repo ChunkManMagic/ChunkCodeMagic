@@ -1,5 +1,6 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings } from "./types";
+import { compressImage } from "./utils";
 
 export { AppMode };
 export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
@@ -21,7 +22,7 @@ export function generateId(): string {
   }
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
@@ -40,11 +41,11 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 2000): Pr
       throw new Error("Gemini is not available in your current location.");
     }
 
-    if (retries > 0 && (status === 429 || errorMessage.includes('429') || errorMessage.includes('quota'))) {
-      console.warn(`Rate limit hit, retrying in ${delay}ms... (${retries} retries left)`);
-      const jitter = Math.random() * 1000;
-      await new Promise(resolve => setTimeout(resolve, delay + jitter));
-      return withRetry(fn, retries - 1, delay * 2);
+    if (retries > 0 && (status === 429 || errorMessage.includes('429') || errorMessage.includes('quota') || errorMessage.includes('limit'))) {
+      const waitTime = delay + Math.random() * 2000;
+      console.warn(`Rate limit hit, retrying in ${Math.round(waitTime)}ms... (${retries} retries left)`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+      return withRetry(fn, retries - 1, delay * 2.5);
     }
     
     throw error;
@@ -90,7 +91,7 @@ function buildHistory(messages: any[]) {
 export async function generateCharacterProfile(idea: string, mode: AppMode): Promise<CharacterProfile> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Generate a detailed character profile based on this idea: "${idea}" for a ${mode} mode. 
     Also generate a detailed profile for the player character that would be a good fit for this story.`,
     config: {
@@ -222,7 +223,8 @@ The character should be the central focus, looking towards the camera.`;
   
   for (const part of response.candidates?.[0]?.content?.parts || []) {
     if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+      const base64 = `data:image/png;base64,${part.inlineData.data}`;
+      return await compressImage(base64, 512, 0.7);
     }
   }
   return "";
@@ -253,7 +255,8 @@ The subject should be the central focus, capturing the essence of the descriptio
   
   for (const part of response.candidates?.[0]?.content?.parts || []) {
     if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+      const base64 = `data:image/png;base64,${part.inlineData.data}`;
+      return await compressImage(base64, 512, 0.7);
     }
   }
   return "";
@@ -283,7 +286,8 @@ Style: RPG item icon, digital art, detailed, atmospheric, professional concept a
   
   for (const part of response.candidates?.[0]?.content?.parts || []) {
     if (part.inlineData) {
-      return `data:image/png;base64,${part.inlineData.data}`;
+      const base64 = `data:image/png;base64,${part.inlineData.data}`;
+      return await compressImage(base64, 512, 0.7);
     }
   }
   return "";
@@ -411,7 +415,7 @@ export async function refineTraits(profile: CharacterProfile): Promise<any> {
 export async function summarizeHistory(history: any[], previousSummary: string = ""): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Summarize the following story history. Keep it concise but include key events, character development, and important details.
 Previous Summary: ${previousSummary}
 New Events:
@@ -429,9 +433,9 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
   const ai = getGenAI();
   
   const systemInstruction = buildSystemInstruction(profile, codexEntries, currentSummary);
-
+ 
   const chat = ai.chats.create({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     config: { systemInstruction },
     history: buildHistory(history)
   });
@@ -449,20 +453,20 @@ export async function suggestNextAction(history: any[], profile: CharacterProfil
 The player is playing as:
 Name: ${profile.playerProfile?.name || 'The Protagonist'}
 Description: ${profile.playerProfile?.description || 'A mysterious traveler'}
-
+ 
 They are interacting with:
 Name: ${profile.name}
 Personality: ${profile.personality}
 Relationship: ${profile.relationship}
-
+ 
 World Context: ${profile.worldAtmosphere || 'Not specified'}
 Key Locations: ${profile.keyLocations || 'Not specified'}
-
+ 
 Your task is to suggest a compelling next action or dialogue for the player character based on the story history.
 Return ONLY the suggested text, ready to be used as user input. Make it immersive, descriptive, and perfectly in-character for the player. Do not include quotes, explanations, or any other text.`;
-
+ 
   const chat = ai.chats.create({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     config: { systemInstruction },
     history: buildHistory(history)
   });
@@ -478,24 +482,24 @@ export async function suggestMultipleActions(history: any[], profile: CharacterP
 The player is playing as:
 Name: ${profile.playerProfile?.name || 'The Protagonist'}
 Description: ${profile.playerProfile?.description || 'A mysterious traveler'}
-
+ 
 They are interacting with:
 Name: ${profile.name}
 Personality: ${profile.personality}
 Relationship: ${profile.relationship}
-
+ 
 World Context: ${profile.worldAtmosphere || 'Not specified'}
 Key Locations: ${profile.keyLocations || 'Not specified'}
-
+ 
 Your task is to suggest 3 distinct, compelling possible next actions or dialogue choices for the player character based on the story history.
 IMPORTANT: Analyze the VERY LAST message in the history carefully. The suggestions must be a logical NEXT STEP from that message. 
 Do NOT suggest actions that have already been performed or dialogue that has already been spoken.
-
+ 
 Return them as a JSON array of strings. Each string should be a complete, immersive, and descriptive action or dialogue.
 Return ONLY the JSON. No other text.`;
-
+ 
   const chat = ai.chats.create({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     config: { 
       systemInstruction,
       responseMimeType: "application/json",
@@ -518,12 +522,12 @@ export async function refineInput(input: string, profile: CharacterProfile, hist
   const styleInstruction = customInstructions 
     ? `\nCustom Writing Style Instructions:\n${customInstructions}\n` 
     : '';
-
+ 
   const systemInstruction = `You are an AI assistant helping a player roleplay. 
 The player is playing as:
 Name: ${profile.playerProfile?.name || 'The Protagonist'}
 Description: ${profile.playerProfile?.description || 'A mysterious traveler'}
-
+ 
 They are interacting with:
 Name: ${profile.name}
 Personality: ${profile.personality}
@@ -531,9 +535,9 @@ Relationship: ${profile.relationship}
 ${styleInstruction}
 Your task is to refine the player's next input to be more descriptive, immersive, and in-character. 
 Return ONLY the refined text. Do not include quotes, explanations, or any other text.`;
-
+ 
   const chat = ai.chats.create({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     config: { systemInstruction },
     history: buildHistory(history)
   });
@@ -546,17 +550,11 @@ export async function generateSpeech(text: string, voiceName: string, voiceSetti
   if (!text || !text.trim()) return "";
   const ai = getGenAI();
   
-  // Cinematic Audiobook Prompt
-  const prompt = `Perform the following text as a cinematic, deep audiobook storyteller. 
-Use a ${tone || 'natural'} tone with rich emotional prosody. 
-Incorporate natural breath pauses and human-like pacing. 
-Avoid all robotic, flat, or whiny artifacts. 
-The delivery should be immersive, professional, and evocative.
-
-Voice Parameters: ${voiceSettings?.pitch || 'Normal'} pitch, ${voiceSettings?.speed || 'Normal'} speed, ${voiceSettings?.accent || 'No'} accent.
-
-Text to perform:
-${text}`;
+  // Direct, concise prompt for TTS to save tokens and reduce complexity
+  const prompt = `Perform this text as a cinematic audiobook narrator. 
+Tone: ${tone || 'natural'}. 
+Voice: ${voiceSettings?.pitch || 'Normal'} pitch, ${voiceSettings?.speed || 'Normal'} speed.
+Text: ${text}`;
 
   const response = await withRetry(() => ai.models.generateContent({
     model: "gemini-2.5-flash-preview-tts",
@@ -569,7 +567,7 @@ ${text}`;
         },
       },
     },
-  }));
+  }), 1, 4000); // Only 1 retry for TTS, longer wait
   return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data || "";
 }
 
@@ -578,13 +576,13 @@ export async function extractCodexEntries(history: any[], profile: CharacterProf
   const existingTitles = existingEntries.map(e => e.title).join(', ');
   
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Analyze the following roleplay history and character profile. Identify any significant new lore, locations, items, or mechanics that should be added to the world codex. 
 Do not suggest entries that already exist: [${existingTitles}]
-
+ 
 Character Profile: ${JSON.stringify(profile)}
 History: ${JSON.stringify(history.slice(-20))}
-
+ 
 Return a JSON array of new codex entries. Each entry must have:
 - title: A short, clear name
 - content: A concise description (1-3 sentences)
@@ -612,11 +610,11 @@ Return a JSON array of new codex entries. Each entry must have:
 export async function refineCodexEntry(entry: Partial<CodexEntry>, profile: CharacterProfile): Promise<Partial<CodexEntry>> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Refine this codex entry to be more descriptive, immersive, and consistent with the world of ${profile.name}.
 Current Entry: ${JSON.stringify(entry)}
 World Context: ${profile.worldAtmosphere || 'Not specified'}
-
+ 
 Return the refined entry as JSON with the same fields (title, content, category).`,
     config: {
       responseMimeType: "application/json",
@@ -642,11 +640,11 @@ Return the refined entry as JSON with the same fields (title, content, category)
 export async function updateCharacterProfilesFromHistory(history: any[], profile: CharacterProfile): Promise<Partial<CharacterProfile>> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-preview",
+    model: "gemini-3-flash-preview",
     contents: `Analyze the following roleplay history and suggest updates to the character's profile based on recent events, character development, and changes in relationships.
 Current Profile: ${JSON.stringify(profile)}
 Recent History: ${JSON.stringify(history.slice(-15))}
-
+ 
 Return a JSON object with any fields that should be updated. Only include fields that have meaningful changes.
 Fields you can update: personality, backstory, appearance, relationship, worldAtmosphere, keyLocations, characterFlaws, secretMotive, questObjective, scenarioStakes, scenarioConflict, dungeonMasterStyle, rulesComplexity, speechPattern, likesAndDislikes, coreBeliefs, quirks, timePeriod, factions, magicOrTechnologyLevel, incitingIncident, difficultyLevel, partyComposition, startingEquipment, currentCampaignArc.`,
     config: {
@@ -685,6 +683,75 @@ Fields you can update: personality, backstory, appearance, relationship, worldAt
   }));
   
   return JSON.parse(response.text || "{}");
+}
+
+export async function generateContextualAvatar(profile: CharacterProfile, history: any[]): Promise<string> {
+  const ai = getGenAI();
+  
+  // First, analyze the context to determine the current emotion, background, and any changes
+  const contextResponse = await withRetry(() => ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: `Analyze the recent roleplay history and determine the character's current state.
+Character Name: ${profile.name}
+Character Appearance: ${profile.appearance}
+Recent History: ${JSON.stringify(history.slice(-10))}
+
+Identify:
+1. Current Emotion/Expression.
+2. Current Location/Background.
+3. Any temporary changes (wounds, new accessories, different clothing).
+
+Return a JSON object with:
+- "emotion": string
+- "background": string
+- "changes": string (any temporary additions or changes)`,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          emotion: { type: Type.STRING },
+          background: { type: Type.STRING },
+          changes: { type: Type.STRING }
+        },
+        required: ["emotion", "background", "changes"]
+      }
+    }
+  }));
+
+  const context = JSON.parse(contextResponse.text || '{"emotion":"neutral", "background":"neutral", "changes":""}');
+
+  const prompt = `A highly detailed, photorealistic 8k portrait of ${profile.name}.
+Base Appearance: ${profile.appearance}
+Current Emotion/Expression: ${context.emotion}
+Current Background: ${context.background}
+Temporary Changes/Details: ${context.changes}
+Clothing: ${profile.clothing || 'appropriate for the character'}
+Accessories: ${profile.accessories || 'none'}
+Hair: ${profile.hairStyle || 'natural'} in ${profile.hairColor || 'natural color'}
+Eyes: ${profile.eyeColor || 'natural color'}
+Style: Cinematic lighting, professional photography, sharp focus, intricate textures, realistic skin and fabric rendering. 
+The character should be the central focus, looking towards the camera.`;
+
+  const response = await withRetry(() => ai.models.generateContent({
+    model: 'gemini-2.5-flash-image',
+    contents: {
+      parts: [{ text: prompt }]
+    },
+    config: {
+      imageConfig: {
+        aspectRatio: "1:1"
+      }
+    }
+  }));
+  
+  for (const part of response.candidates?.[0]?.content?.parts || []) {
+    if (part.inlineData) {
+      const base64 = `data:image/png;base64,${part.inlineData.data}`;
+      return await compressImage(base64, 512, 0.7);
+    }
+  }
+  return "";
 }
 
 export async function generateVeoAnimation() {

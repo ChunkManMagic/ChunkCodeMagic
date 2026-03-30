@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { generateSpeech } from '../lib/gemini';
 import { VoiceSettings, getSettings } from '../lib/types';
+import { useToast } from './useToast';
 
 export function useVoice(voiceName: string, voiceSettings: VoiceSettings | undefined, storyTone: string) {
+  const { toastError } = useToast();
   const [isPlaying, setIsPlaying] = useState(false);
   const [isProcessingSpeech, setIsProcessingSpeech] = useState(false);
   const [isManualPause, setIsManualPause] = useState(false);
@@ -85,22 +87,39 @@ export function useVoice(voiceName: string, voiceSettings: VoiceSettings | undef
           bytes[i] = binaryString.charCodeAt(i);
         }
         
-        const audioBuffer = await ctx.decodeAudioData(bytes.buffer);
+        // Decode 16-bit PCM
+        const int16Array = new Int16Array(bytes.buffer);
+        const audioBuffer = ctx.createBuffer(1, int16Array.length, 24000);
+        const channelData = audioBuffer.getChannelData(0);
+        for (let i = 0; i < int16Array.length; i++) {
+          channelData[i] = int16Array[i] / 32768.0;
+        }
+
         audioQueue.current.push(audioBuffer);
         
         if (!isPlaying && !isManualPause) {
           playNextInQueue();
         }
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error("TTS Error:", error);
+      const errorMessage = error?.message || String(error);
+      if (errorMessage.toLowerCase().includes('quota') || errorMessage.toLowerCase().includes('limit') || errorMessage.includes('429')) {
+        toastError("Voice Quota Reached", "The AI voice limit has been reached. Try again in a few minutes or switch to 'Fast Browser' in Settings.");
+        speechQueue.current = [];
+        audioQueue.current = [];
+        setIsPlaying(false);
+      }
     } finally {
       setIsProcessingSpeech(false);
       if (speechQueue.current.length > 0) {
-        processSpeechQueue();
+        // Small delay between chunks to avoid hitting RPM limits
+        setTimeout(() => {
+          processSpeechQueue();
+        }, 500);
       }
     }
-  }, [isProcessingSpeech, isPlaying, isManualPause, playNextInQueue, voiceName, voiceSettings, storyTone]);
+  }, [isProcessingSpeech, isPlaying, isManualPause, playNextInQueue, voiceName, voiceSettings, storyTone, toastError]);
 
   const handleReadAloud = useCallback((text: string) => {
     try {
@@ -125,23 +144,24 @@ export function useVoice(voiceName: string, voiceSettings: VoiceSettings | undef
         return;
       }
 
-      // Split text into small chunks (~200 chars) for sequential generation
+      // Split text into larger chunks (~1000 chars) for sequential generation
+      // Larger chunks reduce the number of API calls and help stay within quotas
       const chunks: string[] = [];
       let remainingText = cleanText;
       
       while (remainingText.length > 0) {
-        if (remainingText.length <= 200) {
+        if (remainingText.length <= 1000) {
           chunks.push(remainingText);
           break;
         }
         
-        let breakIndex = remainingText.lastIndexOf('. ', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('? ', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('! ', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('\n', 200);
-        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf(' ', 200);
+        let breakIndex = remainingText.lastIndexOf('. ', 1000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('? ', 1000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('! ', 1000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf('\n', 1000);
+        if (breakIndex === -1) breakIndex = remainingText.lastIndexOf(' ', 1000);
         
-        if (breakIndex === -1 || breakIndex < 50) breakIndex = 200;
+        if (breakIndex === -1 || breakIndex < 200) breakIndex = 1000;
         
         chunks.push(remainingText.substring(0, breakIndex + 1).trim());
         remainingText = remainingText.substring(breakIndex + 1).trim();
