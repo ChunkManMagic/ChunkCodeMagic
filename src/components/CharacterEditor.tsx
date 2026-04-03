@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useToast } from '../hooks/useToast';
 import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech } from '../lib/gemini';
-import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2 } from 'lucide-react';
+import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2, Plus, Trash2 } from 'lucide-react';
 import { RefineButton } from './RefineButton';
+import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 
 interface CharacterEditorProps {
   profile: CharacterProfile;
@@ -18,6 +19,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
+  const [showAddCharacter, setShowAddCharacter] = useState(false);
   const { toastSuccess, toastError } = useToast();
 
   const handlePreviewVoice = async () => {
@@ -596,6 +598,43 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
             </div>
           </div>
 
+          {/* Additional Characters */}
+          <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-8">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
+                <Settings2 className="w-3 h-3" />
+                Additional Characters
+              </h3>
+              <button
+                onClick={() => setShowAddCharacter(true)}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+              >
+                <Plus className="w-3 h-3" />
+                Add Character
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {(profile.additionalCharacters || []).map((char, index) => (
+                <div key={char.id} className="flex items-center justify-between p-4 glass-input rounded-2xl">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">{char.name}</h4>
+                    <p className="text-xs text-zinc-500">{char.description}</p>
+                  </div>
+                  <button
+                    onClick={() => setProfile({
+                      ...profile,
+                      additionalCharacters: profile.additionalCharacters?.filter((_, i) => i !== index)
+                    })}
+                    className="p-2 text-zinc-600 hover:text-red-400 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Player Profile */}
           <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-8">
             <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
@@ -670,6 +709,18 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
               </div>
             </div>
           </div>
+          <AdditionalCharacterModal
+            isOpen={showAddCharacter}
+            onClose={() => setShowAddCharacter(false)}
+            onSave={(character) => {
+              setProfile({
+                ...profile,
+                additionalCharacters: [...(profile.additionalCharacters || []), character]
+              });
+              setShowAddCharacter(false);
+            }}
+            appMode={profile.mode}
+          />
         </div>
       </div>
     </div>

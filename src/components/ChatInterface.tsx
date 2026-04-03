@@ -1,19 +1,19 @@
-import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useVoice } from '../hooks/useVoice';
 import { useCodex } from '../hooks/useCodex';
 import { useInventory } from '../hooks/useInventory';
 import { useChatState } from '../hooks/useChatState';
 import { useProfileUpdate } from '../hooks/useProfileUpdate';
-import { useFirestoreSync } from '../hooks/useFirestoreSync';
 import { InventorySidebar } from './chat/InventorySidebar';
 import { CodexSidebar } from './chat/CodexSidebar';
 import { useConversation } from '@elevenlabs/react';
 import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
+import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { getSettings } from '../lib/types';
 
 export interface Message {
@@ -77,10 +77,10 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     );
   }
 
-  const { messages, setMessages, addMessage, updateMessage, storySummary, setStorySummary, updateSummary, isLoaded } = useChatState(scenarioId);
-  const { user, saveMessage, saveSummary } = useFirestoreSync();
+  const { messages, setMessages, addMessage, updateMessage, updateMessages, rewindToMessage, resetMessages, storySummary, updateSummary, isLoaded } = useChatState(scenarioId);
   const [showCodex, setShowCodex] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
+  const [showAddCharacter, setShowAddCharacter] = useState(false);
   const [newCodexEntry, setNewCodexEntry] = useState<Partial<CodexEntry>>({ category: 'Lore' });
   const {
     isAutoProfileEnabled,
@@ -146,24 +146,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     if (confirmModal.type === 'delete' && confirmModal.targetId) {
       setCodexEntries(prev => prev.filter(e => e.id !== confirmModal.targetId));
     } else if (confirmModal.type === 'reset') {
-      setMessages([]);
+      await resetMessages();
       setCodexEntries([]);
-      if (user) {
-        // We don't have a bulk delete for subcollections in client SDK easily,
-        // but we can at least clear the scenario metadata or handle it.
-        // For now, we'll just clear local state and let the user delete the scenario from library if they want a full wipe.
-      }
+      await updateSummary('');
     } else if (confirmModal.type === 'rewind' && confirmModal.targetId) {
-      const index = messages.findIndex(m => m.id === confirmModal.targetId);
-      if (index !== -1) {
-        const newMessages = messages.slice(0, index + 1).map(m => ({ ...m, isSummarized: false }));
-        setMessages(newMessages);
-        setStorySummary('');
-        if (user) {
-          await saveSummary(scenarioId, '');
-          // In a real app, we'd delete the messages after the rewind point in Firestore too.
-        }
-      }
+      await rewindToMessage(confirmModal.targetId);
+      await updateSummary('');
     }
 
     setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }));
@@ -198,21 +186,21 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setIsMicActive(false);
       setIsLiveMode(false);
     },
-    onMessage: (message: any) => {
+    onMessage: async (message: any) => {
       if (message.source === 'user' && message.isFinal) {
         const userMsg: Message = {
           id: generateId(),
           role: 'user',
           text: message.message,
         };
-        setMessages(prev => [...prev, userMsg]);
+        await addMessage(userMsg);
       } else if (message.source === 'ai') {
         const aiMsg: Message = {
           id: generateId(),
           role: 'model',
           text: message.message,
         };
-        setMessages(prev => [...prev, aiMsg]);
+        await addMessage(aiMsg);
       }
     },
     onError: (error: any) => {
@@ -382,7 +370,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         await updateSummary(currentSummary);
         
         const summarizedIds = new Set(toSummarize.map(m => m.id));
-        setMessages(prev => prev.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m));
+        const updatedMessages = messages.map(m => summarizedIds.has(m.id) ? { ...m, isSummarized: true } : m)
+          .filter(m => summarizedIds.has(m.id));
+        await updateMessages(updatedMessages);
         
         unsummarizedMessages = unsummarizedMessages.slice(-10);
       }
@@ -390,7 +380,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       const historyForAi = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
       const aiMessageId = generateId();
       const aiMessage: Message = { id: aiMessageId, role: 'model', text: '', provider: getSettings().activeTextProvider };
-      setMessages(prev => [...prev, aiMessage]);
+      await addMessage(aiMessage);
       
       let fullReply = '';
       let displayReply = '';
@@ -432,10 +422,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       }
       
       const finalAiMessage = { ...aiMessage, text: displayReply };
-      setMessages(prev => prev.map(m => m.id === aiMessageId ? finalAiMessage : m));
-      if (user) {
-        await saveMessage(scenarioId, finalAiMessage);
-      }
+      await updateMessage(finalAiMessage);
       
       if (newMood !== profile.currentMood) {
         onUpdateProfile({ ...profile, currentMood: newMood });
@@ -462,12 +449,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     } catch (err: any) {
       console.error(err);
       toastError(`Narrative Error: ${err.message || 'Unknown error'}`);
-      setMessages(prev => [...prev, {
+      await addMessage({
         id: generateId(),
         role: 'model',
         text: `*The narrative stream falters: ${err.message || 'Please try again.'}*`,
         provider: getSettings().activeTextProvider
-      }]);
+      });
     } finally {
       setIsTyping(false);
     }
@@ -480,15 +467,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     const message = messages[index];
     
     if (message.role === 'user') {
-      const baseMessages = messages.slice(0, index);
+      await rewindToMessage(message.id);
       const updatedUserMessage: Message = { ...message, text: editInput };
-      
-      // We need to handle the rewind/regenerate logic here.
-      // For now, we'll just update the message and regenerate.
       await updateMessage(updatedUserMessage);
       setEditingMessageId(null);
       setEditInput('');
       
+      const baseMessages = messages.slice(0, index);
       await generateReply(baseMessages, editInput, message.id);
     } else {
       const updatedModelMessage = { ...message, text: editInput };
@@ -516,7 +501,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       userInput += `\n\n[Director's Note for AI: ${guidance.trim()}]`;
     }
 
-    setMessages(slicedHistory);
+    await rewindToMessage(lastUserMessage.id);
     setRegeneratingMessageId(null);
     setRerollGuidance('');
 
@@ -691,6 +676,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
             title="World Codex"
           >
             <Book className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+          <button
+            onClick={() => setShowAddCharacter(true)}
+            className="p-2 rounded-xl text-zinc-500 hover:text-emerald-400 hover:bg-white/5 transition-all"
+            title="Add Character"
+          >
+            <User className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           {profile.mode === AppMode.GAME && (
             <button
@@ -868,6 +860,20 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
             />
           )}
         </AnimatePresence>
+
+        <AdditionalCharacterModal
+          isOpen={showAddCharacter}
+          onClose={() => setShowAddCharacter(false)}
+          onSave={(character) => {
+            const updatedProfile = {
+              ...profile,
+              additionalCharacters: [...(profile.additionalCharacters || []), character]
+            };
+            onUpdateProfile(updatedProfile);
+            setShowAddCharacter(false);
+          }}
+          appMode={profile.mode}
+        />
 
         <div className="flex-1 flex flex-col relative bg-black/10">
           {/* Avatar Display */}
@@ -1130,7 +1136,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 >
                   <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-4">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Guided Refine</h4>
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Guided Refinement</h4>
                       <button onClick={() => setShowGuidedRefine(false)} className="text-zinc-500 hover:text-white">
                         <CloseIcon className="w-4 h-4" />
                       </button>
@@ -1308,7 +1314,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 className={`text-[9px] sm:text-[10px] font-bold px-2 py-1 rounded-r-lg border-y border-r transition-all tracking-widest flex items-center ${
                   showGuidedRefine ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
                 }`}
-                title="Guided Refine"
+                title="Guided Refinement"
               >
                 <Edit3 className="w-3 h-3" />
               </button>

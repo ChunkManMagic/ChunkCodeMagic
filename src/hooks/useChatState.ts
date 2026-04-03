@@ -68,18 +68,25 @@ export function useChatState(scenarioId: string) {
                 for (const msg of saved) {
                   await saveMessage(scenarioId, msg);
                 }
+              } else {
+                // If there's nothing to migrate, just set messages to empty
+                setMessages([]);
               }
               localStorage.setItem(`migrated_msgs_${scenarioId}_${user.uid}`, 'true');
+            } else {
+              // If we already migrated and Firestore is empty, it means the chat was reset
+              setMessages([]);
             }
           } catch (e) {
             console.error("Failed to migrate messages", e);
+            setMessages([]);
           }
         }
         setIsLoaded(true);
       });
 
       const unsubSummary = syncSummary(scenarioId, async (syncedSummary) => {
-        if (syncedSummary) {
+        if (syncedSummary !== undefined && syncedSummary !== null) {
           setStorySummary(syncedSummary);
         } else {
           // Migrate summary
@@ -90,10 +97,16 @@ export function useChatState(scenarioId: string) {
               if (savedSummary) {
                 console.log("Migrating local summary to Firestore...");
                 await saveSummary(scenarioId, savedSummary);
+              } else {
+                setStorySummary('');
               }
               localStorage.setItem(`migrated_summary_${scenarioId}_${user.uid}`, 'true');
+            } else {
+              setStorySummary('');
             }
-          } catch (e) {}
+          } catch (e) {
+            setStorySummary('');
+          }
         }
       });
 
@@ -139,11 +152,52 @@ export function useChatState(scenarioId: string) {
     }
   };
 
+  // Helper to update multiple messages (handles cloud save)
+  const updateMessages = async (updatedMessages: Message[]) => {
+    setMessages(prev => prev.map(m => {
+      const updated = updatedMessages.find(um => um.id === m.id);
+      return updated || m;
+    }));
+    if (user) {
+      for (const msg of updatedMessages) {
+        await saveMessage(scenarioId, msg);
+      }
+    }
+  };
+
   // Helper to delete a message (handles cloud save)
   const deleteMessage = async (messageId: string) => {
     setMessages(prev => prev.filter(m => m.id !== messageId));
     if (user) {
       await cloudDeleteMessage(scenarioId, messageId);
+    }
+  };
+
+  // Helper to rewind to a specific message (deletes subsequent messages)
+  const rewindToMessage = async (messageId: string) => {
+    const index = messages.findIndex(m => m.id === messageId);
+    if (index === -1) return;
+
+    const messagesToDelete = messages.slice(index + 1);
+    const newMessages = messages.slice(0, index + 1);
+    
+    setMessages(newMessages);
+    
+    if (user) {
+      for (const msg of messagesToDelete) {
+        await cloudDeleteMessage(scenarioId, msg.id);
+      }
+    }
+  };
+
+  // Helper to reset all messages
+  const resetMessages = async () => {
+    const messagesToDelete = [...messages];
+    setMessages([]);
+    if (user) {
+      for (const msg of messagesToDelete) {
+        await cloudDeleteMessage(scenarioId, msg.id);
+      }
     }
   };
 
@@ -160,7 +214,10 @@ export function useChatState(scenarioId: string) {
     setMessages,
     addMessage,
     updateMessage,
+    updateMessages,
     deleteMessage,
+    rewindToMessage,
+    resetMessages,
     storySummary,
     setStorySummary,
     updateSummary,

@@ -565,7 +565,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                 className={`px-8 py-3 rounded-2xl text-sm font-bold transition-all flex items-center gap-2 ${setupType === 'detailed' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20' : 'glass-input text-zinc-500 hover:text-zinc-300'}`}
               >
                 <Settings2 className="w-4 h-4" />
-                Detailed Forge
+                Guided Refinement
               </button>
             </div>
 
