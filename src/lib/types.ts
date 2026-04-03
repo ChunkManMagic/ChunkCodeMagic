@@ -26,12 +26,27 @@ export interface PlayerProfile {
   hairStyle?: string;
   hairColor?: string;
   eyeColor?: string;
+  // GAME MODE tracking (optional — only populated in Game mode sessions)
+  currentHP?: number;
+  maxHP?: number;
+  level?: number;
+  xp?: number;
+  playerClass?: string;
+  playerRace?: string;
 }
 
 export interface VoiceSettings {
   pitch: string;
   speed: string;
   accent: string;
+}
+
+export interface AdditionalCharacter {
+  id: string;
+  name: string;
+  description: string;
+  personality?: string;
+  appearance?: string;
 }
 
 export interface CharacterProfile {
@@ -63,6 +78,7 @@ export interface CharacterProfile {
   relationship: string;
   playerProfile: PlayerProfile;
   inventory?: InventoryItem[];
+  additionalCharacters?: AdditionalCharacter[];
   // ROLEPLAY MODE
   characterFlaws?: string;
   secretMotive?: string;
@@ -90,6 +106,9 @@ export interface CharacterProfile {
   partyComposition?: string;
   startingEquipment?: string;
   currentCampaignArc?: string;
+
+  // DYNAMIC STATE
+  currentMood?: string;
 }
 
 export interface Scenario {
@@ -148,7 +167,7 @@ export const defaultSettings: AppSettings = {
   voiceEngine: 'Cinematic',
   premiumCustomVoices: true,
   premiumContextAnimations: true,
-  premiumAutoAvatar: false,
+  premiumAutoAvatar: true,
   schemaVersion: CURRENT_SCHEMA_VERSION
 };
 

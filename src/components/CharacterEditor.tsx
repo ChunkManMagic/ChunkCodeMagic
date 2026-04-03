@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useToast } from '../hooks/useToast';
 import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech } from '../lib/gemini';
 import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2 } from 'lucide-react';
+import { RefineButton } from './RefineButton';
 
 interface CharacterEditorProps {
   profile: CharacterProfile;
@@ -81,20 +82,20 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     }
   };
 
-  const handleRefineField = async (field: keyof CharacterProfile | string) => {
+  const handleRefineField = async (field: keyof CharacterProfile | string, guidance?: string) => {
     setIsRefiningField(field);
     try {
       let refined = "";
-      if (field.startsWith('player_')) {
-        const playerField = field.replace('player_', '');
-        refined = await refinePlayerProfile(playerField, profile);
+      if (field.toString().startsWith('player_')) {
+        const playerField = field.toString().replace('player_', '');
+        refined = await refinePlayerProfile(playerField, profile, guidance);
       } else {
-        refined = await refineField(field as any, profile);
+        refined = await refineField(field as any, profile, guidance);
       }
       
       setProfile(prev => {
-        if (field.startsWith('player_')) {
-          const playerField = field.replace('player_', '');
+        if (field.toString().startsWith('player_')) {
+          const playerField = field.toString().replace('player_', '');
           return { ...prev, playerProfile: { ...(prev.playerProfile || {}), [playerField]: refined } };
         }
         return { ...prev, [field]: refined };
@@ -145,12 +146,107 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     }
   };
 
+  const getVisualDetailsFields = (mode: AppMode) => {
+    switch (mode) {
+      case AppMode.SCENARIO:
+        return [
+          { label: 'Environment Type', field: 'clothing', placeholder: 'e.g., Cyberpunk City, Fantasy Forest' },
+          { label: 'Lighting / Weather', field: 'accessories', placeholder: 'e.g., Neon glow, Moonlit' },
+          { label: 'Primary Color', field: 'hairStyle', placeholder: 'e.g., Cool blues' },
+          { label: 'Secondary Color', field: 'hairColor', placeholder: 'e.g., Gritty browns' },
+          { label: 'Key Landmark', field: 'eyeColor', placeholder: 'e.g., Giant glowing tree' }
+        ];
+      case AppMode.GAME:
+        return [
+          { label: 'Setting Type', field: 'clothing', placeholder: 'e.g., Dungeon, Tavern, Map' },
+          { label: 'Key Elements', field: 'accessories', placeholder: 'e.g., Dragons, Dice, Swords' },
+          { label: 'Atmosphere', field: 'hairStyle', placeholder: 'e.g., Dark fantasy, High magic' },
+          { label: 'Color Theme', field: 'hairColor', placeholder: 'e.g., Crimson and gold' },
+          { label: 'Art Style', field: 'eyeColor', placeholder: 'e.g., Oil painting, Sketch' }
+        ];
+      default:
+        return [
+          { label: 'Hair Style', field: 'hairStyle', placeholder: 'e.g., Long wavy' },
+          { label: 'Hair Color', field: 'hairColor', placeholder: 'e.g., Raven black' },
+          { label: 'Eye Color', field: 'eyeColor', placeholder: 'e.g., Piercing blue' },
+          { label: 'Clothing', field: 'clothing', placeholder: 'e.g., Leather duster' },
+          { label: 'Accessories', field: 'accessories', placeholder: 'e.g., Silver monocle' }
+        ];
+    }
+  };
+
+  const getCoreIdentityFields = (mode: AppMode) => {
+    switch (mode) {
+      case AppMode.SCENARIO:
+        return [
+          { label: 'Narrative Tone', field: 'personality', rows: 4 },
+          { label: 'Scenario Premise', field: 'backstory', rows: 4 },
+          { label: 'Visual Aesthetic', field: 'appearance', rows: 4 },
+          { label: 'Protagonist\'s Role', field: 'relationship', rows: 4 }
+        ];
+      case AppMode.GAME:
+        return [
+          { label: 'DM Style', field: 'personality', rows: 4 },
+          { label: 'Campaign Setting', field: 'backstory', rows: 4 },
+          { label: 'World Description', field: 'appearance', rows: 4 },
+          { label: 'Party\'s Reputation', field: 'relationship', rows: 4 }
+        ];
+      default:
+        return [
+          { label: 'Personality', field: 'personality', rows: 4 },
+          { label: 'Backstory', field: 'backstory', rows: 4 },
+          { label: 'Appearance', field: 'appearance', rows: 4 },
+          { label: 'Relationship', field: 'relationship', rows: 4 }
+        ];
+    }
+  };
+
+  const getNameLabel = (mode: AppMode) => {
+    switch (mode) {
+      case AppMode.SCENARIO: return 'Scenario Title';
+      case AppMode.GAME: return 'Campaign Name';
+      default: return 'Name';
+    }
+  };
+
+  const getCoreIdentityTitle = (mode: AppMode) => {
+    switch (mode) {
+      case AppMode.SCENARIO: return 'Scenario Overview';
+      case AppMode.GAME: return 'Campaign Overview';
+      default: return 'Core Identity';
+    }
+  };
+
+  const getPlayerSectionTitle = (mode: AppMode) => {
+    switch (mode) {
+      case AppMode.SCENARIO: return 'Protagonist Profile (You)';
+      case AppMode.GAME: return 'Player Character (You)';
+      default: return 'Player Persona (You)';
+    }
+  };
+
+  const getPageTitle = (mode: AppMode, isReview: boolean) => {
+    switch (mode) {
+      case AppMode.SCENARIO: return isReview ? 'Review Scenario' : 'Customize Scenario';
+      case AppMode.GAME: return isReview ? 'Review Campaign' : 'Customize Campaign';
+      default: return isReview ? 'Review Character' : 'Customize Character';
+    }
+  };
+
+  const getPageSubtitle = (mode: AppMode) => {
+    switch (mode) {
+      case AppMode.SCENARIO: return 'Refine the details of your world and narrative.';
+      case AppMode.GAME: return 'Refine the details of your tabletop adventure.';
+      default: return 'Refine the details of your narrative persona.';
+    }
+  };
+
   return (
     <div className="p-4 sm:p-8 max-w-6xl mx-auto w-full">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
         <div>
-          <h2 className="text-3xl sm:text-4xl font-serif text-white">{isInitialReview ? 'Review Character' : 'Customize Character'}</h2>
-          <p className="text-zinc-500 text-sm mt-1">Refine the details of your narrative persona.</p>
+          <h2 className="text-3xl sm:text-4xl font-serif text-white">{getPageTitle(profile.mode, !!isInitialReview)}</h2>
+          <p className="text-zinc-500 text-sm mt-1">{getPageSubtitle(profile.mode)}</p>
         </div>
         <div className="flex gap-3 w-full sm:w-auto">
           <button onClick={onCancel} className="flex-1 sm:flex-none px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors">
@@ -190,15 +286,15 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
               Visual Details
             </h3>
             <div className="grid grid-cols-1 gap-4">
-              {[
-                { label: 'Hair Style', field: 'hairStyle', placeholder: 'e.g., Long wavy' },
-                { label: 'Hair Color', field: 'hairColor', placeholder: 'e.g., Raven black' },
-                { label: 'Eye Color', field: 'eyeColor', placeholder: 'e.g., Piercing blue' },
-                { label: 'Clothing', field: 'clothing', placeholder: 'e.g., Leather duster' },
-                { label: 'Accessories', field: 'accessories', placeholder: 'e.g., Silver monocle' }
-              ].map(item => (
+              {getVisualDetailsFields(profile.mode).map(item => (
                 <div key={item.field}>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-1.5">{item.label}</label>
+                  <div className="flex justify-between items-center mb-1.5">
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
+                    <RefineButton 
+                      onRefine={(guidance) => handleRefineField(item.field, guidance)}
+                      isRefining={isRefiningField === item.field}
+                    />
+                  </div>
                   <input
                     type="text"
                     value={(profile as any)[item.field] || ''}
@@ -267,7 +363,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest flex items-center gap-2">
                 <Heart className="w-3 h-3" />
-                Core Identity
+                {getCoreIdentityTitle(profile.mode)}
               </h3>
               <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/10 border border-blue-500/20">
                 <span className="text-[9px] font-bold text-blue-400 uppercase tracking-widest">{profile.mode} Mode</span>
@@ -276,7 +372,13 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
 
             <div className="space-y-6">
               <div>
-                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Name</label>
+                <div className="flex justify-between items-center mb-2">
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{getNameLabel(profile.mode)}</label>
+                  <RefineButton 
+                    onRefine={(guidance) => handleRefineField('name', guidance)}
+                    isRefining={isRefiningField === 'name'}
+                  />
+                </div>
                 <input
                   type="text"
                   value={profile.name}
@@ -286,23 +388,15 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {[
-                  { label: 'Personality', field: 'personality', rows: 4 },
-                  { label: 'Backstory', field: 'backstory', rows: 4 },
-                  { label: 'Appearance', field: 'appearance', rows: 4 },
-                  { label: 'Relationship', field: 'relationship', rows: 4 }
-                ].map(item => (
+                {getCoreIdentityFields(profile.mode).map(item => (
                   <div key={item.field}>
                     <div className="flex justify-between items-center mb-2">
                       <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
-                      <button 
-                        onClick={() => handleRefineField(item.field as any)}
-                        disabled={isRefiningField !== null}
-                        className="text-[9px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                      >
-                        {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                        REFINE
-                      </button>
+                      <RefineButton 
+                        onRefine={(guidance) => handleRefineField(item.field as any, guidance)}
+                        isRefining={isRefiningField === item.field}
+                        label="REFINE"
+                      />
                     </div>
                     <textarea
                       value={(profile as any)[item.field]}
@@ -327,7 +421,9 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
               
               <div className="space-y-6">
                 <div>
-                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Story Tone</label>
+                  <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">
+                    {profile.mode === AppMode.SCENARIO ? "Scenario Tone" : profile.mode === AppMode.GAME ? "Campaign Tone" : "Story Tone"}
+                  </label>
                   <select 
                     className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
                     value={profile.storyTone}
@@ -340,8 +436,27 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                 </div>
 
                 <div>
+                  <div className="flex justify-between items-center mb-2">
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Current Mood</label>
+                    <RefineButton 
+                      onRefine={(guidance) => handleRefineField('currentMood', guidance)}
+                      isRefining={isRefiningField === 'currentMood'}
+                    />
+                  </div>
+                  <input 
+                    type="text"
+                    className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                    placeholder="e.g. Neutral, Suspicious, Joyful..."
+                    value={profile.currentMood || ''}
+                    onChange={e => setProfile({...profile, currentMood: e.target.value})}
+                  />
+                </div>
+
+                <div>
                   <div className="flex justify-between items-center mb-3">
-                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Personality Traits</label>
+                    <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">
+                      {profile.mode === AppMode.SCENARIO ? "Scenario Elements" : profile.mode === AppMode.GAME ? "DM Characteristics" : "Personality Traits"}
+                    </label>
                     <button 
                       onClick={handleRefineTraits}
                       disabled={isRefiningField !== null}
@@ -399,14 +514,11 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                       <div key={item.field}>
                         <div className="flex justify-between items-center mb-2">
                           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
-                          <button 
-                            onClick={() => handleRefineField(item.field as any)}
-                            disabled={isRefiningField !== null}
-                            className="text-[9px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                          >
-                            {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                            REFINE
-                          </button>
+                          <RefineButton 
+                            onRefine={(guidance) => handleRefineField(item.field as any, guidance)}
+                            isRefining={isRefiningField === item.field}
+                            label="REFINE"
+                          />
                         </div>
                         <textarea 
                           rows={3}
@@ -432,14 +544,11 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                       <div key={item.field}>
                         <div className="flex justify-between items-center mb-2">
                           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
-                          <button 
-                            onClick={() => handleRefineField(item.field as any)}
-                            disabled={isRefiningField !== null}
-                            className="text-[9px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
-                          >
-                            {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                            REFINE
-                          </button>
+                          <RefineButton 
+                            onRefine={(guidance) => handleRefineField(item.field as any, guidance)}
+                            isRefining={isRefiningField === item.field}
+                            label="REFINE"
+                          />
                         </div>
                         <textarea 
                           rows={3}
@@ -467,14 +576,11 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                       <div key={item.field}>
                         <div className="flex justify-between items-center mb-2">
                           <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
-                          <button 
-                            onClick={() => handleRefineField(item.field as any)}
-                            disabled={isRefiningField !== null}
-                            className="text-[9px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                          >
-                            {isRefiningField === item.field ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                            REFINE
-                          </button>
+                          <RefineButton 
+                            onRefine={(guidance) => handleRefineField(item.field as any, guidance)}
+                            isRefining={isRefiningField === item.field}
+                            label="REFINE"
+                          />
                         </div>
                         <textarea 
                           rows={3}
@@ -494,7 +600,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-8">
             <h3 className="text-xs font-bold text-zinc-400 uppercase tracking-widest flex items-center gap-2">
               <Settings2 className="w-3 h-3" />
-              Player Persona (You)
+              {getPlayerSectionTitle(profile.mode)}
             </h3>
             
             <div className="space-y-6">
@@ -502,14 +608,11 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Your Name</label>
-                    <button 
-                      onClick={() => handleRefineField('player_name')}
-                      disabled={isRefiningField !== null}
-                      className="text-[9px] font-bold text-zinc-500 hover:text-white flex items-center gap-1 disabled:opacity-50"
-                    >
-                      {isRefiningField === 'player_name' ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                      REFINE
-                    </button>
+                    <RefineButton 
+                      onRefine={(guidance) => handleRefineField('player_name', guidance)}
+                      isRefining={isRefiningField === 'player_name'}
+                      label="REFINE"
+                    />
                   </div>
                   <input
                     type="text"
@@ -521,14 +624,11 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Your Description</label>
-                    <button 
-                      onClick={() => handleRefineField('player_description')}
-                      disabled={isRefiningField !== null}
-                      className="text-[9px] font-bold text-zinc-500 hover:text-white flex items-center gap-1 disabled:opacity-50"
-                    >
-                      {isRefiningField === 'player_description' ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                      REFINE
-                    </button>
+                    <RefineButton 
+                      onRefine={(guidance) => handleRefineField('player_description', guidance)}
+                      isRefining={isRefiningField === 'player_description'}
+                      label="REFINE"
+                    />
                   </div>
                   <textarea
                     value={profile.playerProfile?.description || ''}
@@ -553,14 +653,11 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                   <div key={item.field}>
                     <div className="flex justify-between items-center mb-2">
                       <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
-                      <button 
-                        onClick={() => handleRefineField(`player_${item.field}`)}
-                        disabled={isRefiningField !== null}
-                        className="text-[9px] font-bold text-zinc-500 hover:text-white flex items-center gap-1 disabled:opacity-50"
-                      >
-                        {isRefiningField === `player_${item.field}` ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Wand2 className="w-2.5 h-2.5" />}
-                        REFINE
-                      </button>
+                      <RefineButton 
+                        onRefine={(guidance) => handleRefineField(`player_${item.field}`, guidance)}
+                        isRefining={isRefiningField === `player_${item.field}`}
+                        label="REFINE"
+                      />
                     </div>
                     <textarea
                       value={(profile.playerProfile as any)?.[item.field] || ''}

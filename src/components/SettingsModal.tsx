@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2 } from 'lucide-react';
+import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2, RefreshCw } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { AppSettings, getSettings, defaultSettings, saveSettings } from '../lib/types';
 import { db } from '../firebase';
+import { refineText } from '../lib/gemini';
+import { RefineButton } from './RefineButton';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { clear } from 'idb-keyval';
 
@@ -18,6 +20,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isRefining, setIsRefining] = useState(false);
   const { toastSuccess, toastError } = useToast();
 
   useEffect(() => {
@@ -49,6 +52,25 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       toastError("Failed to join waitlist. Please check your connection.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleRefineInstructions = async (guidance?: string) => {
+    if (isRefining) return;
+    setIsRefining(true);
+    try {
+      const refined = await refineText(
+        settings.customRefineInstructions || '',
+        "These are custom writing style instructions for an AI roleplay assistant.",
+        guidance
+      );
+      setSettings(prev => ({ ...prev, customRefineInstructions: refined }));
+      toastSuccess("Instructions refined");
+    } catch (err: any) {
+      console.error("Refine error:", err);
+      toastError("Failed to refine instructions");
+    } finally {
+      setIsRefining(false);
     }
   };
 
@@ -169,14 +191,20 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
             )}
             <div className="space-y-2">
-              <label className="text-sm text-gray-300">Custom Writing Style Instructions</label>
+              <div className="flex justify-between items-center">
+                <label className="text-sm text-gray-300">Global Writing Style Instructions</label>
+                <RefineButton 
+                  onRefine={handleRefineInstructions}
+                  isRefining={isRefining}
+                />
+              </div>
               <textarea 
                 value={settings.customRefineInstructions || ''}
                 onChange={e => handleChange('customRefineInstructions', e.target.value)}
                 placeholder="e.g. 'Make it more poetic', 'Keep it concise', 'Use a darker tone'"
                 className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500 min-h-[80px] resize-y"
               />
-              <p className="text-xs text-gray-500">These instructions will be used when you click the "REFINE" button in chat.</p>
+              <p className="text-xs text-gray-500">These instructions affect all AI responses, suggestions, and refinements.</p>
             </div>
 
             {/* Premium Features Section */}
@@ -232,12 +260,25 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                       </div>
                       <p className="text-xs text-gray-400">Avatar updates automatically based on story context (emotions, background, etc.).</p>
                     </div>
-                    <button 
-                      onClick={() => handleChange('premiumAutoAvatar', !settings.premiumAutoAvatar)}
-                      className={`w-10 h-5 rounded-full transition-colors relative ${settings.premiumAutoAvatar ? 'bg-indigo-600' : 'bg-zinc-700'}`}
-                    >
-                      <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${settings.premiumAutoAvatar ? 'left-6' : 'left-1'}`} />
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <button 
+                        onClick={() => {
+                          window.dispatchEvent(new CustomEvent('force-avatar-update'));
+                          onClose();
+                          toastSuccess("Avatar update triggered!");
+                        }}
+                        className="p-2 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 rounded-lg transition-colors"
+                        title="Force Update Avatar Now"
+                      >
+                        <RefreshCw className="w-4 h-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleChange('premiumAutoAvatar', !settings.premiumAutoAvatar)}
+                        className={`w-10 h-5 rounded-full transition-colors relative ${settings.premiumAutoAvatar ? 'bg-indigo-600' : 'bg-zinc-700'}`}
+                      >
+                        <div className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${settings.premiumAutoAvatar ? 'left-6' : 'left-1'}`} />
+                      </button>
+                    </div>
                   </div>
                 </div>
 

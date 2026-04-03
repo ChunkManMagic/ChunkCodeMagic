@@ -1,5 +1,5 @@
 import { motion } from 'motion/react';
-import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3 } from 'lucide-react';
+import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy } from 'lucide-react';
 import { AppMode } from '../lib/gemini';
 import { Scenario } from '../lib/types';
 
@@ -7,13 +7,14 @@ interface ScenarioLibraryProps {
   scenarios: Scenario[];
   onSelect: (scenario: Scenario) => void;
   onEdit: (scenario: Scenario) => void;
+  onDuplicate: (scenario: Scenario) => void;
   onDelete: (id: string) => void;
   onNew: () => void;
   hasDraft?: boolean;
   onRestoreDraft?: () => void;
 }
 
-export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDelete, onNew, hasDraft, onRestoreDraft }: ScenarioLibraryProps) {
+export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDelete, onNew, hasDraft, onRestoreDraft }: ScenarioLibraryProps) {
   return (
     <div className="w-full max-w-6xl mx-auto p-8">
       <div className="flex justify-between items-center mb-12">
@@ -117,6 +118,13 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDelete, onNew, 
                       title="Edit Character"
                     >
                       <Edit3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => onDuplicate(scenario)}
+                      className="p-2 text-zinc-600 hover:text-blue-400 transition-colors"
+                      title="Duplicate & Start New Narrative"
+                    >
+                      <Copy className="w-4 h-4" />
                     </button>
                   </div>
                   <button

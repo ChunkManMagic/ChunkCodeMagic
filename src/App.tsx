@@ -362,6 +362,27 @@ export default function App() {
     setIsCreating(false);
   };
 
+  const handleDuplicateScenario = (scenario: Scenario) => {
+    localStorage.setItem(STORAGE_KEYS.DRAFT_DATA, JSON.stringify(scenario.profile));
+    localStorage.setItem(STORAGE_KEYS.DRAFT_MODE, scenario.profile.mode);
+    localStorage.setItem(STORAGE_KEYS.DRAFT_SETUP_TYPE, 'detailed');
+    localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, 'idle');
+    localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, '');
+    
+    // Also save a rescue backup just in case
+    localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
+      step: 'idle',
+      appMode: scenario.profile.mode,
+      setupType: 'detailed',
+      idea: '',
+      detailedProfile: scenario.profile
+    }));
+
+    setCurrentScenarioId(null);
+    setIsCreating(true);
+    setShowDraft(true);
+  };
+
   const handleConfirmAction = async () => {
     const { type, targetId } = confirmModal;
     if (!type || !targetId) return;
@@ -450,7 +471,8 @@ export default function App() {
       profile: {
         ...profile,
         relationship: 'Strangers', // Reset relationship for new scenario
-        storyTone: 'Dramatic' // Reset tone
+        storyTone: 'Dramatic', // Reset tone
+        currentMood: 'Neutral' // Reset mood
       },
       avatarBase64,
       lastUpdated: Date.now()
@@ -538,7 +560,7 @@ export default function App() {
     <>
       <ToastContainer />
       <OfflineBanner />
-      <div className="min-h-screen bg-[#050505] text-zinc-100 p-4 md:p-8 flex flex-col selection:bg-emerald-500/30">
+      <div className="min-h-screen animated-bg text-zinc-100 p-4 md:p-8 flex flex-col selection:bg-emerald-500/30">
       {/* Background Ambience */}
       <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <motion.div 
@@ -640,6 +662,7 @@ export default function App() {
               scenarios={scenarios} 
               onSelect={handleSelectScenario} 
               onEdit={handleEditScenario}
+              onDuplicate={handleDuplicateScenario}
               onDelete={handleDeleteScenario} 
               onNew={handleCreateNew} 
               hasDraft={true} // We show the button if there's any draft data
@@ -650,6 +673,7 @@ export default function App() {
           <div className="flex-1 flex items-center justify-center py-10">
             <ErrorBoundary>
               <CharacterCreator 
+                scenarios={scenarios}
                 onCharacterCreated={handleCharacterCreated} 
                 onCancel={() => {
                   setIsCreating(false);

@@ -2,14 +2,18 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Loader2, User, Image as ImageIcon, Wand2, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw, Volume2 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
-import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech } from '../lib/gemini';
+import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech, refineText } from '../lib/gemini';
 import { CharacterEditor } from './CharacterEditor';
+import { AdditionalCharacterModal } from './AdditionalCharacterModal';
+import { RefineButton } from './RefineButton';
+import { Scenario } from '../lib/types';
 
 import { STORAGE_KEYS } from '../constants';
 
 interface CharacterCreatorProps {
   onCharacterCreated: (profile: CharacterProfile, avatarBase64: string) => void;
   onCancel: () => void;
+  scenarios?: Scenario[];
 }
 
 type CreatorStep = 'mode' | 'idle' | 'profile' | 'avatar' | 'review';
@@ -75,7 +79,7 @@ const DEFAULT_PROFILE: CharacterProfile = {
   currentCampaignArc: ''
 };
 
-export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCreatorProps) {
+export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] }: CharacterCreatorProps) {
   const [step, setStep] = useState<CreatorStep>('mode');
   const [appMode, setAppMode] = useState<AppMode>(AppMode.ROLEPLAY);
   const [setupType, setSetupType] = useState<'quick' | 'detailed'>('quick');
@@ -83,12 +87,27 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
   const [idea, setIdea] = useState('');
   const [detailedProfile, setDetailedProfile] = useState<CharacterProfile>(DEFAULT_PROFILE);
 
+  const firstCharacter = scenarios.length > 0 ? scenarios[0] : null;
+
+  const handleUseExisting = (scenario: Scenario) => {
+    setIdea(`A new story with ${scenario.profile.name}, who is ${scenario.profile.personality}.`);
+    setSetupType('detailed');
+    setDetailedProfile({
+      ...scenario.profile,
+      mode: appMode, // Keep the current mode
+      inventory: [], // Reset inventory for new narrative
+    });
+    setStep('profile');
+    toastSuccess(`Using ${scenario.profile.name} as template`);
+  };
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [draftProfile, setDraftProfile] = useState<CharacterProfile | null>(null);
   const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
+  const [isAddingCharacter, setIsAddingCharacter] = useState(false);
 
   const isFirstRender = useRef(true);
 
@@ -138,8 +157,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
 
   // Consolidated loading logic
   useEffect(() => {
+    console.log("CharacterCreator: Initializing draft loading...");
     const loadDraft = () => {
       try {
+        console.log("CharacterCreator: loadDraft called.");
         const validSteps: CreatorStep[] = ['mode', 'idle', 'profile', 'avatar', 'review'];
         const validModes = [AppMode.ROLEPLAY, AppMode.SCENARIO, AppMode.GAME];
         const validTypes: ('quick' | 'detailed')[] = ['quick', 'detailed'];
@@ -150,6 +171,8 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
         const savedIdea = localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA);
         const savedData = localStorage.getItem(STORAGE_KEYS.DRAFT_DATA);
         const rescue = localStorage.getItem(STORAGE_KEYS.RESCUE_BACKUP);
+        
+        console.log("CharacterCreator: Loaded from localStorage:", { savedStep, savedMode, savedType, savedIdea, hasData: !!savedData, hasRescue: !!rescue });
 
         let initialStep: CreatorStep = 'mode';
         let initialMode: AppMode = AppMode.ROLEPLAY;
@@ -166,7 +189,9 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
             if (data.setupType && validTypes.includes(data.setupType)) initialType = data.setupType;
             if (data.idea) initialIdea = data.idea;
             if (data.detailedProfile) initialProfile = data.detailedProfile;
-          } catch (e) {}
+          } catch (e) {
+            console.error("CharacterCreator: Failed to parse rescue backup", e);
+          }
         }
 
         // Regular draft overrides rescue if present
@@ -184,7 +209,9 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
               voiceSettings: { ...DEFAULT_PROFILE.voiceSettings, ...(data.voiceSettings || {}) },
               playerProfile: { ...DEFAULT_PROFILE.playerProfile, ...(data.playerProfile || {}) }
             };
-          } catch (e) {}
+          } catch (e) {
+            console.error("CharacterCreator: Failed to parse savedData", e);
+          }
         }
 
         // Reset volatile steps
@@ -192,13 +219,14 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
           initialStep = 'idle';
         }
 
+        console.log("CharacterCreator: Setting initial state:", { initialStep, initialMode, initialType });
         setStep(initialStep);
         setAppMode(initialMode);
         setSetupType(initialType);
         setIdea(initialIdea);
         setDetailedProfile(initialProfile);
       } catch (e) {
-        console.error("Failed to load draft", e);
+        console.error("CharacterCreator: Failed to load draft", e);
       }
     };
 
@@ -262,23 +290,31 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
     if (!idea.trim()) return;
     setIsGenerating(true);
     setError(null);
+    console.log("Quick Forge: Starting generation for idea:", idea);
     try {
       setStep('profile');
+      console.log("Quick Forge: Generating profile...");
       const profile = await generateCharacterProfile(idea, appMode);
+      console.log("Quick Forge: Profile generated.");
       setDraftProfile(profile);
       toastSuccess("Character profile generated!");
+      
       setStep('avatar');
+      console.log("Quick Forge: Generating avatar...");
       const avatarBase64 = await generateAvatar(profile);
+      console.log("Quick Forge: Avatar generated.");
       setDraftAvatar(avatarBase64);
       toastSuccess("Avatar generated!");
+      
       setStep('review');
     } catch (err: any) {
-      console.error(err);
+      console.error("Quick Forge Error:", err);
       setError(err.message || "Failed to generate character. Please try again.");
       toastError(`Generation failed: ${err.message || 'Unknown error'}`);
       setStep('idle');
     } finally {
       setIsGenerating(false);
+      console.log("Quick Forge: Generation finished.");
     }
   };
 
@@ -349,13 +385,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
     }
   };
 
-  const handleRefineField = async (field: string) => {
+  const handleRefineField = async (field: string, guidance?: string) => {
     setIsRefiningField(field);
     try {
       let refined = '';
       if (field.startsWith('player_')) {
         const playerField = field.replace('player_', '');
-        refined = await refinePlayerProfile(playerField, detailedProfile);
+        refined = await refinePlayerProfile(playerField, detailedProfile, guidance);
         setDetailedProfile(prev => ({
           ...prev,
           playerProfile: {
@@ -364,7 +400,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
           } as any
         }));
       } else {
-        refined = await refineField(field as any, detailedProfile);
+        refined = await refineField(field as any, detailedProfile, guidance);
         setDetailedProfile(prev => ({ ...prev, [field]: refined }));
       }
       toastSuccess(`${field.replace('player_', '')} refined`);
@@ -393,6 +429,31 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
       />
     );
   }
+
+  const getCoreIdentityFieldLabel = (mode: AppMode, field: string) => {
+    if (mode === AppMode.SCENARIO) {
+      if (field === 'personality') return 'Narrative Tone';
+      if (field === 'backstory') return 'Scenario Premise';
+      if (field === 'appearance') return 'Visual Aesthetic';
+    } else if (mode === AppMode.GAME) {
+      if (field === 'personality') return 'DM Style';
+      if (field === 'backstory') return 'Campaign Setting';
+      if (field === 'appearance') return 'World Description';
+    }
+    return field === 'appearance' ? 'Appearance' : field;
+  };
+
+  const getRelationshipLabel = (mode: AppMode) => {
+    if (mode === AppMode.SCENARIO) return 'Protagonist\'s Role';
+    if (mode === AppMode.GAME) return 'Party\'s Reputation';
+    return 'Relationship';
+  };
+
+  const getNameLabel = (mode: AppMode) => {
+    if (mode === AppMode.SCENARIO) return 'Scenario Title';
+    if (mode === AppMode.GAME) return 'Campaign Name';
+    return 'Narrative Identity Name';
+  };
 
   return (
     <motion.div 
@@ -432,15 +493,15 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
               {[
-                { id: AppMode.SCENARIO, label: 'Scenario', icon: Globe, desc: 'Focus on world-building and environment.', color: 'emerald' },
-                { id: AppMode.ROLEPLAY, label: 'Roleplay', icon: Heart, desc: 'Focus on deep character interaction.', color: 'blue' },
-                { id: AppMode.GAME, label: 'Game', icon: Swords, desc: 'AI acts as a Dungeon Master.', color: 'purple' }
+                { id: AppMode.SCENARIO, label: 'Scenario', icon: Globe, desc: 'AI narrates a living world. You explore, choose, and shape the story.', color: 'emerald' },
+                { id: AppMode.ROLEPLAY, label: 'Roleplay', icon: Heart, desc: 'Deep one-on-one character interaction driven by personality and emotion.', color: 'blue' },
+                { id: AppMode.GAME, label: 'Game', icon: Swords, desc: 'AI is your Dungeon Master — dice, combat, quests, and consequences.', color: 'purple' }
               ].map(m => (
                 <button
                   key={m.id}
                   onClick={() => { setAppMode(m.id); setStep('idle'); }}
-                  className={`p-8 rounded-[2rem] border-2 transition-all text-left group relative overflow-hidden ${
-                    appMode === m.id ? 'border-emerald-500 bg-emerald-500/5' : 'border-white/5 bg-white/5 hover:border-white/20'
+                  className={`p-8 rounded-[2rem] border-2 transition-all duration-300 text-left group relative overflow-hidden ${
+                    appMode === m.id ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_30px_rgba(16,185,129,0.3)]' : 'border-white/5 bg-white/5 hover:border-white/30 hover:bg-white/10 hover:shadow-[0_0_20px_rgba(255,255,255,0.1)]'
                   }`}
                 >
                   <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mb-6 transition-transform group-hover:scale-110 ${
@@ -511,6 +572,24 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
             {setupType === 'quick' ? (
               <div className="space-y-6">
                 <div className="relative group">
+                  <div className="absolute -top-10 right-0">
+                    <RefineButton 
+                      onRefine={async (guidance) => {
+                        if (isGenerating) return;
+                        setIsGenerating(true);
+                        try {
+                          const refined = await refineText(idea, `This is an idea for a ${appMode} narrative.`, guidance);
+                          setIdea(refined);
+                          toastSuccess("Idea refined");
+                        } catch (err) {
+                          toastError("Failed to refine idea");
+                        } finally {
+                          setIsGenerating(false);
+                        }
+                      }}
+                      isRefining={isGenerating}
+                    />
+                  </div>
                   <textarea
                     value={idea}
                     onChange={(e) => setIdea(e.target.value)}
@@ -521,16 +600,52 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                     }
                     className="w-full h-48 glass-input rounded-[2rem] p-8 text-white text-xl placeholder-zinc-700 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none"
                   />
-                  <div className="absolute bottom-6 right-6">
+                  <div className="absolute bottom-6 right-6 flex items-center gap-2">
+                    <button
+                      onClick={() => setSetupType('detailed')}
+                      className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-[10px] font-bold uppercase tracking-widest border border-white/10 transition-all"
+                    >
+                      Custom Generation
+                    </button>
                     <button
                       onClick={handleQuickGenerate}
                       disabled={!idea.trim() || isGenerating}
-                      className="p-5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white rounded-2xl shadow-xl transition-all group"
+                      className="p-5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white rounded-2xl shadow-[0_0_20px_rgba(16,185,129,0.3)] hover:shadow-[0_0_40px_rgba(16,185,129,0.5)] transition-all group"
                     >
                       {isGenerating ? <Loader2 className="w-6 h-6 animate-spin" /> : <ArrowRight className="w-6 h-6 group-hover:translate-x-1 transition-transform" />}
                     </button>
                   </div>
                 </div>
+
+                {firstCharacter && (
+                  <motion.div 
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="glass-panel p-6 rounded-[2rem] border border-white/5 space-y-4"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h3 className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">Quick Start with Existing Character</h3>
+                      <span className="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 text-[8px] font-bold uppercase tracking-widest border border-emerald-500/20">Worthy Character</span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="w-16 h-16 rounded-2xl overflow-hidden border border-white/10 shrink-0">
+                        <img src={firstCharacter.avatarBase64} alt="" className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className="text-white font-serif font-bold truncate">{firstCharacter.profile.name}</h4>
+                        <p className="text-xs text-zinc-500 line-clamp-1">{firstCharacter.profile.personality}</p>
+                      </div>
+                      <button 
+                        onClick={() => handleUseExisting(firstCharacter)}
+                        className="px-4 py-2 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-400 hover:text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2"
+                      >
+                        Use as Template
+                        <ArrowRight className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </motion.div>
+                )}
+
                 <div className="flex flex-wrap gap-2 justify-center">
                   {[
                     "Cyberpunk Outlaw", "Ancient Guardian", "Rogue AI", "Gothic Vampire", "Space Explorer"
@@ -554,29 +669,31 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="space-y-6">
                     <div>
-                      <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">Narrative Identity Name</label>
+                      <div className="flex justify-between items-center mb-2">
+                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-3">{getNameLabel(appMode)}</label>
+                        <RefineButton 
+                          onRefine={(guidance) => handleRefineField('name', guidance)}
+                          isRefining={isRefiningField === 'name'}
+                        />
+                      </div>
                       <input 
                         type="text" 
                         className="w-full px-6 py-4 glass-input rounded-2xl text-white text-sm focus:ring-2 focus:ring-emerald-500/30 transition-all"
                         value={detailedProfile.name}
                         onChange={e => setDetailedProfile({...detailedProfile, name: e.target.value})}
-                        placeholder={appMode === AppMode.GAME ? "Dungeon Master Name" : "Character Name"}
+                        placeholder={appMode === AppMode.SCENARIO ? "Scenario Title" : appMode === AppMode.GAME ? "Campaign Name" : "Character Name"}
                       />
                     </div>
                     {['personality', 'backstory', 'appearance'].map((field) => (
                       <div key={field}>
                         <div className="flex justify-between items-center mb-2">
                           <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">
-                            {field === 'appearance' && appMode === AppMode.SCENARIO ? 'Setting / Appearance' : field}
+                            {getCoreIdentityFieldLabel(appMode, field)}
                           </label>
-                          <button 
-                            onClick={() => handleRefineField(field as any)}
-                            disabled={isRefiningField !== null}
-                            className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                          >
-                            {isRefiningField === field ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                            MAGIC REFINE
-                          </button>
+                          <RefineButton 
+                            onRefine={(guidance) => handleRefineField(field, guidance)}
+                            isRefining={isRefiningField === field}
+                          />
                         </div>
                         <textarea 
                           rows={3}
@@ -588,61 +705,93 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                       </div>
                     ))}
 
-                    <div className="space-y-6 pt-4 border-t border-white/5">
-                      <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Avatar Customization</h4>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Hair Style</label>
-                          <input 
-                            type="text"
-                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                            value={detailedProfile.hairStyle}
-                            onChange={e => setDetailedProfile({...detailedProfile, hairStyle: e.target.value})}
-                            placeholder="e.g., Long wavy, buzz cut..."
-                          />
+                    {appMode === AppMode.ROLEPLAY && (
+                      <div className="space-y-6 pt-4 border-t border-white/5">
+                        <h4 className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Avatar Customization</h4>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Hair Style</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('hairStyle', guidance)}
+                                isRefining={isRefiningField === 'hairStyle'}
+                              />
+                            </div>
+                            <input 
+                              type="text"
+                              className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                              value={detailedProfile.hairStyle}
+                              onChange={e => setDetailedProfile({...detailedProfile, hairStyle: e.target.value})}
+                              placeholder="e.g., Long wavy, buzz cut..."
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Hair Color</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('hairColor', guidance)}
+                                isRefining={isRefiningField === 'hairColor'}
+                              />
+                            </div>
+                            <input 
+                              type="text"
+                              className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                              value={detailedProfile.hairColor}
+                              onChange={e => setDetailedProfile({...detailedProfile, hairColor: e.target.value})}
+                              placeholder="e.g., Raven black, silver..."
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Eye Color</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('eyeColor', guidance)}
+                                isRefining={isRefiningField === 'eyeColor'}
+                              />
+                            </div>
+                            <input 
+                              type="text"
+                              className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                              value={detailedProfile.eyeColor}
+                              onChange={e => setDetailedProfile({...detailedProfile, eyeColor: e.target.value})}
+                              placeholder="e.g., Piercing blue, hazel..."
+                            />
+                          </div>
+                          <div>
+                            <div className="flex justify-between items-center mb-2">
+                              <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Clothing</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('clothing', guidance)}
+                                isRefining={isRefiningField === 'clothing'}
+                              />
+                            </div>
+                            <input 
+                              type="text"
+                              className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
+                              value={detailedProfile.clothing}
+                              onChange={e => setDetailedProfile({...detailedProfile, clothing: e.target.value})}
+                              placeholder="e.g., Leather duster, silk robe..."
+                            />
+                          </div>
                         </div>
                         <div>
-                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Hair Color</label>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Accessories</label>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('accessories', guidance)}
+                              isRefining={isRefiningField === 'accessories'}
+                            />
+                          </div>
                           <input 
                             type="text"
                             className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                            value={detailedProfile.hairColor}
-                            onChange={e => setDetailedProfile({...detailedProfile, hairColor: e.target.value})}
-                            placeholder="e.g., Raven black, silver..."
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Eye Color</label>
-                          <input 
-                            type="text"
-                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                            value={detailedProfile.eyeColor}
-                            onChange={e => setDetailedProfile({...detailedProfile, eyeColor: e.target.value})}
-                            placeholder="e.g., Piercing blue, hazel..."
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Clothing</label>
-                          <input 
-                            type="text"
-                            className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                            value={detailedProfile.clothing}
-                            onChange={e => setDetailedProfile({...detailedProfile, clothing: e.target.value})}
-                            placeholder="e.g., Leather duster, silk robe..."
+                            value={detailedProfile.accessories}
+                            onChange={e => setDetailedProfile({...detailedProfile, accessories: e.target.value})}
+                            placeholder="e.g., Silver monocle, scar on left eye..."
                           />
                         </div>
                       </div>
-                      <div>
-                        <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">Accessories</label>
-                        <input 
-                          type="text"
-                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                          value={detailedProfile.accessories}
-                          onChange={e => setDetailedProfile({...detailedProfile, accessories: e.target.value})}
-                          placeholder="e.g., Silver monocle, scar on left eye..."
-                        />
-                      </div>
-                    </div>
+                    )}
 
                     {/* Mode Specific Fields */}
                     {appMode === AppMode.SCENARIO && (
@@ -651,14 +800,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">World Atmosphere</label>
-                            <button 
-                              onClick={() => handleRefineField('worldAtmosphere')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'worldAtmosphere' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('worldAtmosphere', guidance)}
+                              isRefining={isRefiningField === 'worldAtmosphere'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -671,14 +816,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Key Locations</label>
-                            <button 
-                              onClick={() => handleRefineField('keyLocations')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'keyLocations' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('keyLocations', guidance)}
+                              isRefining={isRefiningField === 'keyLocations'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -691,14 +832,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Scenario Stakes</label>
-                            <button 
-                              onClick={() => handleRefineField('scenarioStakes')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'scenarioStakes' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('scenarioStakes', guidance)}
+                              isRefining={isRefiningField === 'scenarioStakes'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -711,14 +848,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Core Conflict</label>
-                            <button 
-                              onClick={() => handleRefineField('scenarioConflict')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'scenarioConflict' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('scenarioConflict', guidance)}
+                              isRefining={isRefiningField === 'scenarioConflict'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -731,14 +864,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Time Period</label>
-                            <button 
-                              onClick={() => handleRefineField('timePeriod')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'timePeriod' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('timePeriod', guidance)}
+                              isRefining={isRefiningField === 'timePeriod'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -751,14 +880,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Factions</label>
-                            <button 
-                              onClick={() => handleRefineField('factions')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'factions' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('factions', guidance)}
+                              isRefining={isRefiningField === 'factions'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -1107,7 +1232,9 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Story Tone</label>
+                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">
+                          {appMode === AppMode.SCENARIO ? "Scenario Tone" : appMode === AppMode.GAME ? "Campaign Tone" : "Story Tone"}
+                        </label>
                         <select 
                           className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
                           value={detailedProfile.storyTone}
@@ -1119,7 +1246,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">Relationship</label>
+                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">{getRelationshipLabel(appMode)}</label>
                         <input 
                           type="text" 
                           className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
@@ -1132,7 +1259,9 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
 
                     <div>
                       <div className="flex justify-between items-center mb-2">
-                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Personality Traits</label>
+                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">
+                          {appMode === AppMode.SCENARIO ? "Scenario Elements" : appMode === AppMode.GAME ? "DM Characteristics" : "Personality Traits"}
+                        </label>
                         <button 
                           onClick={handleRefineTraits}
                           disabled={isRefiningField !== null}
@@ -1319,6 +1448,49 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                           </div>
                         </div>
 
+                        {appMode === AppMode.GAME && (
+                          <div className="grid grid-cols-4 gap-3">
+                            <div>
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Class</label>
+                              <input 
+                                type="text" 
+                                className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                                value={detailedProfile.playerProfile?.playerClass || ''}
+                                onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), playerClass: e.target.value}})}
+                                placeholder="e.g., Rogue"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Race</label>
+                              <input 
+                                type="text" 
+                                className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                                value={detailedProfile.playerProfile?.playerRace || ''}
+                                onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), playerRace: e.target.value}})}
+                                placeholder="e.g., Elf"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Current HP</label>
+                              <input 
+                                type="number" 
+                                className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                                value={detailedProfile.playerProfile?.currentHP || ''}
+                                onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), currentHP: parseInt(e.target.value) || 0}})}
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Max HP</label>
+                              <input 
+                                type="number" 
+                                className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
+                                value={detailedProfile.playerProfile?.maxHP || ''}
+                                onChange={e => setDetailedProfile({...detailedProfile, playerProfile: {...(detailedProfile.playerProfile || {}), maxHP: parseInt(e.target.value) || 0}})}
+                              />
+                            </div>
+                          </div>
+                        )}
+
                         <div className="grid grid-cols-2 gap-4">
                           <div>
                             <div className="flex justify-between items-center mb-2">
@@ -1443,6 +1615,46 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                         </div>
                       </div>
                     )}
+
+                    {appMode !== AppMode.ROLEPLAY && (
+                      <div className="pt-4 border-t border-zinc-800/50">
+                        <div className="flex justify-between items-center mb-4">
+                          <h4 className="text-sm font-bold text-zinc-300">Additional Characters / NPCs</h4>
+                          <button 
+                            onClick={() => setIsAddingCharacter(true)}
+                            className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1"
+                          >
+                            + ADD CHARACTER
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {(detailedProfile.additionalCharacters || []).map((char) => (
+                            <div key={char.id} className="p-3 bg-zinc-900/50 border border-zinc-800 rounded-xl space-y-2">
+                              <div className="flex justify-between items-start gap-2">
+                                <div>
+                                  <h5 className="text-xs font-bold text-white">{char.name}</h5>
+                                  <p className="text-[10px] text-zinc-400">{char.description}</p>
+                                </div>
+                                <button 
+                                  onClick={() => {
+                                    const newChars = detailedProfile.additionalCharacters?.filter(c => c.id !== char.id);
+                                    setDetailedProfile({...detailedProfile, additionalCharacters: newChars});
+                                  }}
+                                  className="text-red-500 hover:text-red-400 p-1"
+                                >
+                                  ×
+                                </button>
+                              </div>
+                            </div>
+                          ))}
+                          {(detailedProfile.additionalCharacters || []).length === 0 && (
+                            <div className="text-center py-4 border-2 border-dashed border-zinc-800 rounded-xl text-zinc-600 text-[10px] uppercase tracking-widest">
+                              No additional characters
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1455,7 +1667,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
                 <button
                   onClick={handleDetailedGenerate}
                   disabled={isGenerating}
-                  className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white rounded-2xl font-bold text-lg shadow-xl shadow-emerald-900/20 transition-all flex items-center justify-center gap-3 group"
+                  className="w-full py-5 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white rounded-2xl font-bold text-lg shadow-[0_0_30px_rgba(16,185,129,0.4)] hover:shadow-[0_0_50px_rgba(16,185,129,0.6)] transition-all flex items-center justify-center gap-3 group"
                 >
                   {isGenerating ? (
                     <>
@@ -1474,6 +1686,18 @@ export function CharacterCreator({ onCharacterCreated, onCancel }: CharacterCrea
           </motion.div>
         )}
       </AnimatePresence>
+
+      <AdditionalCharacterModal
+        isOpen={isAddingCharacter}
+        onClose={() => setIsAddingCharacter(false)}
+        appMode={appMode}
+        onSave={(character) => {
+          setDetailedProfile({
+            ...detailedProfile,
+            additionalCharacters: [...(detailedProfile.additionalCharacters || []), character]
+          });
+        }}
+      />
 
       {isGenerating && setupType === 'quick' && (
         <div className="mt-10 space-y-4 relative">

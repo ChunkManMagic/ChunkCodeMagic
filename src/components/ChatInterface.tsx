@@ -1,4 +1,5 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
 import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package } from 'lucide-react';
@@ -12,8 +13,8 @@ import { useFirestoreSync } from '../hooks/useFirestoreSync';
 import { InventorySidebar } from './chat/InventorySidebar';
 import { CodexSidebar } from './chat/CodexSidebar';
 import { useConversation } from '@elevenlabs/react';
-import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory, generateContextualAvatar } from '../lib/gemini';
-import { getSettings, saveSettings } from '../lib/types';
+import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
+import { getSettings } from '../lib/types';
 
 export interface Message {
   id: string;
@@ -56,6 +57,26 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onUpdateAvatar, onBranchScenario }: ChatInterfaceProps) {
+  function renderWithDiceRolls(text: string): React.ReactNode {
+    if (!text.includes('[ROLL:')) return null; // signal to use ReactMarkdown normally
+    const parts = text.split(/(\[ROLL: d\d+\])/g);
+    return (
+      <span>
+        {parts.map((part, i) => {
+          const match = part.match(/\[ROLL: (d\d+)\]/);
+          if (match) {
+            return (
+              <span key={i} className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold">
+                🎲 Roll {match[1]}
+              </span>
+            );
+          }
+          return <span key={i}>{part}</span>;
+        })}
+      </span>
+    );
+  }
+
   const { messages, setMessages, addMessage, updateMessage, storySummary, setStorySummary, updateSummary, isLoaded } = useChatState(scenarioId);
   const { user, saveMessage, saveSummary } = useFirestoreSync();
   const [showCodex, setShowCodex] = useState(false);
@@ -163,7 +184,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const { toastSuccess, toastError } = useToast();
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
-  const [showRefineSettings, setShowRefineSettings] = useState(false);
+  const [showGuidedRefine, setShowGuidedRefine] = useState(false);
+  const [refineGuidance, setRefineGuidance] = useState('');
   const [showModeDetails, setShowModeDetails] = useState(false);
 
   // ElevenLabs Conversational AI
@@ -211,17 +233,23 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const [error, setError] = useState<string | null>(null);
 
-  const handleRefine = async () => {
+  const handleRefine = async (guidance?: string) => {
     if (!input.trim() || isRefining) return;
     setIsRefining(true);
     setError(null);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
       const settings = getSettings();
-      const refined = await refineInput(input, profile, history, settings.customRefineInstructions);
+      const instructions = guidance 
+        ? `${settings.customRefineInstructions || ''}\nSpecific Guidance for this refinement: ${guidance}` 
+        : settings.customRefineInstructions;
+        
+      const refined = await refineInput(input, profile, history, instructions);
       if (refined) {
         setInput(refined);
         toastSuccess("Input refined");
+        setRefineGuidance('');
+        setShowGuidedRefine(false);
       } else {
         setError("No refinement received from AI. Check your API key.");
         toastError("No refinement received");
@@ -241,7 +269,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setError(null);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
-      const suggestion = await suggestNextAction(history, profile);
+      const settings = getSettings();
+      const suggestion = await suggestNextAction(history, profile, input.trim(), settings.customRefineInstructions);
       if (suggestion) {
         setInput(suggestion);
         toastSuccess("AI suggested an action");
@@ -286,22 +315,56 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   };
 
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
+  const [currentMood, setCurrentMood] = useState<string>(profile.currentMood || 'Neutral');
 
-  const handleAutoUpdateAvatar = async (history: Message[]) => {
+  const handleAutoUpdateAvatar = useCallback(async (history: Message[]) => {
     const settings = getSettings();
-    if (!settings.premiumAutoAvatar || isUpdatingAvatar) return;
+    if (isUpdatingAvatar) return;
     
     setIsUpdatingAvatar(true);
     try {
-      const newAvatar = await generateContextualAvatar(profile, history);
-      if (newAvatar) {
-        onUpdateAvatar(newAvatar);
-        toastSuccess("Avatar updated to match story context!");
+      // Always detect mood for visual effects
+      const mood = await detectMood(history.map(m => ({ role: m.role, parts: [{ text: m.text }] })));
+      setCurrentMood(mood);
+      onUpdateProfile({ ...profile, currentMood: mood });
+
+      // Only update image if premium auto-avatar is on
+      if (settings.premiumAutoAvatar) {
+        const newAvatar = await generateContextualAvatar(profile, history);
+        if (newAvatar) {
+          onUpdateAvatar(newAvatar);
+          toastSuccess("Avatar updated to match story context!");
+        }
       }
     } catch (err) {
       console.error("Auto-Avatar Error:", err);
     } finally {
       setIsUpdatingAvatar(false);
+    }
+  }, [isUpdatingAvatar, profile, onUpdateProfile, onUpdateAvatar, toastSuccess]);
+
+  useEffect(() => {
+    const handleForceUpdate = () => {
+      handleAutoUpdateAvatar(messages);
+    };
+    window.addEventListener('force-avatar-update', handleForceUpdate);
+    return () => window.removeEventListener('force-avatar-update', handleForceUpdate);
+  }, [messages, profile, handleAutoUpdateAvatar]);
+
+  const getMoodEffects = () => {
+    if (!getSettings().premiumContextAnimations) return {};
+    
+    switch (currentMood.toLowerCase()) {
+      case 'angry': return { filter: 'sepia(0.5) saturate(2) hue-rotate(-30deg) contrast(1.2)', animate: { scale: [1, 1.05, 1], x: [0, -1, 1, -1, 0] } };
+      case 'sad': return { filter: 'grayscale(0.6) brightness(0.8) saturate(0.5)', animate: { y: [0, 2, 0] } };
+      case 'happy': return { filter: 'saturate(1.5) brightness(1.1)', animate: { scale: [1, 1.03, 1] } };
+      case 'fearful': return { filter: 'grayscale(0.3) contrast(1.1) brightness(0.9)', animate: { x: [0, -0.5, 0.5, -0.5, 0], scale: [1, 0.98, 1] } };
+      case 'excited': return { filter: 'saturate(2) brightness(1.2) contrast(1.1)', animate: { scale: [1, 1.08, 1], rotate: [0, 1, -1, 0] } };
+      case 'mysterious': return { filter: 'hue-rotate(180deg) brightness(0.7) contrast(1.3)', animate: { opacity: [0.8, 1, 0.8] } };
+      case 'flirty': return { filter: 'hue-rotate(300deg) saturate(1.3) brightness(1.05)', animate: { scale: [1, 1.02, 1] } };
+      case 'exhausted': return { filter: 'grayscale(0.4) brightness(0.7) sepia(0.2)', animate: { y: [0, 5, 0], opacity: [1, 0.7, 1] } };
+      case 'gritty': return { filter: 'contrast(1.5) saturate(0.5) brightness(0.8)', animate: { scale: [1, 1.01, 1] } };
+      default: return { filter: 'none', animate: { scale: [1, 1.02, 1] } };
     }
   };
 
@@ -330,50 +393,65 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setMessages(prev => [...prev, aiMessage]);
       
       let fullReply = '';
-      let sentenceBuffer = '';
-      let isInsideOoc = false;
+      let displayReply = '';
+      let newMood = profile.currentMood || 'Neutral';
       let lastUpdateTime = Date.now();
       
-      const stream = generateTextReplyStream(historyForAi, profile, userInput, codexEntries, currentSummary);
+      const settings = getSettings();
+      const stream = generateTextReplyStream(
+        historyForAi, 
+        profile, 
+        userInput, 
+        codexEntries, 
+        currentSummary,
+        settings.customRefineInstructions
+      );
       
       for await (const chunk of stream) {
         fullReply += chunk;
         
-        let processChunk = chunk;
-        if (fullReply.includes('<ooc>') && !fullReply.includes('</ooc>')) {
-          isInsideOoc = true;
-          processChunk = '';
-        } else if (fullReply.includes('</ooc>') && isInsideOoc) {
-          isInsideOoc = false;
-          processChunk = '';
-        } else if (isInsideOoc) {
-          processChunk = '';
+        // Parse mood
+        const moodMatch = fullReply.match(/^\s*(?:\*\*|_)*\[MOOD:\s*(.*?)\](?:\*\*|_)*\s*/i);
+        if (moodMatch) {
+          newMood = moodMatch[1].trim();
+          displayReply = fullReply.substring(moodMatch[0].length);
+        } else if (fullReply.trimStart().replace(/^(\*\*|_)+/, '').startsWith('[')) {
+          if (fullReply.includes(']')) {
+            displayReply = fullReply;
+          } else {
+            displayReply = '';
+          }
+        } else {
+          displayReply = fullReply;
         }
-
-        sentenceBuffer += processChunk;
         
         if (Date.now() - lastUpdateTime > 100) {
-          setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: fullReply } : m));
+          setMessages(prev => prev.map(m => m.id === aiMessageId ? { ...m, text: displayReply } : m));
           lastUpdateTime = Date.now();
         }
       }
       
-      const finalAiMessage = { ...aiMessage, text: fullReply };
+      const finalAiMessage = { ...aiMessage, text: displayReply };
       setMessages(prev => prev.map(m => m.id === aiMessageId ? finalAiMessage : m));
       if (user) {
         await saveMessage(scenarioId, finalAiMessage);
       }
       
-      if (isAutoRead && sentenceBuffer.trim() && !isLiveMode) {
-        handleReadAloud(sentenceBuffer);
+      if (newMood !== profile.currentMood) {
+        onUpdateProfile({ ...profile, currentMood: newMood });
+      }
+      
+      const { mainText } = parseMessageContent(displayReply, 'model');
+      if (isAutoRead && mainText && !isLiveMode) {
+        handleReadAloud(mainText);
       }
 
       const historyWithReply = [
         ...historyForAi,
         { role: 'user', parts: [{ text: userInput }] },
-        { role: 'model', parts: [{ text: fullReply }] }
+        { role: 'model', parts: [{ text: displayReply }] }
       ];
-      const messagesWithReply: Message[] = [...baseMessages, { id: userMsgId, role: 'user', text: userInput }, { ...aiMessage, text: fullReply }];
+      const messagesWithReply: Message[] = [...baseMessages, { id: userMsgId, role: 'user', text: userInput }, { ...aiMessage, text: displayReply }];
 
       if (isAutoCodexEnabled) handleAutoPopulateCodex(false, historyWithReply);
       if (isAutoInventoryEnabled) handleAutoUpdateInventory(false, messagesWithReply);
@@ -467,6 +545,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
 
 
+  const handleGenerateOpening = async () => {
+    let prompt = "";
+    if (profile.mode === AppMode.ROLEPLAY) {
+      prompt = `[SYSTEM: Please provide the opening statement for this roleplay. Set the scene, establish your character's mood and current activity, and give the user a starting point or hook to react to. Stay fully in character as ${profile.name}. Do not act for the user.]`;
+    } else if (profile.mode === AppMode.SCENARIO) {
+      prompt = `[SYSTEM: Please provide the opening statement for this scenario. Describe the current environment, establish the atmosphere, and introduce the immediate situation or conflict. Give the user a clear hook to react to. Do not act for the user's character.]`;
+    } else if (profile.mode === AppMode.GAME) {
+      prompt = `[SYSTEM: Please provide the opening statement for this game campaign. As the Dungeon Master, set the scene, describe the starting location, and introduce the initial quest hook or immediate challenge facing the player. End by asking the player what they want to do.]`;
+    }
+    
+    await generateReply([], prompt, "");
+  };
+
   const toggleLiveMode = async () => {
     if (isLiveMode || conversation.status === 'connected') {
       await conversation.endSession();
@@ -536,30 +627,59 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           <div>
             <div className="flex items-center gap-2">
               <h3 className="text-sm sm:text-xl font-bold text-white font-serif tracking-tight leading-tight">{profile.name}</h3>
-              <div className="px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 flex items-center gap-1">
-                {profile.mode === AppMode.SCENARIO ? <Globe className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-blue-400" /> :
-                 profile.mode === AppMode.GAME ? <Swords className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-purple-400" /> :
-                 <Heart className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-pink-400" />}
-                <span className="text-[6px] sm:text-[8px] font-bold text-zinc-400 uppercase tracking-tighter">{profile.mode}</span>
+              <div className={`px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 flex items-center gap-1 ${
+                profile.mode === AppMode.SCENARIO ? 'border-blue-500/20 bg-blue-500/10' :
+                profile.mode === AppMode.GAME ? 'border-purple-500/20 bg-purple-500/10' :
+                'border-pink-500/20 bg-pink-500/10'
+              }`}>
+                {profile.mode === AppMode.SCENARIO
+                  ? <Globe className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-blue-400" />
+                  : profile.mode === AppMode.GAME
+                  ? <Swords className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-purple-400" />
+                  : <Heart className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-pink-400" />}
+                <span className={`text-[8px] font-bold uppercase tracking-tighter ${
+                  profile.mode === AppMode.SCENARIO ? 'text-blue-400' :
+                  profile.mode === AppMode.GAME ? 'text-purple-400' :
+                  'text-pink-400'
+                }`}>{profile.mode}</span>
               </div>
             </div>
-            <div className="flex flex-col gap-1 mt-1">
+            <div className="flex flex-col gap-2 mt-1">
               <div className="flex items-center gap-2 text-[8px] sm:text-[10px] uppercase tracking-[0.2em] font-bold text-zinc-500">
                 <span className="text-emerald-500/80">{profile.storyTone}</span>
-                <span className="w-0.5 h-0.5 sm:w-1 sm:h-1 bg-zinc-800 rounded-full" />
-                <span>{profile.relationship}</span>
+                {profile.currentMood && (
+                  <>
+                    <span className="w-0.5 h-0.5 sm:w-1 sm:h-1 bg-zinc-800 rounded-full" />
+                    <span className="text-amber-400/80">MOOD: {profile.currentMood}</span>
+                  </>
+                )}
               </div>
-              <div className="w-24 sm:w-32 h-1 bg-white/5 rounded-full overflow-hidden relative">
-                <motion.div 
-                  initial={{ width: 0 }}
-                  animate={{ width: `${getRelationshipPercentage(profile.relationship)}%` }}
-                  className={`absolute inset-y-0 left-0 rounded-full ${
-                    profile.relationship.toLowerCase().includes('enemy') ? 'bg-red-500' :
-                    profile.relationship.toLowerCase().includes('rival') ? 'bg-amber-500' :
-                    profile.relationship.toLowerCase().includes('lover') ? 'bg-pink-500' :
-                    'bg-emerald-500'
-                  } shadow-[0_0_8px_rgba(16,185,129,0.3)]`}
-                />
+              
+              <div className="flex items-center gap-3 bg-white/5 px-3 py-1.5 rounded-xl border border-white/5 w-fit">
+                <div className="flex flex-col">
+                  <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">
+                    {profile.mode === AppMode.SCENARIO ? "Protagonist's Role" : profile.mode === AppMode.GAME ? "Party's Reputation" : "Relationship"}
+                  </span>
+                  <span className="text-xs font-bold text-white leading-none">{profile.relationship}</span>
+                </div>
+                <div className="w-24 sm:w-32 flex flex-col gap-1 ml-2 border-l border-white/10 pl-3">
+                  <div className="flex justify-between text-[8px] font-bold text-zinc-500 leading-none">
+                    <span>LEVEL</span>
+                    <span>{getRelationshipPercentage(profile.relationship)}%</span>
+                  </div>
+                  <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden relative">
+                    <motion.div 
+                      initial={{ width: 0 }}
+                      animate={{ width: `${getRelationshipPercentage(profile.relationship)}%` }}
+                      className={`absolute inset-y-0 left-0 rounded-full ${
+                        profile.relationship.toLowerCase().includes('enemy') ? 'bg-red-500' :
+                        profile.relationship.toLowerCase().includes('rival') ? 'bg-amber-500' :
+                        profile.relationship.toLowerCase().includes('lover') ? 'bg-pink-500' :
+                        'bg-emerald-500'
+                      } shadow-[0_0_8px_rgba(16,185,129,0.3)]`}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -601,11 +721,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     <>
                       <div>
                         <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Atmosphere</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.worldAtmosphere}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.worldAtmosphere || 'Not specified'}</p>
                       </div>
                       <div>
                         <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Locations</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.keyLocations}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.keyLocations || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Current Stakes</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.scenarioStakes || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Core Conflict</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.scenarioConflict || 'Not specified'}</p>
                       </div>
                     </>
                   )}
@@ -613,11 +741,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     <>
                       <div>
                         <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Character Flaws</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.characterFlaws}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.characterFlaws || 'None specified'}</p>
                       </div>
                       <div>
                         <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Secret Motive</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.secretMotive}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.secretMotive || 'None specified'}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Speech Pattern</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.speechPattern || 'Natural'}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Core Beliefs</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.coreBeliefs || 'Not specified'}</p>
                       </div>
                     </>
                   )}
@@ -625,11 +761,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     <>
                       <div>
                         <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Game System</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.gameSystem}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.gameSystem || 'Flexible / Narrative'}</p>
                       </div>
                       <div>
                         <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Quest Objective</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.questObjective}</p>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.questObjective || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">DM Style</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.dungeonMasterStyle || profile.personality || 'Not specified'}</p>
+                      </div>
+                      <div>
+                        <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Difficulty + Lethality</h4>
+                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.difficultyLevel || 'Balanced'} (Lethality: {profile.traits?.lethality ?? 50}/100)</p>
                       </div>
                     </>
                   )}
@@ -742,20 +886,22 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 animate={{ 
                   opacity: 1, 
                   y: 0,
-                  scale: getSettings().premiumContextAnimations ? [1, 1.02, 1] : 1
+                  ...getMoodEffects().animate
                 }} 
                 transition={{
-                  scale: {
-                    duration: 4,
-                    repeat: Infinity,
-                    ease: "easeInOut"
-                  },
-                  opacity: { duration: 0.5 },
-                  y: { duration: 0.5 }
+                  duration: 4,
+                  repeat: Infinity,
+                  ease: "easeInOut"
                 }}
                 className="relative group"
               >
-                <img src={avatarBase64} alt={profile.name} className="h-60 w-60 object-cover rounded-3xl shadow-2xl border border-white/10 relative z-10" referrerPolicy="no-referrer" />
+                <img 
+                  src={avatarBase64} 
+                  alt={profile.name} 
+                  className="h-60 w-60 object-cover rounded-3xl shadow-2xl border border-white/10 relative z-10 transition-all duration-1000" 
+                  style={{ filter: getMoodEffects().filter }}
+                  referrerPolicy="no-referrer" 
+                />
                 
                 {/* Loading overlay for Avatar Update */}
                 <AnimatePresence>
@@ -783,9 +929,54 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 <p className="text-sm font-serif italic tracking-wide">Loading narrative...</p>
               </div>
             ) : messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-zinc-600 gap-4">
-                <Sparkles className="w-8 h-8 opacity-20" />
-                <p className="text-sm font-serif italic tracking-wide">The story begins with your first word...</p>
+              <div className="h-full flex flex-col items-center justify-center text-zinc-600 gap-6 py-16">
+                {profile.mode === AppMode.ROLEPLAY && (
+                  <>
+                    <Heart className="w-12 h-12 opacity-20 text-pink-400" />
+                    <div className="text-center space-y-2">
+                      <p className="text-lg font-serif italic tracking-wide text-zinc-300">
+                        {profile.name} is waiting...
+                      </p>
+                      <p className="text-sm text-zinc-500 max-w-sm mx-auto">
+                        Have the AI generate an opening message to set the scene, or send your own message below to start.
+                      </p>
+                    </div>
+                  </>
+                )}
+                {profile.mode === AppMode.SCENARIO && (
+                  <>
+                    <Globe className="w-12 h-12 opacity-20 text-blue-400" />
+                    <div className="text-center space-y-2">
+                      <p className="text-lg font-serif italic tracking-wide text-zinc-300">
+                        The world holds its breath...
+                      </p>
+                      <p className="text-sm text-zinc-500 max-w-sm mx-auto">
+                        Have the AI describe the opening scene, or describe what your character does to begin.
+                      </p>
+                    </div>
+                  </>
+                )}
+                {profile.mode === AppMode.GAME && (
+                  <>
+                    <Swords className="w-12 h-12 opacity-20 text-purple-400" />
+                    <div className="text-center space-y-2">
+                      <p className="text-lg font-serif italic tracking-wide text-zinc-300">
+                        Your adventure awaits, {profile.playerProfile?.name || 'adventurer'}...
+                      </p>
+                      <p className="text-sm text-zinc-500 max-w-sm mx-auto">
+                        Have the DM set the scene and introduce your first challenge, or take the initiative.
+                      </p>
+                    </div>
+                  </>
+                )}
+                <button
+                  onClick={handleGenerateOpening}
+                  disabled={isTyping}
+                  className="mt-4 px-8 py-4 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 rounded-2xl font-bold uppercase tracking-widest text-xs transition-all shadow-[0_0_20px_rgba(16,185,129,0.1)] hover:shadow-[0_0_30px_rgba(16,185,129,0.2)] flex items-center gap-2"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Generate Opening
+                </button>
               </div>
             ) : (
               messages.map((msg) => (
@@ -819,9 +1010,11 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                         return (
                           <div className="flex flex-col gap-3">
                             {mainText && (
-                              <div className={`prose prose-invert max-w-none text-[15px] leading-relaxed ${msg.role === 'model' ? 'narrative-text' : ''}`}>
-                                <ReactMarkdown>{mainText}</ReactMarkdown>
-                              </div>
+                              profile.mode === AppMode.GAME && mainText.includes('[ROLL:')
+                                ? <div className="text-[15px] leading-relaxed">{renderWithDiceRolls(mainText)}</div>
+                                : <div className={`prose prose-invert max-w-none text-[15px] leading-relaxed ${msg.role === 'model' ? 'narrative-text' : ''}`}>
+                                    <ReactMarkdown>{mainText}</ReactMarkdown>
+                                  </div>
                             )}
                             {oocText && (
                               <div className={`text-sm p-3 rounded-xl border ${msg.role === 'user' ? 'bg-emerald-700/30 border-emerald-500/30 text-emerald-100' : 'bg-zinc-800/50 border-zinc-700/50 text-zinc-300'}`}>
@@ -877,10 +1070,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
             )}
             {isTyping && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
-                <div className="glass-panel rounded-[1.5rem] rounded-tl-none px-6 py-5 flex items-center gap-2.5">
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" />
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                  <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+                <div className="glass-panel rounded-[1.5rem] rounded-tl-none px-6 py-4 flex items-center gap-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" />
+                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.2s]" />
+                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+                  </div>
+                  <span className="text-[10px] text-zinc-600 uppercase tracking-widest font-bold">
+                    {profile.mode === AppMode.ROLEPLAY
+                      ? profile.name.split(' ')[0] + ' is thinking...'
+                      : profile.mode === AppMode.SCENARIO
+                      ? 'The story unfolds...'
+                      : 'The DM is deciding...'}
+                  </span>
                 </div>
               </motion.div>
             )}
@@ -919,7 +1121,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
 
             <AnimatePresence>
-              {showRefineSettings && (
+              {showGuidedRefine && (
                 <motion.div
                   initial={{ opacity: 0, height: 0 }}
                   animate={{ opacity: 1, height: 'auto' }}
@@ -928,23 +1130,60 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 >
                   <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-4">
                     <div className="flex items-center justify-between">
-                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Refine Style Instructions</h4>
-                      <button onClick={() => setShowRefineSettings(false)} className="text-zinc-500 hover:text-white">
+                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Guided Refine</h4>
+                      <button onClick={() => setShowGuidedRefine(false)} className="text-zinc-500 hover:text-white">
                         <CloseIcon className="w-4 h-4" />
                       </button>
                     </div>
                     <textarea
-                      value={getSettings().customRefineInstructions || ''}
-                      onChange={(e) => {
-                        const newSettings = { ...getSettings(), customRefineInstructions: e.target.value };
-                        saveSettings(newSettings);
-                        // Force re-render to reflect changes
-                        setShowRefineSettings(true);
+                      value={refineGuidance}
+                      onChange={(e) => setRefineGuidance(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleRefine(refineGuidance);
+                        }
                       }}
-                      placeholder="e.g. 'Make it more poetic', 'Keep it concise', 'Use a darker tone'"
+                      placeholder="How should the AI change this? (e.g., 'Make it more aggressive', 'Focus on the environment')"
                       className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50 min-h-[80px] resize-y"
+                      autoFocus
                     />
-                    <p className="text-xs text-zinc-500">These instructions guide the AI when you click the REFINE button.</p>
+                    <div className="flex flex-wrap gap-2">
+                      {['More descriptive', 'More concise', 'More aggressive', 'More polite', 'Add sensory details'].map((chip) => (
+                        <button
+                          key={chip}
+                          onClick={() => {
+                            setRefineGuidance(chip);
+                            handleRefine(chip);
+                          }}
+                          className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-[10px] text-zinc-400 hover:text-white transition-all"
+                        >
+                          {chip}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <div className="flex items-center gap-4">
+                        <p className="text-xs text-zinc-500">Press Enter to apply.</p>
+                        <button
+                          onClick={handleSuggest}
+                          disabled={isSuggesting}
+                          className="text-[10px] font-bold text-zinc-500 hover:text-emerald-400 flex items-center gap-1 transition-colors"
+                          title="Get a completely new suggestion"
+                        >
+                          {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                          REGENERATE
+                        </button>
+                      </div>
+                      <button
+                        onClick={() => handleRefine(refineGuidance)}
+                        disabled={!refineGuidance.trim() || isRefining}
+                        className="px-4 py-2 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors flex items-center gap-2"
+                      >
+                        {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                        Apply
+                      </button>
+                    </div>
                   </div>
                 </motion.div>
               )}
@@ -1052,10 +1291,10 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     : 'glass-input text-zinc-500 border-transparent hover:text-zinc-300'
                 }`}
               >
-                ACTION
+                {profile.mode === AppMode.ROLEPLAY ? 'FEELING' : profile.mode === AppMode.GAME ? 'EMOTE' : 'ACTION'}
               </button>
               <button
-                onClick={handleRefine}
+                onClick={() => handleRefine()}
                 disabled={!input.trim() || isRefining}
                 className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-l-lg border-y border-l transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
                   isRefining ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
@@ -1065,13 +1304,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 REFINE
               </button>
               <button
-                onClick={() => setShowRefineSettings(!showRefineSettings)}
+                onClick={() => setShowGuidedRefine(!showGuidedRefine)}
                 className={`text-[9px] sm:text-[10px] font-bold px-2 py-1 rounded-r-lg border-y border-r transition-all tracking-widest flex items-center ${
-                  showRefineSettings ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
+                  showGuidedRefine ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
                 }`}
-                title="Refine Settings"
+                title="Guided Refine"
               >
-                <Sliders className="w-3 h-3" />
+                <Edit3 className="w-3 h-3" />
               </button>
               <button
                 onClick={handleSuggest}
@@ -1081,8 +1320,26 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 }`}
               >
                 {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                SUGGEST ACTION
+                {profile.mode === AppMode.ROLEPLAY ? 'SUGGEST DIALOGUE' : profile.mode === AppMode.GAME ? 'SUGGEST MOVE' : 'SUGGEST ACTION'}
               </button>
+              {profile.mode === AppMode.GAME && (
+                <div className="flex items-center gap-1">
+                  {(['d4','d6','d8','d10','d12','d20'] as const).map(die => (
+                    <button
+                      key={die}
+                      onClick={() => {
+                        const sides = parseInt(die.slice(1));
+                        const result = Math.floor(Math.random() * sides) + 1;
+                        setInput(prev => prev ? `${prev} [Rolled ${die}: ${result}]` : `[Rolled ${die}: ${result}]`);
+                      }}
+                      className="text-[9px] font-bold px-1.5 py-1 rounded-lg glass-input text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 hover:border-purple-500/40 transition-all tracking-widest"
+                      title={`Roll ${die}`}
+                    >
+                      {die.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+              )}
               <button
                 onClick={() => setIsAutoRead(!isAutoRead)}
                 className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
@@ -1119,7 +1376,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
-                    placeholder={isLiveMode ? "Type or speak..." : "Describe an action or speak..."}
+                    placeholder={isLiveMode ? "Type or speak..." : "Type a message, or enter a hint and click Suggest..."}
                     className={`w-full glass-input rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base text-white placeholder-zinc-600 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none ${isInputExpanded ? 'h-64 sm:h-80' : 'h-[50px] max-h-40'}`}
                     rows={1}
                   />
@@ -1136,7 +1393,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                   value={directorNote}
                   onChange={(e) => setDirectorNote(e.target.value)}
                   onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendText(); } }}
-                  placeholder="Director's Note / OOC (e.g. 'Act surprised', 'Change the subject')"
+                  placeholder={
+                    profile.mode === AppMode.ROLEPLAY
+                      ? "Whisper to the AI (e.g. 'Seem nervous', 'Reveal something small')"
+                      : profile.mode === AppMode.SCENARIO
+                      ? "Director's Note (e.g. 'Introduce a new character', 'Escalate the tension')"
+                      : "DM Note (e.g. 'Make this harder', 'Add a hidden trap', 'NPC knows a secret')"
+                  }
                   className="w-full glass-input rounded-xl px-4 py-2 text-xs text-zinc-300 placeholder-zinc-600 focus:ring-1 focus:ring-emerald-500/30 transition-all"
                 />
               </div>
@@ -1148,42 +1411,45 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         </div>
       </div>
       {/* Confirmation Modal */}
-  <AnimatePresence>
-    {confirmModal.isOpen && (
-      <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0 }}
-          onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-          className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-        />
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9, y: 20 }}
-          animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.9, y: 20 }}
-          className="relative w-full max-w-md glass-panel p-8 rounded-[2rem] border border-white/10 shadow-2xl"
-        >
-          <h3 className="text-2xl font-serif text-white mb-2">{confirmModal.title}</h3>
-          <p className="text-zinc-400 mb-8 leading-relaxed">{confirmModal.message}</p>
-          <div className="flex gap-4">
-            <button
-              onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
-              className="flex-1 px-6 py-3 rounded-xl font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-all uppercase tracking-widest text-xs"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleConfirmAction}
-              className="flex-1 px-6 py-3 rounded-xl font-bold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all uppercase tracking-widest text-xs border border-red-500/20"
-            >
-              Confirm
-            </button>
-          </div>
-        </motion.div>
-      </div>
-    )}
-  </AnimatePresence>
+  {createPortal(
+    <AnimatePresence>
+      {confirmModal.isOpen && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.9, y: 20 }}
+            className="relative w-full max-w-md glass-panel p-8 rounded-[2rem] border border-white/10 shadow-2xl"
+          >
+            <h3 className="text-2xl font-serif text-white mb-2">{confirmModal.title}</h3>
+            <p className="text-zinc-400 mb-8 leading-relaxed">{confirmModal.message}</p>
+            <div className="flex gap-4">
+              <button
+                onClick={() => setConfirmModal(prev => ({ ...prev, isOpen: false }))}
+                className="flex-1 px-6 py-3 rounded-xl font-bold text-zinc-400 hover:text-white hover:bg-white/5 transition-all uppercase tracking-widest text-xs"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmAction}
+                className="flex-1 px-6 py-3 rounded-xl font-bold bg-red-500/20 text-red-400 hover:bg-red-500/30 transition-all uppercase tracking-widest text-xs border border-red-500/20"
+              >
+                Confirm
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>,
+    document.body
+  )}
 </div>
 );
 }
