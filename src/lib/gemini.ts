@@ -1,5 +1,5 @@
 import { GoogleGenAI, Type } from "@google/genai";
-import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings } from "./types";
+import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings, getSettings } from "./types";
 import { compressImage } from "./utils";
 
 export { AppMode };
@@ -214,7 +214,6 @@ ${codexContext}${summaryContext}
 ${styleInstruction}
 If the player provides a [Director's Note: ...], use it to adjust the session. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
 }
-
 function buildHistory(messages: any[]) {
   return messages
     .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
@@ -224,13 +223,143 @@ function buildHistory(messages: any[]) {
     }));
 }
 
+function parseJsonWithRecovery(responseText: string): any {
+  try {
+    return JSON.parse(responseText);
+  } catch (e) {
+    console.error("JSON Parse Error. Attempting recovery. Raw text length:", responseText.length);
+    try {
+      // Robust recovery for truncated JSON
+      let fixedText = responseText.trim();
+      
+      // If it ends with an unterminated string, close it
+      if (fixedText.endsWith('"') && !fixedText.endsWith('\\"')) {
+        // Already closed, just need to close the object
+      } else if (fixedText.includes('"')) {
+        // Likely cut off inside a string
+        fixedText += '"';
+      }
+      
+      // Close any open braces
+      const openBraces = (fixedText.match(/{/g) || []).length;
+      const closeBraces = (fixedText.match(/}/g) || []).length;
+      for (let i = 0; i < openBraces - closeBraces; i++) {
+        fixedText += '}';
+      }
+      
+      return JSON.parse(fixedText);
+    } catch (e2) {
+      console.error("Recovery failed.", e2);
+      throw new Error("Failed to parse JSON. The response may have been truncated.");
+    }
+  }
+}
+
+function convertHistoryToOpenRouter(history: any[]) {
+  return history.map(m => ({
+    role: m.role === 'model' ? 'assistant' : 'user',
+    content: m.parts[0].text
+  }));
+}
+
+async function callOpenRouter(history: any[], systemInstruction: string, userInput: string, settings: any): Promise<string> {
+  if (!settings.openRouterApiKey) {
+    throw new Error("OpenRouter API key is missing. Please configure it in Settings.");
+  }
+
+  const messages = [
+    { role: "system", content: systemInstruction },
+    ...convertHistoryToOpenRouter(history),
+    { role: "user", content: userInput }
+  ];
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${settings.openRouterApiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
+      messages: messages,
+    })
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(`OpenRouter Error: ${response.status} ${errorData.error?.message || response.statusText}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || "";
+}
+
+async function* generateOpenRouterStream(history: any[], systemInstruction: string, userInput: string, settings: any) {
+  if (!settings.openRouterApiKey) {
+    throw new Error("OpenRouter API key is missing. Please configure it in Settings.");
+  }
+
+  const messages = [
+    { role: "system", content: systemInstruction },
+    ...convertHistoryToOpenRouter(history),
+    { role: "user", content: userInput }
+  ];
+
+  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${settings.openRouterApiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
+      messages: messages,
+      stream: true
+    })
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(`OpenRouter Error: ${response.status} ${errorData.error?.message || response.statusText}`);
+  }
+
+  if (!response.body) throw new Error("No response body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+        try {
+          const data = JSON.parse(line.slice(6));
+          const content = data.choices?.[0]?.delta?.content;
+          if (content) {
+            yield content;
+          }
+        } catch (e) {
+          // Ignore parse errors for incomplete chunks
+        }
+      }
+    }
+  }
+}
+
 export async function generateAdditionalCharacter(idea: string, mode: AppMode | string): Promise<{ name: string; description: string; personality: string; appearance: string }> {
   const ai = getGenAI();
   
   const contents = `Generate a detailed NPC or additional character based on this idea: "${idea}" for a ${mode} setting.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents,
     config: {
       responseMimeType: "application/json",
@@ -250,7 +379,7 @@ export async function generateAdditionalCharacter(idea: string, mode: AppMode | 
   const text = response.text;
   if (!text) throw new Error("No response from AI");
   
-  return JSON.parse(text);
+  return parseJsonWithRecovery(text);
 }
 
 export async function generateCharacterProfile(idea: string, mode: AppMode): Promise<CharacterProfile> {
@@ -270,9 +399,10 @@ ${modeGuidance}
 Also generate a detailed player character profile that would be a compelling fit for this story/session.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents,
     config: {
+      maxOutputTokens: 8192,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -335,21 +465,7 @@ Also generate a detailed player character profile that would be a compelling fit
 
   console.log("generateCharacterProfile: API call successful.");
   const responseText = response.text || "{}";
-  let data;
-  try {
-    data = JSON.parse(responseText);
-  } catch (e) {
-    console.error("generateCharacterProfile: JSON Parse Error. Attempting recovery. Raw text length:", responseText.length);
-    try {
-      // Attempt to fix common truncation issues by ensuring the JSON is closed
-      const fixedText = responseText.replace(/,\s*$/, "").replace(/\s*$/, "") + "}";
-      data = JSON.parse(fixedText);
-      console.log("generateCharacterProfile: Recovery successful.");
-    } catch (e2) {
-      console.error("generateCharacterProfile: Recovery failed.", e2);
-      throw new Error("Failed to parse character profile JSON. The response may have been truncated.");
-    }
-  }
+  const data = parseJsonWithRecovery(responseText);
   
   return {
     mode,
@@ -521,7 +637,7 @@ export async function extractInventoryUpdates(history: any[], currentInventory: 
 }> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents: `Analyze the following roleplay history and identify any changes to the player's inventory.
 Current Inventory: ${JSON.stringify(currentInventory)}
 Recent History: ${JSON.stringify(history.slice(-10))}
@@ -589,7 +705,7 @@ export async function refineText(text: string, context?: string, guidance?: stri
   const contextText = context ? `\nContext: ${context}` : '';
   const guidanceText = guidance ? `\nGuidance: ${guidance}` : '';
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents: `Refine the following text.${contextText}${guidanceText}\nText: "${text}"\nReturn ONLY the refined text.`
   }));
   return response.text?.trim() || text;
@@ -599,8 +715,10 @@ export async function refineField(field: string, profile: CharacterProfile, guid
   const ai = getGenAI();
   const guidanceText = guidance ? `\nGuidance: ${guidance}` : '';
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Refine the ${field} for this character: ${JSON.stringify(profile)}.${guidanceText}\nReturn ONLY the refined text.`
+    model: getSettings().activeModel,
+    contents: `Refine the ${field} for this character: ${JSON.stringify(profile)}.${guidanceText}
+Return ONLY the refined text for the ${field}. 
+IMPORTANT: Do NOT include the field name, label, or any prefix like "${field}:" in your response. Just the content.`
   }));
   return response.text?.trim() || "";
 }
@@ -609,23 +727,24 @@ export async function refinePlayerProfile(field: string, profile: CharacterProfi
   const ai = getGenAI();
   const guidanceText = guidance ? `\nGuidance: ${guidance}` : '';
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents: `Refine the player's ${field} for this roleplay scenario.
 Player Profile: ${JSON.stringify(profile.playerProfile || {})}
 Character they are interacting with: ${profile.name}
 World Atmosphere: ${profile.worldAtmosphere || 'Not specified'}
 ${guidanceText}
 
-Return ONLY the refined ${field} text.`
+Return ONLY the refined ${field} text.
+IMPORTANT: Do NOT include the field name, label, or any prefix like "${field}:" in your response. Just the content.`
   }));
   return response.text?.trim() || "";
 }
 
-export async function refineTraits(profile: CharacterProfile): Promise<any> {
+export async function refineTraits(profile: CharacterProfile, guidance?: string): Promise<any> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Suggest traits (0-100) for this character: ${JSON.stringify(profile)}`,
+    model: getSettings().activeModel,
+    contents: `Suggest traits (0-100) for this character: ${JSON.stringify(profile)}. ${guidance ? `Guidance: ${guidance}` : ''}`,
     config: {
       responseMimeType: "application/json",
       responseSchema: {
@@ -644,33 +763,144 @@ export async function refineTraits(profile: CharacterProfile): Promise<any> {
       }
     }
   }));
-  return JSON.parse(response.text || "{}");
+  return parseJsonWithRecovery(response.text || "{}");
+}
+
+export async function refineProfile(profile: CharacterProfile): Promise<CharacterProfile> {
+  const ai = getGenAI();
+  
+  const modeGuidance = profile.mode === AppMode.GAME
+    ? `This is a GAME (tabletop RPG) mode. You MUST populate gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, and currentCampaignArc with rich, specific values.`
+    : profile.mode === AppMode.SCENARIO
+    ? `This is a SCENARIO (interactive story) mode. You MUST populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, and incitingIncident with vivid, specific details.`
+    : `This is a ROLEPLAY mode. You MUST populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values.`;
+
+  const response = await withRetry(() => ai.models.generateContent({
+    model: getSettings().activeModel,
+    contents: `You are an expert creative writer and game designer. Your task is to refine, expand, and complete this ${profile.mode} profile. 
+
+Instructions:
+1. Refine and expand ALL fields, even if they are already filled, to ensure they are compelling, consistent, and well-developed. 
+2. Fill in EVERY missing or sparse field with contextually relevant and creative content. Do not leave any field empty.
+3. ${modeGuidance}
+4. Ensure all fields are contextually consistent with each other (e.g., personality matches backstory, world atmosphere matches factions).
+5. For the "traits" section, ensure the values (0-100) accurately reflect the character's personality and role.
+6. For the "playerProfile", ensure it fits naturally into the scenario or game mode.
+7. IMPORTANT: Do NOT include field names or labels within the values of the fields themselves.
+
+Current Profile: ${JSON.stringify(profile)}
+
+Return the complete, updated profile as a JSON object with the exact same structure.`,
+    config: {
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING },
+          personality: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          clothing: { type: Type.STRING },
+          accessories: { type: Type.STRING },
+          hairStyle: { type: Type.STRING },
+          hairColor: { type: Type.STRING },
+          eyeColor: { type: Type.STRING },
+          storyTone: { type: Type.STRING },
+          relationship: { type: Type.STRING },
+          characterFlaws: { type: Type.STRING },
+          secretMotive: { type: Type.STRING },
+          speechPattern: { type: Type.STRING },
+          likesAndDislikes: { type: Type.STRING },
+          coreBeliefs: { type: Type.STRING },
+          quirks: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocations: { type: Type.STRING },
+          scenarioStakes: { type: Type.STRING },
+          scenarioConflict: { type: Type.STRING },
+          timePeriod: { type: Type.STRING },
+          factions: { type: Type.STRING },
+          magicOrTechnologyLevel: { type: Type.STRING },
+          incitingIncident: { type: Type.STRING },
+          gameSystem: { type: Type.STRING },
+          questObjective: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplexity: { type: Type.STRING },
+          difficultyLevel: { type: Type.STRING },
+          partyComposition: { type: Type.STRING },
+          startingEquipment: { type: Type.STRING },
+          currentCampaignArc: { type: Type.STRING },
+          currentMood: { type: Type.STRING },
+          playerProfile: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              description: { type: Type.STRING },
+              personality: { type: Type.STRING },
+              backstory: { type: Type.STRING },
+              appearance: { type: Type.STRING },
+              clothing: { type: Type.STRING },
+              accessories: { type: Type.STRING },
+              hairStyle: { type: Type.STRING },
+              hairColor: { type: Type.STRING },
+              eyeColor: { type: Type.STRING },
+            },
+            required: ["name", "description"]
+          }
+        },
+        required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
+      }
+    }
+  }));
+
+  try {
+    const data = parseJsonWithRecovery(response.text || "{}");
+    return {
+      ...profile,
+      ...data,
+      traits: { ...profile.traits, ...(data.traits || {}) },
+      voiceSettings: { ...profile.voiceSettings, ...(data.voiceSettings || {}) },
+      playerProfile: { ...profile.playerProfile, ...(data.playerProfile || {}) }
+    };
+  } catch (e) {
+    console.error("refineProfile: JSON Parse Error", e);
+    return profile;
+  }
 }
 
 export async function summarizeHistory(history: any[], previousSummary: string = ""): Promise<string> {
-  const ai = getGenAI();
-  const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: `Summarize the following story history. Keep it concise but include key events, character development, and important details.
+  const settings = getSettings();
+  const prompt = `Summarize the following story history. Keep it concise but include key events, character development, and important details.
 Previous Summary: ${previousSummary}
 New Events:
 ${JSON.stringify(history)}
-Please provide an updated summary.`
+Please provide an updated summary.`;
+
+  if (settings.activeTextProvider === 'OpenRouter') {
+    return callOpenRouter(history, "You are a helpful assistant that summarizes story history.", prompt, settings);
+  }
+
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: settings.activeModel,
+    contents: prompt
   }));
   return response.text?.trim() || previousSummary;
 }
 
-export async function streamOpenRouter(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = [], currentSummary: string = "") {
-  return generateTextReplyStream(history, profile, userInput, codexEntries, currentSummary);
-}
-
 export async function* generateTextReplyStream(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = [], currentSummary: string = "", customInstructions?: string) {
+  const settings = getSettings();
+  const systemInstruction = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
+
+  if (settings.activeTextProvider === 'OpenRouter') {
+    yield* generateOpenRouterStream(history, systemInstruction, userInput, settings);
+    return;
+  }
+
   const ai = getGenAI();
   
-  const systemInstruction = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
- 
   const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
+    model: settings.activeModel,
     config: { systemInstruction },
     history: buildHistory(history)
   });
@@ -681,18 +911,29 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
   }
 }
 
-export async function suggestNextAction(history: any[], profile: CharacterProfile, guide?: string, customInstructions?: string): Promise<string> {
-  const ai = getGenAI();
+export async function suggestNextAction(
+  history: any[], 
+  profile: CharacterProfile, 
+  codexEntries: CodexEntry[] = [], 
+  currentSummary: string = "", 
+  guide?: string, 
+  customInstructions?: string
+): Promise<string> {
+  const codexContext = codexEntries.length > 0
+    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
+    : '';
+
+  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
 
   const styleInstruction = customInstructions
     ? `\nCustom Writing Style Instructions (Apply these to the suggestion):\n${customInstructions}\n`
     : '';
 
   const modeInstruction = profile.mode === AppMode.GAME
-    ? `You are assisting a player in a tabletop RPG. Suggest one compelling next action — it should feel like a real game decision (attack, investigate, negotiate, use an item, cast a spell, etc.).`
+    ? `You are assisting a player in a tabletop RPG. Suggest one compelling next action for THEIR character. It must be written in the first person (or the player's preferred style) and be ready to send as a message. It should feel like a real game decision (attack, investigate, negotiate, use an item, cast a spell, etc.).`
     : profile.mode === AppMode.SCENARIO
-    ? `You are assisting a player in an interactive narrative. Suggest one compelling next action that meaningfully advances or complicates the story.`
-    : `You are assisting a player in a character roleplay. Suggest one compelling next dialogue line or action that fits their character voice and advances the scene.`;
+    ? `You are assisting a player in an interactive narrative. Suggest one compelling next action for THEIR character that meaningfully advances or complicates the story. Write it as the actual text the player would send.`
+    : `You are assisting a player in a character roleplay. Suggest one compelling next dialogue line or action for THEIR character that fits their character voice and advances the scene. Write it as the actual text the player would send.`;
 
   const guideInstruction = guide ? `\nThe player has provided a hint/guide for what they want to do: "${guide}". Use this to shape your suggestion.\n` : '';
 
@@ -705,25 +946,37 @@ They are interacting with / in the world of:
 Name: ${profile.name}
 Personality: ${profile.personality}
 Relationship: ${profile.relationship}
+Tone: ${profile.storyTone}
 
 World Context: ${profile.worldAtmosphere || 'Not specified'}
 Key Locations: ${profile.keyLocations || 'Not specified'}
+${codexContext}${summaryContext}
 
-Return ONLY the suggested text, ready to use as player input. No quotes, no explanations.`;
+IMPORTANT: Return ONLY the suggested text, ready to use as player input. 
+- Do NOT say "You should..." or "I suggest...".
+- Do NOT use quotes.
+- Do NOT provide explanations.
+- Write the ACTUAL message the player would send to the AI.`;
+
+  const settings = getSettings();
+
+  if (settings.activeTextProvider === 'OpenRouter') {
+    return callOpenRouter(history, systemInstruction, `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.`, settings);
+  }
+
+  const ai = getGenAI();
 
   const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
+    model: settings.activeModel,
     config: { systemInstruction },
     history: buildHistory(history)
   });
 
-  const response = await withRetry(() => chat.sendMessage({ message: `Suggest the next action or dialogue for my character.` }));
+  const response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
   return response.text?.trim() || "";
 }
 
 export async function refineInput(input: string, profile: CharacterProfile, history: any[], customInstructions?: string): Promise<string> {
-  const ai = getGenAI();
-
   const styleInstruction = customInstructions
     ? `\nCustom Writing Style Instructions:\n${customInstructions}\n`
     : '';
@@ -745,8 +998,16 @@ Relationship: ${profile.relationship}
 ${styleInstruction}
 Return ONLY the refined text. No quotes, no explanations.`;
 
+  const settings = getSettings();
+
+  if (settings.activeTextProvider === 'OpenRouter') {
+    return callOpenRouter(history, systemInstruction, `Refine this input: "${input}"`, settings);
+  }
+
+  const ai = getGenAI();
+
   const chat = ai.chats.create({
-    model: "gemini-3-flash-preview",
+    model: settings.activeModel,
     config: { systemInstruction },
     history: buildHistory(history)
   });
@@ -822,7 +1083,7 @@ export async function extractCodexEntries(history: any[], profile: CharacterProf
     : 'Focus especially on: character lore, interpersonal history, revealed secrets, and meaningful objects. Prioritize "Lore" and "Item" categories.';
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents: `Analyze the following roleplay history and character profile. Identify significant new lore, locations, items, or mechanics that should be added to the world codex.
 Do not suggest entries that already exist: [${existingTitles}]
 
@@ -858,7 +1119,7 @@ Return a JSON array of new codex entries. Each must have:
 export async function refineCodexEntry(entry: Partial<CodexEntry>, profile: CharacterProfile): Promise<Partial<CodexEntry>> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents: `Refine this codex entry to be more descriptive, immersive, and consistent with the world of ${profile.name}.
 Current Entry: ${JSON.stringify(entry)}
 World Context: ${profile.worldAtmosphere || 'Not specified'}
@@ -888,7 +1149,7 @@ Return the refined entry as JSON with the same fields (title, content, category)
 export async function updateCharacterProfilesFromHistory(history: any[], profile: CharacterProfile): Promise<Partial<CharacterProfile>> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents: `Analyze the following roleplay history and suggest updates to the character's profile based on recent events, character development, and changes in relationships.
 Current Profile: ${JSON.stringify(profile)}
 Recent History: ${JSON.stringify(history.slice(-15))}
@@ -937,7 +1198,7 @@ export async function detectMood(history: any[]): Promise<string> {
   const ai = getGenAI();
   try {
     const response = await withRetry(() => ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: getSettings().activeModel,
       contents: `Analyze the last 3 messages of this roleplay and determine the character's current mood.
       History: ${JSON.stringify(history.slice(-3))}
       
@@ -954,7 +1215,7 @@ export async function generateContextualAvatar(profile: CharacterProfile, histor
   
   // First, analyze the context to determine the current emotion, background, and any changes
   const contextResponse = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3-flash-preview",
+    model: getSettings().activeModel,
     contents: `Analyze the recent roleplay history and determine the character's current state.
 Character Name: ${profile.name}
 Character Appearance: ${profile.appearance}

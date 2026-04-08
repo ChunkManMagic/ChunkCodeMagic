@@ -34,7 +34,7 @@ export function RefineButton({ onRefine, isRefining, className = "", label = "MA
   };
 
   return (
-    <div className={`relative inline-block ${className}`} ref={containerRef}>
+    <div className={`relative inline-block ${className} ${showGuided ? 'z-50' : 'z-10'}`} ref={containerRef}>
       <button 
         onClick={() => setShowGuided(!showGuided)}
         disabled={isRefining}

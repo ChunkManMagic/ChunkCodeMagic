@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Loader2, User, Image as ImageIcon, Wand2, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw, Volume2 } from 'lucide-react';
+import { Sparkles, Loader2, User, Image as ImageIcon, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw, Volume2 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
-import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech, refineText } from '../lib/gemini';
+import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech, refineText, refineProfile } from '../lib/gemini';
 import { CharacterEditor } from './CharacterEditor';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { RefineButton } from './RefineButton';
@@ -106,6 +106,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
   const [draftProfile, setDraftProfile] = useState<CharacterProfile | null>(null);
   const [draftAvatar, setDraftAvatar] = useState<string | null>(null);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
+  const [isRefiningAll, setIsRefiningAll] = useState(false);
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [isAddingCharacter, setIsAddingCharacter] = useState(false);
 
@@ -345,10 +346,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     setDetailedProfile({ ...detailedProfile, storyTone: tone });
   };
 
-  const handleRefineTraits = async () => {
+  const handleRefineTraits = async (guidance?: string) => {
     setIsRefiningField('traits');
     try {
-      const refinedTraits = await refineTraits(detailedProfile);
+      const refinedTraits = await refineTraits(detailedProfile, guidance);
       setDetailedProfile(prev => ({ ...prev, traits: refinedTraits }));
       toastSuccess("Traits refined");
     } catch (err: any) {
@@ -399,16 +400,41 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
             [playerField]: refined
           } as any
         }));
+      } else if (field.includes('.')) {
+        const [parent, child] = field.split('.');
+        refined = await refineField(field as any, detailedProfile, guidance);
+        setDetailedProfile(prev => ({
+          ...prev,
+          [parent]: {
+            ...(prev[parent as keyof CharacterProfile] as any),
+            [child]: refined
+          }
+        }));
       } else {
         refined = await refineField(field as any, detailedProfile, guidance);
         setDetailedProfile(prev => ({ ...prev, [field]: refined }));
       }
-      toastSuccess(`${field.replace('player_', '')} refined`);
+      toastSuccess(`${field.replace('player_', '').replace('voiceSettings.', '')} refined`);
     } catch (err: any) {
       console.error("Refine field error:", err);
       toastError(`Refinement failed: ${err.message || 'Unknown error'}`);
     } finally {
       setIsRefiningField(null);
+    }
+  };
+
+  const handleOverallRefinement = async () => {
+    if (isRefiningAll) return;
+    setIsRefiningAll(true);
+    try {
+      const refined = await refineProfile(detailedProfile);
+      setDetailedProfile(refined);
+      toastSuccess("Profile refined and blanks filled!");
+    } catch (err: any) {
+      console.error("Overall refinement error:", err);
+      toastError(`Refinement failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsRefiningAll(false);
     }
   };
 
@@ -571,6 +597,9 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
 
             {setupType === 'quick' ? (
               <div className="space-y-6">
+                <div className="flex justify-between items-center">
+                  <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Your Idea</h3>
+                </div>
                 <div className="relative group">
                   <div className="absolute -top-10 right-0">
                     <RefineButton 
@@ -666,6 +695,25 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                 animate={{ opacity: 1, y: 0 }}
                 className="space-y-8"
               >
+                <div className="flex justify-between items-center mb-8">
+                  <h3 className="text-xl font-bold text-white flex items-center gap-2">
+                    <Settings2 className="w-5 h-5 text-emerald-400" />
+                    Refine {appMode === AppMode.SCENARIO ? 'Scenario' : appMode === AppMode.GAME ? 'Campaign' : 'Profile'}
+                  </h3>
+                  <button
+                    onClick={handleOverallRefinement}
+                    disabled={isRefiningAll || isRefiningField !== null}
+                    className="px-6 py-2 bg-emerald-500 hover:bg-emerald-400 disabled:opacity-50 text-black font-bold rounded-xl flex items-center gap-2 transition-all shadow-lg shadow-emerald-500/20"
+                  >
+                    {isRefiningAll ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
+                    Fill Blanks & Refine All
+                  </button>
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                   <div className="space-y-6">
                     <div>
@@ -896,14 +944,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Magic / Tech Level</label>
-                            <button 
-                              onClick={() => handleRefineField('magicOrTechnologyLevel')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'magicOrTechnologyLevel' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('magicOrTechnologyLevel', guidance)}
+                              isRefining={isRefiningField === 'magicOrTechnologyLevel'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -916,14 +960,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Inciting Incident</label>
-                            <button 
-                              onClick={() => handleRefineField('incitingIncident')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'incitingIncident' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('incitingIncident', guidance)}
+                              isRefining={isRefiningField === 'incitingIncident'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -942,14 +982,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Character Flaws</label>
-                            <button 
-                              onClick={() => handleRefineField('characterFlaws')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'characterFlaws' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('characterFlaws', guidance)}
+                              isRefining={isRefiningField === 'characterFlaws'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -962,14 +998,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Secret Motive</label>
-                            <button 
-                              onClick={() => handleRefineField('secretMotive')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'secretMotive' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('secretMotive', guidance)}
+                              isRefining={isRefiningField === 'secretMotive'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -982,14 +1014,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Speech Pattern</label>
-                            <button 
-                              onClick={() => handleRefineField('speechPattern')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'speechPattern' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('speechPattern', guidance)}
+                              isRefining={isRefiningField === 'speechPattern'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -1002,14 +1030,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Likes & Dislikes</label>
-                            <button 
-                              onClick={() => handleRefineField('likesAndDislikes')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'likesAndDislikes' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('likesAndDislikes', guidance)}
+                              isRefining={isRefiningField === 'likesAndDislikes'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -1022,14 +1046,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Core Beliefs</label>
-                            <button 
-                              onClick={() => handleRefineField('coreBeliefs')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'coreBeliefs' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('coreBeliefs', guidance)}
+                              isRefining={isRefiningField === 'coreBeliefs'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -1042,14 +1062,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Quirks</label>
-                            <button 
-                              onClick={() => handleRefineField('quirks')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-blue-500 hover:text-blue-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'quirks' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('quirks', guidance)}
+                              isRefining={isRefiningField === 'quirks'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -1068,14 +1084,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Game System</label>
-                            <button 
-                              onClick={() => handleRefineField('gameSystem')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'gameSystem' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('gameSystem', guidance)}
+                              isRefining={isRefiningField === 'gameSystem'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -1088,14 +1100,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Quest Objective</label>
-                            <button 
-                              onClick={() => handleRefineField('questObjective')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'questObjective' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('questObjective', guidance)}
+                              isRefining={isRefiningField === 'questObjective'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -1108,14 +1116,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">DM Style</label>
-                            <button 
-                              onClick={() => handleRefineField('dungeonMasterStyle')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'dungeonMasterStyle' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('dungeonMasterStyle', guidance)}
+                              isRefining={isRefiningField === 'dungeonMasterStyle'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -1128,14 +1132,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Rules Complexity</label>
-                            <button 
-                              onClick={() => handleRefineField('rulesComplexity')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'rulesComplexity' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('rulesComplexity', guidance)}
+                              isRefining={isRefiningField === 'rulesComplexity'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -1148,14 +1148,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Difficulty Level</label>
-                            <button 
-                              onClick={() => handleRefineField('difficultyLevel')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'difficultyLevel' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('difficultyLevel', guidance)}
+                              isRefining={isRefiningField === 'difficultyLevel'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -1168,14 +1164,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Party Composition</label>
-                            <button 
-                              onClick={() => handleRefineField('partyComposition')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'partyComposition' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('partyComposition', guidance)}
+                              isRefining={isRefiningField === 'partyComposition'}
+                            />
                           </div>
                           <input 
                             type="text"
@@ -1188,14 +1180,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Starting Equipment</label>
-                            <button 
-                              onClick={() => handleRefineField('startingEquipment')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'startingEquipment' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('startingEquipment', guidance)}
+                              isRefining={isRefiningField === 'startingEquipment'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -1208,14 +1196,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Current Campaign Arc</label>
-                            <button 
-                              onClick={() => handleRefineField('currentCampaignArc')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-purple-500 hover:text-purple-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'currentCampaignArc' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('currentCampaignArc', guidance)}
+                              isRefining={isRefiningField === 'currentCampaignArc'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -1246,7 +1230,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         </select>
                       </div>
                       <div>
-                        <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest mb-2">{getRelationshipLabel(appMode)}</label>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">{getRelationshipLabel(appMode)}</label>
+                          <RefineButton 
+                            onRefine={(guidance) => handleRefineField('relationship', guidance)}
+                            isRefining={isRefiningField === 'relationship'}
+                          />
+                        </div>
                         <input 
                           type="text" 
                           className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
@@ -1262,14 +1252,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">
                           {appMode === AppMode.SCENARIO ? "Scenario Elements" : appMode === AppMode.GAME ? "DM Characteristics" : "Personality Traits"}
                         </label>
-                        <button 
-                          onClick={handleRefineTraits}
-                          disabled={isRefiningField !== null}
-                          className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                        >
-                          {isRefiningField === 'traits' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                          MAGIC REFINE
-                        </button>
+                        <RefineButton 
+                          onRefine={(guidance) => handleRefineTraits(guidance)}
+                          isRefining={isRefiningField === 'traits'}
+                        />
                       </div>
                       <div className="space-y-4 glass-input p-4 rounded-xl">
                         {getModeTraits(appMode).map(trait => (
@@ -1322,7 +1308,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                       
                       <div className="grid grid-cols-3 gap-3">
                         <div>
-                          <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Pitch</label>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Pitch</label>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('voiceSettings.pitch', guidance)}
+                              isRefining={isRefiningField === 'voiceSettings.pitch'}
+                            />
+                          </div>
                           <input 
                             type="text" 
                             className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1332,7 +1324,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           />
                         </div>
                         <div>
-                          <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Speed</label>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Speed</label>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('voiceSettings.speed', guidance)}
+                              isRefining={isRefiningField === 'voiceSettings.speed'}
+                            />
+                          </div>
                           <input 
                             type="text" 
                             className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1342,7 +1340,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           />
                         </div>
                         <div>
-                          <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Accent</label>
+                          <div className="flex justify-between items-center mb-1">
+                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Accent</label>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('voiceSettings.accent', guidance)}
+                              isRefining={isRefiningField === 'voiceSettings.accent'}
+                            />
+                          </div>
                           <input 
                             type="text" 
                             className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1361,14 +1365,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           <div>
                             <div className="flex justify-between items-center mb-2">
                               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Your Name</label>
-                              <button 
-                                onClick={() => handleRefineField('player_name')}
-                                disabled={isRefiningField !== null}
-                                className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                              >
-                                {isRefiningField === 'player_name' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                REFINE
-                              </button>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_name', guidance)}
+                                isRefining={isRefiningField === 'player_name'}
+                              />
                             </div>
                             <input 
                               type="text" 
@@ -1380,14 +1380,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           <div>
                             <div className="flex justify-between items-center mb-2">
                               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Personality</label>
-                              <button 
-                                onClick={() => handleRefineField('player_personality')}
-                                disabled={isRefiningField !== null}
-                                className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                              >
-                                {isRefiningField === 'player_personality' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                REFINE
-                              </button>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_personality', guidance)}
+                                isRefining={isRefiningField === 'player_personality'}
+                              />
                             </div>
                             <input 
                               type="text" 
@@ -1401,14 +1397,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         <div>
                           <div className="flex justify-between items-center mb-2">
                             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Your Backstory</label>
-                            <button 
-                              onClick={() => handleRefineField('player_backstory')}
-                              disabled={isRefiningField !== null}
-                              className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                            >
-                              {isRefiningField === 'player_backstory' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                              MAGIC REFINE
-                            </button>
+                            <RefineButton 
+                              onRefine={(guidance) => handleRefineField('player_backstory', guidance)}
+                              isRefining={isRefiningField === 'player_backstory'}
+                            />
                           </div>
                           <textarea 
                             rows={2}
@@ -1420,7 +1412,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
 
                         <div className="grid grid-cols-3 gap-3">
                           <div>
-                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Hair Style</label>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Hair Style</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_hairStyle', guidance)}
+                                isRefining={isRefiningField === 'player_hairStyle'}
+                              />
+                            </div>
                             <input 
                               type="text" 
                               className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1429,7 +1427,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                             />
                           </div>
                           <div>
-                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Hair Color</label>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Hair Color</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_hairColor', guidance)}
+                                isRefining={isRefiningField === 'player_hairColor'}
+                              />
+                            </div>
                             <input 
                               type="text" 
                               className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1438,7 +1442,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                             />
                           </div>
                           <div>
-                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Eye Color</label>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Eye Color</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_eyeColor', guidance)}
+                                isRefining={isRefiningField === 'player_eyeColor'}
+                              />
+                            </div>
                             <input 
                               type="text" 
                               className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1451,7 +1461,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         {appMode === AppMode.GAME && (
                           <div className="grid grid-cols-4 gap-3">
                             <div>
-                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Class</label>
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Class</label>
+                                <RefineButton 
+                                  onRefine={(guidance) => handleRefineField('player_playerClass', guidance)}
+                                  isRefining={isRefiningField === 'player_playerClass'}
+                                />
+                              </div>
                               <input 
                                 type="text" 
                                 className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1461,7 +1477,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                               />
                             </div>
                             <div>
-                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Race</label>
+                              <div className="flex justify-between items-center mb-1">
+                                <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Race</label>
+                                <RefineButton 
+                                  onRefine={(guidance) => handleRefineField('player_playerRace', guidance)}
+                                  isRefining={isRefiningField === 'player_playerRace'}
+                                />
+                              </div>
                               <input 
                                 type="text" 
                                 className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1495,14 +1517,10 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           <div>
                             <div className="flex justify-between items-center mb-2">
                               <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Appearance</label>
-                              <button 
-                                onClick={() => handleRefineField('player_appearance')}
-                                disabled={isRefiningField !== null}
-                                className="text-[10px] font-bold text-emerald-500 hover:text-emerald-400 flex items-center gap-1 disabled:opacity-50"
-                              >
-                                {isRefiningField === 'player_appearance' ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                                REFINE
-                              </button>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_appearance', guidance)}
+                                isRefining={isRefiningField === 'player_appearance'}
+                              />
                             </div>
                             <input 
                               type="text" 
@@ -1512,7 +1530,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                             />
                           </div>
                           <div>
-                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Clothing</label>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Clothing</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_clothing', guidance)}
+                                isRefining={isRefiningField === 'player_clothing'}
+                              />
+                            </div>
                             <input 
                               type="text" 
                               className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"
@@ -1521,7 +1545,13 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                             />
                           </div>
                           <div>
-                            <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">Accessories</label>
+                            <div className="flex justify-between items-center mb-1">
+                              <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest">Accessories</label>
+                              <RefineButton 
+                                onRefine={(guidance) => handleRefineField('player_accessories', guidance)}
+                                isRefining={isRefiningField === 'player_accessories'}
+                              />
+                            </div>
                             <input 
                               type="text" 
                               className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]"

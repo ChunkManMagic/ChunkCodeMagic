@@ -111,7 +111,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             <div className="space-y-2">
               <label className="text-sm text-gray-300">Active Text Provider</label>
               <select 
-                value={settings.activeTextProvider}
+                value={settings.activeTextProvider || 'Google'}
                 onChange={e => handleChange('activeTextProvider', e.target.value as any)}
                 className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
               >
@@ -120,19 +120,46 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </select>
             </div>
 
-            <div className="space-y-2">
-              <label className="text-sm text-gray-300">Active Model</label>
-              <select 
-                value={settings.activeModel}
-                onChange={e => handleChange('activeModel', e.target.value)}
-                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-              >
-                <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview (Lite)</option>
-                <option value="gemini-2.5-flash-preview-05-20">gemini-2.5-flash-preview (Stable)</option>
-                <option value="google/gemini-flash-1.5-8b">google/gemini-flash-1.5-8b (Free)</option>
-                <option value="meta-llama/llama-3-8b-instruct:free">meta-llama/llama-3-8b-instruct:free</option>
-              </select>
-            </div>
+            {settings.activeTextProvider === 'Google' ? (
+              <div className="space-y-2">
+                <label className="text-sm text-gray-300">Active Model</label>
+                <select 
+                  value={settings.activeModel}
+                  onChange={e => handleChange('activeModel', e.target.value)}
+                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="gemini-2.5-pro">gemini-2.5-pro (Pro)</option>
+                  <option value="gemini-2.5-flash">gemini-2.5-flash (Fast)</option>
+                  <option value="gemini-2.5-flash-8b">gemini-2.5-flash-8b (Lite)</option>
+                  <option value="gemini-3-flash-preview">gemini-3-flash-preview (Standard)</option>
+                  <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview (Lite)</option>
+                  <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Pro)</option>
+                </select>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-300">OpenRouter API Key</label>
+                  <input 
+                    type="password"
+                    value={settings.openRouterApiKey || ''}
+                    onChange={e => handleChange('openRouterApiKey', e.target.value)}
+                    placeholder="sk-or-v1-..."
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm text-gray-300">OpenRouter Model</label>
+                  <input 
+                    type="text"
+                    value={settings.openRouterModel || 'meta-llama/llama-3-8b-instruct:free'}
+                    onChange={e => handleChange('openRouterModel', e.target.value)}
+                    placeholder="e.g. meta-llama/llama-3-8b-instruct:free"
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  />
+                </div>
+              </>
+            )}
 
             <div className="space-y-2">
               <label className="text-sm text-gray-300">Voice Engine</label>

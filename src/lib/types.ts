@@ -129,6 +129,8 @@ export interface CodexEntry {
 export interface AppSettings {
   activeTextProvider: 'Google' | 'OpenRouter';
   activeModel: string;
+  openRouterApiKey?: string;
+  openRouterModel?: string;
   voiceEngine: 'Cinematic' | 'Fast Browser' | 'ElevenLabs' | 'OpenAI';
   elevenLabsVoiceId?: string;
   elevenLabsAgentId?: string;
@@ -146,7 +148,6 @@ export interface Message {
   role: 'user' | 'model';
   text: string;
   isSummarized?: boolean;
-  provider?: string;
   timestamp?: number;
 }
 
@@ -163,7 +164,8 @@ export const CURRENT_SCHEMA_VERSION = 1;
 
 export const defaultSettings: AppSettings = {
   activeTextProvider: 'Google',
-  activeModel: 'gemini-3.1-flash-lite-preview',
+  activeModel: 'gemini-2.5-flash',
+  openRouterModel: 'meta-llama/llama-3-8b-instruct:free',
   voiceEngine: 'Cinematic',
   premiumCustomVoices: true,
   premiumContextAnimations: true,

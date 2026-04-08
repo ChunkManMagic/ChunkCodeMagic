@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useToast } from '../hooks/useToast';
-import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech } from '../lib/gemini';
-import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2, Plus, Trash2 } from 'lucide-react';
+import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech, refineProfile } from '../lib/gemini';
+import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { RefineButton } from './RefineButton';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 
@@ -18,9 +18,25 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
   const [avatar, setAvatar] = useState<string>(initialAvatar);
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
+  const [isRefiningAll, setIsRefiningAll] = useState(false);
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
   const { toastSuccess, toastError } = useToast();
+
+  const handleOverallRefinement = async () => {
+    if (isRefiningAll) return;
+    setIsRefiningAll(true);
+    try {
+      const refined = await refineProfile(profile);
+      setProfile(refined);
+      toastSuccess("Profile refined and blanks filled!");
+    } catch (err: any) {
+      console.error("Overall refinement error:", err);
+      toastError(`Refinement failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsRefiningAll(false);
+    }
+  };
 
   const handlePreviewVoice = async () => {
     if (isPreviewingVoice) return;
@@ -250,7 +266,15 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           <h2 className="text-3xl sm:text-4xl font-serif text-white">{getPageTitle(profile.mode, !!isInitialReview)}</h2>
           <p className="text-zinc-500 text-sm mt-1">{getPageSubtitle(profile.mode)}</p>
         </div>
-        <div className="flex gap-3 w-full sm:w-auto">
+        <div className="flex flex-wrap gap-3 w-full sm:w-auto">
+          <button
+            onClick={handleOverallRefinement}
+            disabled={isRefiningAll || isRefiningField !== null}
+            className="flex-1 sm:flex-none px-6 py-3 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 disabled:opacity-50 rounded-xl font-bold text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2 border border-emerald-500/30"
+          >
+            {isRefiningAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+            Fill Blanks & Refine All
+          </button>
           <button onClick={onCancel} className="flex-1 sm:flex-none px-6 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors">
             Cancel
           </button>
