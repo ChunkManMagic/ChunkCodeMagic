@@ -80,17 +80,17 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     onClose();
   };
 
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
   const handleClearData = async () => {
-    if (window.confirm("Are you sure you want to clear ALL app data? This will delete all your scenarios, characters, and settings. This cannot be undone.")) {
-      try {
-        await clear();
-        localStorage.clear();
-        toastSuccess("All data cleared. Reloading...");
-        setTimeout(() => window.location.reload(), 1500);
-      } catch (e) {
-        console.error("Failed to clear data", e);
-        toastError("Failed to clear data");
-      }
+    try {
+      await clear();
+      localStorage.clear();
+      toastSuccess("All data cleared. Reloading...");
+      setTimeout(() => window.location.reload(), 1500);
+    } catch (e) {
+      console.error("Failed to clear data", e);
+      toastError("Failed to clear data");
     }
   };
 
@@ -387,21 +387,43 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           </div>
         </div>
 
-        <div className="p-4 border-t border-white/10 flex justify-between items-center">
-          <button 
-            onClick={handleClearData}
-            className="flex items-center gap-2 px-4 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-xl transition-colors text-sm font-medium"
-          >
-            <Trash2 className="w-4 h-4" />
-            Clear Data
-          </button>
-          <button 
-            onClick={handleSave}
-            className="flex items-center gap-2 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-colors font-medium"
-          >
-            <Save className="w-4 h-4" />
-            Save Settings
-          </button>
+        <div className="p-4 border-t border-white/10 flex flex-col gap-4">
+          {showClearConfirm ? (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-xl p-4 flex flex-col gap-3">
+              <p className="text-sm text-red-400">Are you sure you want to clear ALL app data? This will delete all your scenarios, characters, and settings. This cannot be undone.</p>
+              <div className="flex justify-end gap-2">
+                <button 
+                  onClick={() => setShowClearConfirm(false)}
+                  className="px-4 py-2 text-zinc-400 hover:text-white transition-colors text-sm"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={handleClearData}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors text-sm font-medium"
+                >
+                  Confirm Delete
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="flex justify-between items-center">
+              <button 
+                onClick={() => setShowClearConfirm(true)}
+                className="flex items-center gap-2 px-4 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-xl transition-colors text-sm font-medium"
+              >
+                <Trash2 className="w-4 h-4" />
+                Clear Data
+              </button>
+              <button 
+                onClick={handleSave}
+                className="flex items-center gap-2 px-6 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-colors font-medium"
+              >
+                <Save className="w-4 h-4" />
+                Save Settings
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

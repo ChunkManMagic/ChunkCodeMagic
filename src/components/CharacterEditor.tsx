@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useToast } from '../hooks/useToast';
-import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech, refineProfile } from '../lib/gemini';
+import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech, refineProfile, applyGlobalEdit } from '../lib/gemini';
 import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { RefineButton } from './RefineButton';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
@@ -19,9 +19,28 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
   const [isRefiningAll, setIsRefiningAll] = useState(false);
+  const [globalEditPrompt, setGlobalEditPrompt] = useState("");
+  const [isGlobalEditing, setIsGlobalEditing] = useState(false);
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
   const { toastSuccess, toastError } = useToast();
+
+  const handleGlobalEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!globalEditPrompt.trim() || isGlobalEditing) return;
+    setIsGlobalEditing(true);
+    try {
+      const updatedProfile = await applyGlobalEdit(profile, globalEditPrompt);
+      setProfile(updatedProfile);
+      setGlobalEditPrompt("");
+      toastSuccess("Profile updated based on your request!");
+    } catch (err: any) {
+      console.error("Global edit error:", err);
+      toastError(`Edit failed: ${err.message || 'Unknown error'}`);
+    } finally {
+      setIsGlobalEditing(false);
+    }
+  };
 
   const handleOverallRefinement = async () => {
     if (isRefiningAll) return;
@@ -287,6 +306,31 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Left Column: Avatar & Visuals */}
         <div className="lg:col-span-4 space-y-8">
+          {/* Global Quick Edit */}
+          <div className="bg-zinc-900/50 border border-white/10 rounded-[2.5rem] p-6 backdrop-blur-sm shadow-2xl">
+            <h3 className="text-sm font-bold text-white mb-4 flex items-center gap-2">
+              <Wand2 className="w-4 h-4 text-emerald-400" />
+              Magic Edit
+            </h3>
+            <form onSubmit={handleGlobalEditSubmit} className="flex flex-col gap-3">
+              <textarea
+                value={globalEditPrompt}
+                onChange={(e) => setGlobalEditPrompt(e.target.value)}
+                placeholder="e.g. 'Make them a vampire', 'Change the setting to cyberpunk', 'Make them more aggressive'"
+                className="w-full bg-black/50 border border-white/10 rounded-2xl p-4 text-white text-sm focus:outline-none focus:border-emerald-500/50 transition-colors resize-none min-h-[100px]"
+                disabled={isGlobalEditing}
+              />
+              <button
+                type="submit"
+                disabled={!globalEditPrompt.trim() || isGlobalEditing}
+                className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-colors flex items-center justify-center gap-2"
+              >
+                {isGlobalEditing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                Apply Changes
+              </button>
+            </form>
+          </div>
+
           <div className="relative group aspect-square rounded-[2.5rem] overflow-hidden border border-white/10 bg-zinc-900 shadow-2xl">
             {avatar ? (
               <img src={avatar} alt="Avatar" className="w-full h-full object-cover" referrerPolicy="no-referrer" />

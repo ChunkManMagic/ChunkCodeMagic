@@ -75,6 +75,10 @@ export function useVoice(voiceName: string, voiceSettings: VoiceSettings | undef
         base64Audio = await generateSpeech(text, activeVoiceName, activeVoiceSettings, storyTone);
         if (base64Audio) {
           audioCache.current.set(cacheKey, base64Audio);
+          if (audioCache.current.size > 50) {
+            const firstKey = audioCache.current.keys().next().value;
+            if (firstKey) audioCache.current.delete(firstKey);
+          }
         }
       }
 

@@ -14,14 +14,7 @@ import { CodexSidebar } from './chat/CodexSidebar';
 import { useConversation } from '@elevenlabs/react';
 import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
-import { getSettings } from '../lib/types';
-
-export interface Message {
-  id: string;
-  role: 'user' | 'model';
-  text: string;
-  isSummarized?: boolean;
-}
+import { getSettings, Message } from '../lib/types';
 
 const parseMessageContent = (text: string, role: string) => {
   if (role === 'model') {
@@ -337,6 +330,29 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   }, [isUpdatingAvatar, profile, onUpdateProfile, onUpdateAvatar, toastSuccess]);
 
+  const [showLeaveWarning, setShowLeaveWarning] = useState(false);
+
+  useEffect(() => {
+    const handleRequest = () => {
+      if (input.trim()) {
+        setShowLeaveWarning(true);
+      } else {
+        window.dispatchEvent(new CustomEvent('confirm-navigate-library'));
+      }
+    };
+    window.addEventListener('request-navigate-library', handleRequest);
+    return () => window.removeEventListener('request-navigate-library', handleRequest);
+  }, [input]);
+
+  const handleConfirmLeave = () => {
+    setShowLeaveWarning(false);
+    window.dispatchEvent(new CustomEvent('confirm-navigate-library'));
+  };
+
+  const handleCancelLeave = () => {
+    setShowLeaveWarning(false);
+  };
+
   useEffect(() => {
     const handleForceUpdate = () => {
       handleAutoUpdateAvatar(messages);
@@ -560,7 +576,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     const apiKey = settings.elevenLabsApiKey || process.env.VITE_ELEVENLABS_API_KEY;
 
     if (!agentId) {
-      alert("Please configure an ElevenLabs Agent ID in Settings to use Live Mode.");
+      toastError("Please configure an ElevenLabs Agent ID in Settings to use Live Mode.");
       return;
     }
 
@@ -575,7 +591,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setIsLiveMode(true);
     } catch (err) {
       console.error("Failed to start ElevenLabs session:", err);
-      alert("Failed to start voice session. Check your microphone permissions and API key.");
+      toastError("Failed to start voice session. Check your microphone permissions and API key.");
     }
   };
 
@@ -1389,6 +1405,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 </button>
               )}
               <div className="flex-1 flex flex-col gap-2 relative group">
+                {showLeaveWarning && (
+                  <div className="absolute -top-14 left-0 right-0 bg-red-500/10 border border-red-500/20 rounded-xl p-2 flex items-center justify-between z-10 backdrop-blur-md">
+                    <span className="text-xs text-red-400 font-medium px-2">You have an unsaved message. Leave anyway?</span>
+                    <div className="flex gap-2">
+                      <button onClick={handleCancelLeave} className="px-3 py-1 text-xs text-zinc-400 hover:text-white transition-colors">No</button>
+                      <button onClick={handleConfirmLeave} className="px-3 py-1 text-xs bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors">Yes</button>
+                    </div>
+                  </div>
+                )}
                 <div className="relative">
                   <textarea
                     value={input}

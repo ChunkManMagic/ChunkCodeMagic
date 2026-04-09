@@ -414,6 +414,9 @@ export default function App() {
     });
   };
 
+  const [branchData, setBranchData] = useState<{ messages: Message[], codex: CodexEntry[], summary: string, defaultName: string } | null>(null);
+  const [branchName, setBranchName] = useState("");
+
   const handleCharacterCreated = async (profile: CharacterProfile, avatarBase64: string) => {
     try {
       let newScenario: Scenario = {
@@ -437,6 +440,7 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEYS.DRAFT_IDEA);
       localStorage.removeItem(STORAGE_KEYS.DRAFT_STEP);
       localStorage.removeItem(STORAGE_KEYS.DRAFT_SETUP_TYPE);
+      localStorage.removeItem(STORAGE_KEYS.RESCUE_BACKUP);
       toastSuccess("Character created successfully!");
     } catch (e: any) {
       console.error("Failed to create character:", e);
@@ -525,31 +529,61 @@ export default function App() {
 
   const handleBranchScenario = async (slicedMessages: Message[], codexEntries: CodexEntry[], storySummary: string) => {
     if (!currentScenario) return;
+    setBranchData({
+      messages: slicedMessages,
+      codex: codexEntries,
+      summary: storySummary,
+      defaultName: `${currentScenario.profile.name} (Branch)`
+    });
+    setBranchName(`${currentScenario.profile.name} (Branch)`);
+  };
+
+  const confirmBranchScenario = async () => {
+    if (!currentScenario || !branchData) return;
     
     const newScenarioId = generateId();
-    const newScenario: Scenario = {
+    let newScenario: Scenario = {
       id: newScenarioId,
       profile: {
         ...currentScenario.profile,
-        name: `${currentScenario.profile.name} (Alternate Timeline)`
+        name: branchName.trim() || branchData.defaultName
       },
       avatarBase64: currentScenario.avatarBase64,
       lastUpdated: Date.now()
     };
 
+    if (user) {
+      newScenario = await saveScenario(newScenario);
+    }
+
     // Save the branched data to IndexedDB
-    await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), slicedMessages);
-    await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), codexEntries);
-    await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), storySummary);
+    await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), branchData.messages);
+    await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), branchData.codex);
+    await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), branchData.summary);
 
     setScenarios(prev => [...prev, newScenario]);
     setCurrentScenarioId(newScenarioId);
+    setBranchData(null);
     toastSuccess("Scenario branched into alternate timeline!");
   };
 
   const handleSettingsClose = () => {
     setShowSettings(false);
     setSettings(getSettings());
+  };
+
+  useEffect(() => {
+    const handleConfirm = () => setCurrentScenarioId(null);
+    window.addEventListener('confirm-navigate-library', handleConfirm);
+    return () => window.removeEventListener('confirm-navigate-library', handleConfirm);
+  }, []);
+
+  const handleLibraryClick = () => {
+    if (currentScenarioId) {
+      window.dispatchEvent(new CustomEvent('request-navigate-library'));
+    } else {
+      setCurrentScenarioId(null);
+    }
   };
 
   if (!isAuthReady) {
@@ -578,7 +612,7 @@ export default function App() {
         <div className="w-32">
           {currentScenarioId && (
             <button
-              onClick={() => setCurrentScenarioId(null)}
+              onClick={handleLibraryClick}
               className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 hover:text-white uppercase tracking-widest transition-all"
             >
               <Library className="w-4 h-4" />
@@ -665,7 +699,7 @@ export default function App() {
               onDuplicate={handleDuplicateScenario}
               onDelete={handleDeleteScenario} 
               onNew={handleCreateNew} 
-              hasDraft={true} // We show the button if there's any draft data
+              hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
               onRestoreDraft={() => setShowDraft(true)}
             />
           </ErrorBoundary>
@@ -710,6 +744,36 @@ export default function App() {
           </div>
         ) : null}
       </main>
+
+      {branchData && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-white/10 rounded-2xl p-6 max-w-md w-full shadow-2xl">
+            <h3 className="text-xl font-bold text-white mb-4">Name this alternate timeline:</h3>
+            <input
+              type="text"
+              value={branchName}
+              onChange={(e) => setBranchName(e.target.value)}
+              className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-emerald-500 mb-6"
+              placeholder={branchData.defaultName}
+              autoFocus
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setBranchData(null)}
+                className="px-4 py-2 text-zinc-400 hover:text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmBranchScenario}
+                className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-colors"
+              >
+                Branch Timeline
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       
       <footer className="mt-8 text-center relative z-10 flex flex-col items-center gap-4">
         <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10">

@@ -6,7 +6,8 @@ import {
   setDoc, 
   deleteDoc, 
   query, 
-  getDocFromServer
+  getDocFromServer,
+  getDocs
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth } from '../firebase';
@@ -86,8 +87,14 @@ export function useFirestoreSync() {
     if (!user) return;
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId));
-      // Subcollections are not automatically deleted in Firestore client SDK, 
-      // but for this app, we'll just leave them or handle them if needed.
+      
+      for (const name of ['messages', 'codex', 'inventory']) {
+        const snap = await getDocs(collection(db, 'users', user.uid, 'scenarios', scenarioId, name));
+        for (const d of snap.docs) {
+          await deleteDoc(d.ref);
+        }
+      }
+      await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'summary', 'current')).catch(() => {});
     } catch (error) {
       console.error("Firestore Error (Delete Scenario):", error);
       throw error;

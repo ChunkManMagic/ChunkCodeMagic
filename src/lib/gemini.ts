@@ -256,10 +256,12 @@ function parseJsonWithRecovery(responseText: string): any {
 }
 
 function convertHistoryToOpenRouter(history: any[]) {
-  return history.map(m => ({
-    role: m.role === 'model' ? 'assistant' : 'user',
-    content: m.parts[0].text
-  }));
+  return history
+    .filter(m => m.parts && m.parts[0] && m.parts[0].text && m.parts[0].text.trim())
+    .map(m => ({
+      role: m.role === 'model' ? 'assistant' : 'user',
+      content: m.parts[0].text
+    }));
 }
 
 async function callOpenRouter(history: any[], systemInstruction: string, userInput: string, settings: any): Promise<string> {
@@ -354,12 +356,18 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
 }
 
 export async function generateAdditionalCharacter(idea: string, mode: AppMode | string): Promise<{ name: string; description: string; personality: string; appearance: string }> {
-  const ai = getGenAI();
-  
+  const settings = getSettings();
   const contents = `Generate a detailed NPC or additional character based on this idea: "${idea}" for a ${mode} setting.`;
 
+  if (settings.activeTextProvider === 'OpenRouter') {
+    const systemPrompt = "You are a character creation assistant. Return ONLY a valid JSON object with no markdown, no backticks, no explanation, containing: name, description, personality, appearance.";
+    const responseText = await callOpenRouter([], systemPrompt, contents, settings);
+    return parseJsonWithRecovery(responseText);
+  }
+
+  const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: getSettings().activeModel,
+    model: settings.activeModel,
     contents,
     config: {
       responseMimeType: "application/json",
@@ -384,7 +392,7 @@ export async function generateAdditionalCharacter(idea: string, mode: AppMode | 
 
 export async function generateCharacterProfile(idea: string, mode: AppMode): Promise<CharacterProfile> {
   console.log("generateCharacterProfile: Calling Gemini API...");
-  const ai = getGenAI();
+  const settings = getSettings();
   
   const modeGuidance = mode === AppMode.GAME
     ? `This is a GAME (tabletop RPG) mode. The "character" being created IS the Dungeon Master persona — not a player character. Populate gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, and currentCampaignArc with rich, specific values. The DM's "personality" is their DMing style. The "backstory" is the campaign's origin. The "appearance" is how the DM presents the game world aesthetically.`
@@ -398,74 +406,88 @@ ${modeGuidance}
 
 Also generate a detailed player character profile that would be a compelling fit for this story/session.`;
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: getSettings().activeModel,
-    contents,
-    config: {
-      maxOutputTokens: 8192,
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          name: { type: Type.STRING },
-          personality: { type: Type.STRING },
-          backstory: { type: Type.STRING },
-          appearance: { type: Type.STRING },
-          clothing: { type: Type.STRING },
-          accessories: { type: Type.STRING },
-          hairStyle: { type: Type.STRING },
-          hairColor: { type: Type.STRING },
-          eyeColor: { type: Type.STRING },
-          storyTone: { type: Type.STRING },
-          relationship: { type: Type.STRING },
-          characterFlaws: { type: Type.STRING },
-          secretMotive: { type: Type.STRING },
-          speechPattern: { type: Type.STRING },
-          likesAndDislikes: { type: Type.STRING },
-          coreBeliefs: { type: Type.STRING },
-          quirks: { type: Type.STRING },
-          worldAtmosphere: { type: Type.STRING },
-          keyLocations: { type: Type.STRING },
-          scenarioStakes: { type: Type.STRING },
-          scenarioConflict: { type: Type.STRING },
-          timePeriod: { type: Type.STRING },
-          factions: { type: Type.STRING },
-          magicOrTechnologyLevel: { type: Type.STRING },
-          incitingIncident: { type: Type.STRING },
-          gameSystem: { type: Type.STRING },
-          questObjective: { type: Type.STRING },
-          dungeonMasterStyle: { type: Type.STRING },
-          rulesComplexity: { type: Type.STRING },
-          difficultyLevel: { type: Type.STRING },
-          partyComposition: { type: Type.STRING },
-          startingEquipment: { type: Type.STRING },
-          currentCampaignArc: { type: Type.STRING },
-          currentMood: { type: Type.STRING },
-          playerProfile: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              description: { type: Type.STRING },
-              personality: { type: Type.STRING },
-              backstory: { type: Type.STRING },
-              appearance: { type: Type.STRING },
-              clothing: { type: Type.STRING },
-              accessories: { type: Type.STRING },
-              hairStyle: { type: Type.STRING },
-              hairColor: { type: Type.STRING },
-              eyeColor: { type: Type.STRING },
-            },
-            required: ["name", "description"]
-          }
-        },
-        required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
-      }
-    }
-  }));
+  let responseText = "{}";
 
-  console.log("generateCharacterProfile: API call successful.");
-  const responseText = response.text || "{}";
+  if (settings.activeTextProvider === 'OpenRouter') {
+    const systemPrompt = "You are a character creation assistant for an interactive fiction app. Return ONLY a valid JSON object with no markdown, no backticks, no explanation. Include all of these fields: name, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor, storyTone, relationship, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, incitingIncident, gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, currentCampaignArc, currentMood, and a playerProfile object with name and description.";
+    responseText = await callOpenRouter([], systemPrompt, contents, settings);
+  } else {
+    const ai = getGenAI();
+    const response = await withRetry(() => ai.models.generateContent({
+      model: settings.activeModel,
+      contents,
+      config: {
+        maxOutputTokens: 8192,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            name: { type: Type.STRING },
+            personality: { type: Type.STRING },
+            backstory: { type: Type.STRING },
+            appearance: { type: Type.STRING },
+            clothing: { type: Type.STRING },
+            accessories: { type: Type.STRING },
+            hairStyle: { type: Type.STRING },
+            hairColor: { type: Type.STRING },
+            eyeColor: { type: Type.STRING },
+            storyTone: { type: Type.STRING },
+            relationship: { type: Type.STRING },
+            characterFlaws: { type: Type.STRING },
+            secretMotive: { type: Type.STRING },
+            speechPattern: { type: Type.STRING },
+            likesAndDislikes: { type: Type.STRING },
+            coreBeliefs: { type: Type.STRING },
+            quirks: { type: Type.STRING },
+            worldAtmosphere: { type: Type.STRING },
+            keyLocations: { type: Type.STRING },
+            scenarioStakes: { type: Type.STRING },
+            scenarioConflict: { type: Type.STRING },
+            timePeriod: { type: Type.STRING },
+            factions: { type: Type.STRING },
+            magicOrTechnologyLevel: { type: Type.STRING },
+            incitingIncident: { type: Type.STRING },
+            gameSystem: { type: Type.STRING },
+            questObjective: { type: Type.STRING },
+            dungeonMasterStyle: { type: Type.STRING },
+            rulesComplexity: { type: Type.STRING },
+            difficultyLevel: { type: Type.STRING },
+            partyComposition: { type: Type.STRING },
+            startingEquipment: { type: Type.STRING },
+            currentCampaignArc: { type: Type.STRING },
+            currentMood: { type: Type.STRING },
+            playerProfile: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                description: { type: Type.STRING },
+                personality: { type: Type.STRING },
+                backstory: { type: Type.STRING },
+                appearance: { type: Type.STRING },
+                clothing: { type: Type.STRING },
+                accessories: { type: Type.STRING },
+                hairStyle: { type: Type.STRING },
+                hairColor: { type: Type.STRING },
+                eyeColor: { type: Type.STRING },
+              },
+              required: ["name", "description"]
+            }
+          },
+          required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
+        }
+      }
+    }));
+    console.log("generateCharacterProfile: API call successful.");
+    responseText = response.text || "{}";
+  }
+
   const data = parseJsonWithRecovery(responseText);
+  
+  const defaultTraits = mode === AppMode.GAME 
+    ? { strictness: 50, generosity: 50, lethality: 50 }
+    : mode === AppMode.SCENARIO
+    ? { danger: 50, mystery: 50, supernatural: 50 }
+    : { friendliness: 50, assertiveness: 50, empathy: 50 };
   
   return {
     mode,
@@ -480,7 +502,7 @@ Also generate a detailed player character profile that would be a compelling fit
     eyeColor: data.eyeColor || "",
     voiceName: "Kore",
     voiceSettings: { pitch: "Normal", speed: "Normal", accent: "None" },
-    traits: { friendliness: 50, assertiveness: 50, empathy: 50 },
+    traits: defaultTraits,
     storyTone: data.storyTone || "Dramatic",
     relationship: data.relationship || "Strangers",
     playerProfile: data.playerProfile || { name: "The Protagonist", description: "A mysterious traveler." },
@@ -865,6 +887,100 @@ Return the complete, updated profile as a JSON object with the exact same struct
   } catch (e) {
     console.error("refineProfile: JSON Parse Error", e);
     return profile;
+  }
+}
+
+export async function applyGlobalEdit(profile: CharacterProfile, prompt: string): Promise<CharacterProfile> {
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: getSettings().activeModel,
+    contents: `You are an expert creative writer and game designer. The user wants to modify the following ${profile.mode} profile based on a specific request.
+
+User's Request: "${prompt}"
+
+Current Profile: ${JSON.stringify(profile)}
+
+Instructions:
+1. Analyze the user's request and determine which fields in the profile need to be updated to fulfill it.
+2. Modify those specific fields while keeping the rest of the profile intact and consistent.
+3. Ensure the changes fit naturally into the existing context.
+4. Return the complete, updated profile as a JSON object with the exact same structure.
+
+Return ONLY valid JSON.`,
+    config: {
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING },
+          personality: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          clothing: { type: Type.STRING },
+          accessories: { type: Type.STRING },
+          hairStyle: { type: Type.STRING },
+          hairColor: { type: Type.STRING },
+          eyeColor: { type: Type.STRING },
+          storyTone: { type: Type.STRING },
+          relationship: { type: Type.STRING },
+          characterFlaws: { type: Type.STRING },
+          secretMotive: { type: Type.STRING },
+          speechPattern: { type: Type.STRING },
+          likesAndDislikes: { type: Type.STRING },
+          coreBeliefs: { type: Type.STRING },
+          quirks: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocations: { type: Type.STRING },
+          scenarioStakes: { type: Type.STRING },
+          scenarioConflict: { type: Type.STRING },
+          timePeriod: { type: Type.STRING },
+          factions: { type: Type.STRING },
+          magicOrTechnologyLevel: { type: Type.STRING },
+          incitingIncident: { type: Type.STRING },
+          gameSystem: { type: Type.STRING },
+          questObjective: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplexity: { type: Type.STRING },
+          difficultyLevel: { type: Type.STRING },
+          partyComposition: { type: Type.STRING },
+          startingEquipment: { type: Type.STRING },
+          currentCampaignArc: { type: Type.STRING },
+          currentMood: { type: Type.STRING },
+          playerProfile: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              description: { type: Type.STRING },
+              personality: { type: Type.STRING },
+              backstory: { type: Type.STRING },
+              appearance: { type: Type.STRING },
+              clothing: { type: Type.STRING },
+              accessories: { type: Type.STRING },
+              hairStyle: { type: Type.STRING },
+              hairColor: { type: Type.STRING },
+              eyeColor: { type: Type.STRING },
+            },
+            required: ["name", "description"]
+          }
+        },
+        required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
+      }
+    }
+  }));
+
+  try {
+    const data = parseJsonWithRecovery(response.text || "{}");
+    return {
+      ...profile,
+      ...data,
+      traits: { ...profile.traits, ...(data.traits || {}) },
+      voiceSettings: { ...profile.voiceSettings, ...(data.voiceSettings || {}) },
+      playerProfile: { ...profile.playerProfile, ...(data.playerProfile || {}) }
+    };
+  } catch (e) {
+    console.error("applyGlobalEdit: JSON Parse Error", e);
+    throw new Error("Failed to apply edits.");
   }
 }
 
