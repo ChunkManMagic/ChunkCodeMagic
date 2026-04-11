@@ -201,6 +201,11 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const recognitionRef = useRef<any>(null);
   const handleSendTextRef = useRef<((overrideText?: string) => Promise<void>) | null>(null);
+  const isLiveModeRef = useRef(isLiveMode);
+
+  useEffect(() => {
+    isLiveModeRef.current = isLiveMode;
+  }, [isLiveMode]);
 
   useEffect(() => {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
@@ -230,17 +235,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
       recognitionRef.current.onend = () => {
         // Auto-restart if still in live mode
-        // We use a functional state update to check the latest value of isLiveMode
-        setIsLiveMode(currentLiveMode => {
-          if (currentLiveMode) {
-            try {
-              recognitionRef.current?.start();
-            } catch (e) {
-              // Ignore if already started
-            }
+        if (isLiveModeRef.current) {
+          try {
+            recognitionRef.current?.start();
+          } catch (e) {
+            // Ignore if already started
           }
-          return currentLiveMode;
-        });
+        }
       };
     }
     
@@ -249,7 +250,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         recognitionRef.current.stop();
       }
     };
-  }, []); // Empty dependency array so it only runs once
+  }, [toastError]); // Include toastError in dependencies
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -600,7 +601,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   useEffect(() => {
     handleSendTextRef.current = handleSendText;
-  }, [handleSendText]);
+  });
 
 
 

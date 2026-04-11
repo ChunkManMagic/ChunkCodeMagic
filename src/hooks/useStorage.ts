@@ -61,5 +61,5 @@ export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, max
     };
     
     cleanup();
-  }, [scenarios, maxAgeDays]);
+  }, [scenarios, isReady, maxAgeDays]);
 }
