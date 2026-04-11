@@ -152,11 +152,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   <label className="text-sm text-gray-300">OpenRouter Model</label>
                   <input 
                     type="text"
+                    list="or-models"
                     value={settings.openRouterModel || 'meta-llama/llama-3-8b-instruct:free'}
                     onChange={e => handleChange('openRouterModel', e.target.value)}
                     placeholder="e.g. meta-llama/llama-3-8b-instruct:free"
                     className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                   />
+                  <datalist id="or-models">
+                    <option value="meta-llama/llama-3-8b-instruct:free" />
+                    <option value="meta-llama/llama-3.1-70b-instruct" />
+                    <option value="mistralai/mistral-7b-instruct:free" />
+                    <option value="microsoft/phi-3-mini-128k-instruct:free" />
+                    <option value="google/gemma-2-9b-it:free" />
+                    <option value="anthropic/claude-3-haiku" />
+                    <option value="openai/gpt-4o-mini" />
+                    <option value="nousresearch/hermes-3-llama-3.1-405b" />
+                  </datalist>
                 </div>
               </>
             )}
@@ -170,53 +181,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               >
                 <option value="Cinematic">Cinematic (Gemini TTS)</option>
                 <option value="Fast Browser">Fast Browser (Web Speech API)</option>
-                <option value="ElevenLabs">ElevenLabs (High Quality)</option>
-                <option value="OpenAI">OpenAI (Studio Quality)</option>
               </select>
             </div>
 
-            {settings.voiceEngine === 'ElevenLabs' && (
-              <>
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-300">ElevenLabs Voice ID</label>
-                  <input 
-                    type="text" 
-                    value={settings.elevenLabsVoiceId || ''}
-                    onChange={e => handleChange('elevenLabsVoiceId', e.target.value)}
-                    placeholder="pNInz6obpg8nEByWQX7d"
-                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm text-gray-300">ElevenLabs Agent ID (for Conversational AI)</label>
-                  <input 
-                    type="text" 
-                    value={settings.elevenLabsAgentId || ''}
-                    onChange={e => handleChange('elevenLabsAgentId', e.target.value)}
-                    placeholder="Agent ID from ElevenLabs Dashboard"
-                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </>
-            )}
-
-            {settings.voiceEngine === 'OpenAI' && (
-              <div className="space-y-2">
-                <label className="text-sm text-gray-300">OpenAI Voice</label>
-                <select 
-                  value={settings.openAiVoiceId || 'alloy'}
-                  onChange={e => handleChange('openAiVoiceId', e.target.value)}
-                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-                >
-                  <option value="alloy">Alloy</option>
-                  <option value="echo">Echo</option>
-                  <option value="fable">Fable</option>
-                  <option value="onyx">Onyx</option>
-                  <option value="nova">Nova</option>
-                  <option value="shimmer">Shimmer</option>
-                </select>
-              </div>
-            )}
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-sm text-gray-300">Global Writing Style Instructions</label>

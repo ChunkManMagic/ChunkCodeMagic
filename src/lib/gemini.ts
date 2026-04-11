@@ -993,7 +993,7 @@ ${JSON.stringify(history)}
 Please provide an updated summary.`;
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    return callOpenRouter(history, "You are a helpful assistant that summarizes story history.", prompt, settings);
+    return callOpenRouter([], "You are a helpful assistant that summarizes story history. Return only the updated summary text, no preamble.", prompt, settings);
   }
 
   const ai = getGenAI();

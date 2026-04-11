@@ -1,7 +1,9 @@
+import { useState, useRef } from 'react';
 import { motion } from 'motion/react';
-import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy } from 'lucide-react';
+import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy, Search, Filter, Upload } from 'lucide-react';
 import { AppMode } from '../lib/gemini';
 import { Scenario } from '../lib/types';
+import { useToast } from '../hooks/useToast';
 
 interface ScenarioLibraryProps {
   scenarios: Scenario[];
@@ -12,24 +14,82 @@ interface ScenarioLibraryProps {
   onNew: () => void;
   hasDraft?: boolean;
   onRestoreDraft?: () => void;
+  onImport?: (scenarioData: any) => void;
 }
 
-export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDelete, onNew, hasDraft, onRestoreDraft }: ScenarioLibraryProps) {
+export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDelete, onNew, hasDraft, onRestoreDraft, onImport }: ScenarioLibraryProps) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterMode, setFilterMode] = useState<AppMode | 'ALL'>('ALL');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { toastError, toastSuccess } = useToast();
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        if (json && json.scenario && json.scenario.id) {
+          if (onImport) {
+            onImport(json);
+            toastSuccess("Scenario imported successfully!");
+          }
+        } else {
+          toastError("Invalid scenario file format.");
+        }
+      } catch (err) {
+        console.error("Import error:", err);
+        toastError("Failed to parse scenario file.");
+      }
+    };
+    reader.readAsText(file);
+    
+    // Reset input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const filteredScenarios = scenarios.filter(s => {
+    const matchesSearch = s.profile.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                          s.profile.storyTone.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesFilter = filterMode === 'ALL' || s.profile.mode === filterMode;
+    return matchesSearch && matchesFilter;
+  });
+
   return (
     <div className="w-full max-w-6xl mx-auto p-8">
-      <div className="flex justify-between items-center mb-12">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-6">
         <div>
           <h2 className="text-4xl font-bold text-white font-serif tracking-tight">Scenario Library</h2>
           <p className="text-zinc-500 mt-2">Manage your characters and ongoing narratives.</p>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
+          <input 
+            type="file" 
+            accept=".json" 
+            className="hidden" 
+            ref={fileInputRef}
+            onChange={handleFileChange}
+          />
+          {onImport && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              className="flex items-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-2xl font-bold transition-all"
+              title="Import Scenario"
+            >
+              <Upload className="w-5 h-5" />
+            </button>
+          )}
           {hasDraft && onRestoreDraft && (
             <button
               onClick={onRestoreDraft}
               className="flex items-center gap-2 px-6 py-3 bg-blue-600/20 hover:bg-blue-600 text-blue-400 hover:text-white rounded-2xl font-bold border border-blue-500/30 transition-all group"
             >
               <Sparkles className="w-5 h-5 group-hover:scale-125 transition-transform" />
-              Restore Unsaved Draft
+              Restore Draft
             </button>
           )}
           <button
@@ -37,28 +97,91 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
             className="flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold shadow-xl shadow-emerald-900/20 transition-all group"
           >
             <Plus className="w-5 h-5 group-hover:rotate-90 transition-transform" />
-            Forge New Narrative
+            Forge Narrative
           </button>
         </div>
       </div>
 
-      {scenarios.length === 0 ? (
+      {scenarios.length > 0 && (
+        <div className="flex flex-col sm:flex-row gap-4 mb-8 items-center justify-between bg-zinc-900/50 p-4 rounded-2xl border border-white/5">
+          <div className="relative w-full sm:w-96">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+            <input 
+              type="text"
+              placeholder="Search characters or tones..."
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full bg-black/50 border border-white/10 rounded-xl pl-10 pr-4 py-2 text-white focus:outline-none focus:border-emerald-500/50 transition-colors"
+            />
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-2 sm:pb-0 hide-scrollbar">
+            <Filter className="w-4 h-4 text-zinc-500 mr-2 shrink-0" />
+            {(['ALL', AppMode.ROLEPLAY, AppMode.SCENARIO, AppMode.GAME] as const).map(mode => (
+              <button
+                key={mode}
+                onClick={() => setFilterMode(mode)}
+                className={`px-4 py-1.5 rounded-full text-xs font-bold whitespace-nowrap transition-all ${
+                  filterMode === mode 
+                    ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' 
+                    : 'bg-black/30 text-zinc-500 border border-white/5 hover:text-zinc-300'
+                }`}
+              >
+                {mode}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {filteredScenarios.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 glass-panel rounded-3xl border-dashed border-zinc-800">
           <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center mb-6">
             <User className="w-10 h-10 text-zinc-700" />
           </div>
-          <h3 className="text-xl font-bold text-zinc-400">No narratives found</h3>
-          <p className="text-zinc-600 mt-2 mb-8">Start by forging your first narrative.</p>
-          <button
-            onClick={onNew}
-            className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold transition-all"
-          >
-            Forge Narrative
-          </button>
+          <h3 className="text-xl font-bold text-zinc-400">
+            {scenarios.length === 0 ? "No narratives found" : "No matches found"}
+          </h3>
+          <p className="text-zinc-600 mt-2 mb-8">
+            {scenarios.length === 0 ? "Start by forging your first narrative." : "Try adjusting your search or filters."}
+          </p>
+          {scenarios.length === 0 && (
+            <button
+              onClick={onNew}
+              className="px-8 py-3 bg-zinc-800 hover:bg-zinc-700 text-white rounded-xl font-bold transition-all"
+            >
+              Forge Narrative
+            </button>
+          )}
+          
+          {scenarios.length === 0 && (
+            <div className="flex flex-col sm:flex-row gap-4 mt-8 w-full max-w-2xl px-4">
+              <div className="glass-panel rounded-2xl p-4 flex-1 border border-white/5 flex flex-col items-center text-center">
+                <div className="w-10 h-10 rounded-full bg-emerald-500/10 flex items-center justify-center mb-3">
+                  <Heart className="w-5 h-5 text-emerald-400" />
+                </div>
+                <span className="font-bold text-sm text-zinc-200 mb-1">Roleplay</span>
+                <span className="text-xs text-zinc-500">Deep one-on-one character interaction</span>
+              </div>
+              <div className="glass-panel rounded-2xl p-4 flex-1 border border-white/5 flex flex-col items-center text-center">
+                <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center mb-3">
+                  <Globe className="w-5 h-5 text-blue-400" />
+                </div>
+                <span className="font-bold text-sm text-zinc-200 mb-1">Scenario</span>
+                <span className="text-xs text-zinc-500">Branching narrative with a world narrator</span>
+              </div>
+              <div className="glass-panel rounded-2xl p-4 flex-1 border border-white/5 flex flex-col items-center text-center">
+                <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center mb-3">
+                  <Swords className="w-5 h-5 text-purple-400" />
+                </div>
+                <span className="font-bold text-sm text-zinc-200 mb-1">Game</span>
+                <span className="text-xs text-zinc-500">Full tabletop RPG with a Dungeon Master</span>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {scenarios.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0)).map((scenario) => (
+          {filteredScenarios.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0)).map((scenario) => (
             <motion.div
               key={scenario.id}
               initial={{ opacity: 0, y: 20 }}

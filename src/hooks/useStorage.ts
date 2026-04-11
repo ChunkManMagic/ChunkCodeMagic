@@ -32,8 +32,9 @@ export function useStorage() {
   return { loadData, saveData, deleteData };
 }
 
-export function useStaleDataCleanup(scenarios: Scenario[], maxAgeDays = 90) {
+export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, maxAgeDays = 90) {
   useEffect(() => {
+    if (!isReady) return;
     const cleanup = async () => {
       try {
         const allKeys = await keys();

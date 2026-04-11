@@ -131,11 +131,7 @@ export interface AppSettings {
   activeModel: string;
   openRouterApiKey?: string;
   openRouterModel?: string;
-  voiceEngine: 'Cinematic' | 'Fast Browser' | 'ElevenLabs' | 'OpenAI';
-  elevenLabsVoiceId?: string;
-  elevenLabsAgentId?: string;
-  elevenLabsApiKey?: string;
-  openAiVoiceId?: string;
+  voiceEngine: 'Cinematic' | 'Fast Browser';
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;

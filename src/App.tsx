@@ -139,7 +139,7 @@ export default function App() {
     targetId: string | null;
   }>({ isOpen: false, title: '', message: '', type: null, targetId: null });
   
-  useStaleDataCleanup(scenarios);
+  useStaleDataCleanup(scenarios, isScenariosLoaded);
   
   // Sync scenarios from Firestore when user is logged in
   useEffect(() => {
@@ -412,6 +412,40 @@ export default function App() {
       type: 'delete',
       targetId: id,
     });
+  };
+
+  const handleImportScenario = async (importedData: any) => {
+    try {
+      const newScenarioId = generateId();
+      const newScenario: Scenario = {
+        ...importedData.scenario,
+        id: newScenarioId,
+        lastUpdated: Date.now()
+      };
+
+      if (user) {
+        await saveScenario(newScenario);
+      }
+      
+      if (importedData.messages) {
+        await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), importedData.messages);
+      }
+      if (importedData.codex) {
+        await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), importedData.codex);
+      }
+      if (importedData.inventory) {
+        await set(STORAGE_KEYS.SCENARIO_INVENTORY(newScenarioId), importedData.inventory);
+      }
+      if (importedData.summary) {
+        await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), importedData.summary);
+      }
+
+      setScenarios(prev => [...prev, newScenario]);
+      // toastSuccess is handled in ScenarioLibrary, but we could do it here too
+    } catch (err) {
+      console.error("Import error:", err);
+      toastError("Failed to import scenario data.");
+    }
   };
 
   const [branchData, setBranchData] = useState<{ messages: Message[], codex: CodexEntry[], summary: string, defaultName: string } | null>(null);
@@ -701,6 +735,7 @@ export default function App() {
               onNew={handleCreateNew} 
               hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
               onRestoreDraft={() => setShowDraft(true)}
+              onImport={handleImportScenario}
             />
           </ErrorBoundary>
         ) : (isCreating || showDraft) && !currentScenarioId ? (

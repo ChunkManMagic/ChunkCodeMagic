@@ -71,38 +71,40 @@ export function useVoice(voiceName: string, voiceSettings: VoiceSettings | undef
       const cacheKey = `${text.trim()}_${activeVoiceName}_${activeVoiceSettings?.pitch}_${activeVoiceSettings?.speed}`;
       let base64Audio = audioCache.current.get(cacheKey);
       
-      if (!base64Audio) {
-        base64Audio = await generateSpeech(text, activeVoiceName, activeVoiceSettings, storyTone);
-        if (base64Audio) {
-          audioCache.current.set(cacheKey, base64Audio);
-          if (audioCache.current.size > 50) {
-            const firstKey = audioCache.current.keys().next().value;
-            if (firstKey) audioCache.current.delete(firstKey);
+      if (settings.voiceEngine === 'Cinematic') {
+        if (!base64Audio) {
+          base64Audio = await generateSpeech(text, activeVoiceName, activeVoiceSettings, storyTone);
+          if (base64Audio) {
+            audioCache.current.set(cacheKey, base64Audio);
+            if (audioCache.current.size > 50) {
+              const firstKey = audioCache.current.keys().next().value;
+              if (firstKey) audioCache.current.delete(firstKey);
+            }
           }
         }
-      }
 
-      if (base64Audio) {
-        const ctx = initAudioContext();
-        const binaryString = window.atob(base64Audio);
-        const len = binaryString.length;
-        const bytes = new Uint8Array(len);
-        for (let i = 0; i < len; i++) {
-          bytes[i] = binaryString.charCodeAt(i);
-        }
-        
-        // Decode 16-bit PCM
-        const int16Array = new Int16Array(bytes.buffer);
-        const audioBuffer = ctx.createBuffer(1, int16Array.length, 24000);
-        const channelData = audioBuffer.getChannelData(0);
-        for (let i = 0; i < int16Array.length; i++) {
-          channelData[i] = int16Array[i] / 32768.0;
-        }
+        if (base64Audio) {
+          const ctx = initAudioContext();
+          const binaryString = window.atob(base64Audio);
+          const len = binaryString.length;
+          const bytes = new Uint8Array(len);
+          for (let i = 0; i < len; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+          }
+          
+          // Decode 16-bit PCM
+          const int16Array = new Int16Array(bytes.buffer);
+          const audioBuffer = ctx.createBuffer(1, int16Array.length, 24000);
+          const channelData = audioBuffer.getChannelData(0);
+          for (let i = 0; i < int16Array.length; i++) {
+            channelData[i] = int16Array[i] / 32768.0;
+          }
 
-        audioQueue.current.push(audioBuffer);
-        
-        if (!isPlaying && !isManualPause) {
-          playNextInQueue();
+          audioQueue.current.push(audioBuffer);
+          
+          if (!isPlaying && !isManualPause) {
+            playNextInQueue();
+          }
         }
       }
     } catch (error: any) {
@@ -110,6 +112,11 @@ export function useVoice(voiceName: string, voiceSettings: VoiceSettings | undef
       const errorMessage = error?.message || String(error);
       if (errorMessage.toLowerCase().includes('quota') || errorMessage.toLowerCase().includes('limit') || errorMessage.includes('429')) {
         toastError("Voice Quota Reached", "The AI voice limit has been reached. Try again in a few minutes or switch to 'Fast Browser' in Settings.");
+        speechQueue.current = [];
+        audioQueue.current = [];
+        setIsPlaying(false);
+      } else if (errorMessage === "Failed to fetch") {
+        toastError("Network Error", "Failed to connect to the voice server. Please check your internet connection or API keys.");
         speechQueue.current = [];
         audioQueue.current = [];
         setIsPlaying(false);

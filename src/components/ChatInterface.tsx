@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package, User } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package, User, Cloud, Download } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useVoice } from '../hooks/useVoice';
 import { useCodex } from '../hooks/useCodex';
@@ -11,10 +11,9 @@ import { useChatState } from '../hooks/useChatState';
 import { useProfileUpdate } from '../hooks/useProfileUpdate';
 import { InventorySidebar } from './chat/InventorySidebar';
 import { CodexSidebar } from './chat/CodexSidebar';
-import { useConversation } from '@elevenlabs/react';
-import { CharacterProfile, refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, CodexEntry, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
+import { refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
-import { getSettings, Message } from '../lib/types';
+import { getSettings, Message, CharacterProfile, CodexEntry } from '../lib/types';
 
 const parseMessageContent = (text: string, role: string) => {
   if (role === 'model') {
@@ -69,7 +68,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     );
   }
 
-  const { messages, setMessages, addMessage, updateMessage, updateMessages, rewindToMessage, resetMessages, storySummary, updateSummary, isLoaded } = useChatState(scenarioId);
+  const { messages, setMessages, addMessage, updateMessage, updateMessages, rewindToMessage, resetMessages, storySummary, updateSummary, isLoaded, isSaving } = useChatState(scenarioId);
   const [showCodex, setShowCodex] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
@@ -168,39 +167,89 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [refineGuidance, setRefineGuidance] = useState('');
   const [showModeDetails, setShowModeDetails] = useState(false);
 
-  // ElevenLabs Conversational AI
-  const conversation = useConversation({
-    onConnect: () => {
-      setIsMicActive(true);
-      setIsLiveMode(true);
-    },
-    onDisconnect: () => {
-      setIsMicActive(false);
-      setIsLiveMode(false);
-    },
-    onMessage: async (message: any) => {
-      if (message.source === 'user' && message.isFinal) {
-        const userMsg: Message = {
-          id: generateId(),
-          role: 'user',
-          text: message.message,
-        };
-        await addMessage(userMsg);
-      } else if (message.source === 'ai') {
-        const aiMsg: Message = {
-          id: generateId(),
-          role: 'model',
-          text: message.message,
-        };
-        await addMessage(aiMsg);
+  const estimateTokens = () => {
+    const profileText = `${profile.name} ${profile.personality} ${profile.backstory} ${profile.appearance} ${profile.worldAtmosphere || ''} ${profile.keyLocations || ''} ${profile.incitingIncident || ''} ${profile.relationship} ${profile.storyTone}`;
+    const textToCount = profileText + ' ' + messages.map(m => m.text).join(' ');
+    const wordCount = textToCount.trim().split(/\s+/).length;
+    return Math.ceil(wordCount * 1.3);
+  };
+
+  const handleExportScenario = () => {
+    const exportData = {
+      scenario: {
+        id: scenarioId,
+        profile,
+        avatarBase64,
+        lastUpdated: Date.now()
+      },
+      messages,
+      codex: codexEntries,
+      inventory,
+      summary: storySummary
+    };
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${profile.name.replace(/\s+/g, '_')}_scenario.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    toastSuccess("Scenario exported successfully");
+  };
+
+  const recognitionRef = useRef<any>(null);
+  const handleSendTextRef = useRef<((overrideText?: string) => Promise<void>) | null>(null);
+
+  useEffect(() => {
+    if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      recognitionRef.current = new SpeechRecognition();
+      recognitionRef.current.continuous = true;
+      recognitionRef.current.interimResults = false;
+      
+      recognitionRef.current.onresult = (event: any) => {
+        const transcript = event.results[event.results.length - 1][0].transcript;
+        if (transcript.trim()) {
+          // Send the transcript as a message
+          if (handleSendTextRef.current) {
+            handleSendTextRef.current(transcript.trim());
+          }
+        }
+      };
+
+      recognitionRef.current.onerror = (event: any) => {
+        console.error('Speech recognition error', event.error);
+        if (event.error === 'not-allowed') {
+          setIsLiveMode(false);
+          setIsMicActive(false);
+          toastError("Microphone access denied.");
+        }
+      };
+
+      recognitionRef.current.onend = () => {
+        // Auto-restart if still in live mode
+        // We use a functional state update to check the latest value of isLiveMode
+        setIsLiveMode(currentLiveMode => {
+          if (currentLiveMode) {
+            try {
+              recognitionRef.current?.start();
+            } catch (e) {
+              // Ignore if already started
+            }
+          }
+          return currentLiveMode;
+        });
+      };
+    }
+    
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
       }
-    },
-    onError: (error: any) => {
-      console.error('ElevenLabs Error:', error);
-      setIsLiveMode(false);
-      setIsMicActive(false);
-    },
-  });
+    };
+  }, []); // Empty dependency array so it only runs once
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -451,7 +500,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       }
       
       const { mainText } = parseMessageContent(displayReply, 'model');
-      if (isAutoRead && mainText && !isLiveMode) {
+      if ((isAutoRead || isLiveMode) && mainText) {
         handleReadAloud(mainText);
       }
 
@@ -549,6 +598,10 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     await generateReply(messages, textToSend, userMsgId);
   };
 
+  useEffect(() => {
+    handleSendTextRef.current = handleSendText;
+  }, [handleSendText]);
+
 
 
   const handleGenerateOpening = async () => {
@@ -565,18 +618,17 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   };
 
   const toggleLiveMode = async () => {
-    if (isLiveMode || conversation.status === 'connected') {
-      await conversation.endSession();
+    if (isLiveMode) {
       setIsLiveMode(false);
+      setIsMicActive(false);
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
       return;
     }
 
-    const settings = getSettings();
-    const agentId = settings.elevenLabsAgentId || process.env.VITE_ELEVENLABS_AGENT_ID;
-    const apiKey = settings.elevenLabsApiKey || process.env.VITE_ELEVENLABS_API_KEY;
-
-    if (!agentId) {
-      toastError("Please configure an ElevenLabs Agent ID in Settings to use Live Mode.");
+    if (!recognitionRef.current) {
+      toastError("Speech recognition is not supported in this browser.");
       return;
     }
 
@@ -584,14 +636,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       // Request microphone permission explicitly if needed
       await navigator.mediaDevices.getUserMedia({ audio: true });
       
-      await (conversation as any).startSession({
-        agentId: agentId,
-        clientKey: apiKey,
-      });
+      recognitionRef.current.start();
       setIsLiveMode(true);
+      setIsMicActive(true);
+      toastSuccess("Live Mode activated. Speak to send messages.");
     } catch (err) {
-      console.error("Failed to start ElevenLabs session:", err);
-      toastError("Failed to start voice session. Check your microphone permissions and API key.");
+      console.error("Failed to start speech recognition:", err);
+      toastError("Failed to start voice session. Check your microphone permissions.");
     }
   };
 
@@ -691,6 +742,29 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           </div>
         </div>
         <div className="flex items-center gap-1 sm:gap-3">
+          <div className="hidden sm:flex items-center gap-3 mr-2">
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/30 border border-white/5" title="Estimated Context Tokens">
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Tokens</span>
+              <span className="text-xs font-mono text-zinc-300">{estimateTokens().toLocaleString()}</span>
+            </div>
+            <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/30 border border-white/5" title="Cloud Sync Status">
+              {isSaving ? (
+                <Cloud className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
+              ) : (
+                <Cloud className="w-3.5 h-3.5 text-emerald-400" />
+              )}
+              <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">
+                {isSaving ? 'Saving' : 'Saved'}
+              </span>
+            </div>
+          </div>
+          <button
+            onClick={handleExportScenario}
+            className="p-2 rounded-xl text-zinc-500 hover:text-emerald-400 hover:bg-white/5 transition-all hidden sm:block"
+            title="Export Scenario"
+          >
+            <Download className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
           <button
             onClick={() => setShowCodex(!showCodex)}
             className={`p-2 rounded-xl transition-all ${showCodex ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
@@ -832,11 +906,11 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           >
             {isLiveMode ? (
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${conversation.isSpeaking ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
-                <span className="text-emerald-400">AGENT CONNECTED</span>
+                <div className={`w-2 h-2 rounded-full ${isMicActive ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
+                <span className="text-emerald-400">LIVE MODE ACTIVE</span>
               </div>
             ) : (
-              <><Phone className="w-3 h-3 sm:w-4 sm:h-4" /> START CALL</>
+              <><Phone className="w-3 h-3 sm:w-4 sm:h-4" /> LIVE MODE</>
             )}
           </button>
         </div>
@@ -1028,6 +1102,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                         <button onClick={() => handleBranch(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-purple-400 transition-colors" title="Branch scenario from here"><GitBranch className="w-3.5 h-3.5" /></button>
                       </>
                     )}
+                    {msg.timestamp && <span className="text-[10px] text-zinc-600 font-mono px-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
                   </div>
                   <div className={`max-w-[85%] rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
                     {editingMessageId === msg.id ? (

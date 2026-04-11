@@ -8,6 +8,7 @@ export function useChatState(scenarioId: string) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [storySummary, setStorySummary] = useState<string>('');
   const [isLoaded, setIsLoaded] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const { user, isAuthReady, syncMessages, saveMessage, deleteMessage: cloudDeleteMessage, syncSummary, saveSummary } = useFirestoreSync();
 
   // Load initial data from local storage
@@ -140,7 +141,12 @@ export function useChatState(scenarioId: string) {
   const addMessage = async (message: Message) => {
     setMessages(prev => [...prev, message]);
     if (user) {
-      await saveMessage(scenarioId, message);
+      setIsSaving(true);
+      try {
+        await saveMessage(scenarioId, message);
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
@@ -148,7 +154,12 @@ export function useChatState(scenarioId: string) {
   const updateMessage = async (message: Message) => {
     setMessages(prev => prev.map(m => m.id === message.id ? message : m));
     if (user) {
-      await saveMessage(scenarioId, message);
+      setIsSaving(true);
+      try {
+        await saveMessage(scenarioId, message);
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
@@ -159,8 +170,13 @@ export function useChatState(scenarioId: string) {
       return updated || m;
     }));
     if (user) {
-      for (const msg of updatedMessages) {
-        await saveMessage(scenarioId, msg);
+      setIsSaving(true);
+      try {
+        for (const msg of updatedMessages) {
+          await saveMessage(scenarioId, msg);
+        }
+      } finally {
+        setIsSaving(false);
       }
     }
   };
@@ -169,7 +185,12 @@ export function useChatState(scenarioId: string) {
   const deleteMessage = async (messageId: string) => {
     setMessages(prev => prev.filter(m => m.id !== messageId));
     if (user) {
-      await cloudDeleteMessage(scenarioId, messageId);
+      setIsSaving(true);
+      try {
+        await cloudDeleteMessage(scenarioId, messageId);
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
@@ -184,8 +205,13 @@ export function useChatState(scenarioId: string) {
     setMessages(newMessages);
     
     if (user) {
-      for (const msg of messagesToDelete) {
-        await cloudDeleteMessage(scenarioId, msg.id);
+      setIsSaving(true);
+      try {
+        for (const msg of messagesToDelete) {
+          await cloudDeleteMessage(scenarioId, msg.id);
+        }
+      } finally {
+        setIsSaving(false);
       }
     }
   };
@@ -195,8 +221,13 @@ export function useChatState(scenarioId: string) {
     const messagesToDelete = [...messages];
     setMessages([]);
     if (user) {
-      for (const msg of messagesToDelete) {
-        await cloudDeleteMessage(scenarioId, msg.id);
+      setIsSaving(true);
+      try {
+        for (const msg of messagesToDelete) {
+          await cloudDeleteMessage(scenarioId, msg.id);
+        }
+      } finally {
+        setIsSaving(false);
       }
     }
   };
@@ -205,7 +236,12 @@ export function useChatState(scenarioId: string) {
   const updateSummary = async (text: string) => {
     setStorySummary(text);
     if (user) {
-      await saveSummary(scenarioId, text);
+      setIsSaving(true);
+      try {
+        await saveSummary(scenarioId, text);
+      } finally {
+        setIsSaving(false);
+      }
     }
   };
 
@@ -221,6 +257,7 @@ export function useChatState(scenarioId: string) {
     storySummary,
     setStorySummary,
     updateSummary,
-    isLoaded
+    isLoaded,
+    isSaving
   };
 }

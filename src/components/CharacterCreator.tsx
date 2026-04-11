@@ -278,9 +278,9 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
         const validTypes = ['quick', 'detailed'];
         if (data.setupType && validTypes.includes(data.setupType)) setSetupType(data.setupType);
         if (data.detailedProfile) setDetailedProfile(data.detailedProfile);
-        alert("Rescue successful! Your last known progress has been restored.");
+        toastSuccess("Rescue successful! Your progress has been restored.");
       } else {
-        alert("No rescue backup found.");
+        toastError("No rescue backup found.");
       }
     } catch (e) {
       console.error("Rescue failed", e);
