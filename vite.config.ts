@@ -8,8 +8,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port: 3000,
-  },
-  define: {
-    'process.env.GEMINI_API_KEY': JSON.stringify(process.env.GEMINI_API_KEY || '')
   }
+  // NOTE: Removed define config with GEMINI_API_KEY for security
+  // API keys should be handled via backend proxy, not exposed in client bundle
 })
