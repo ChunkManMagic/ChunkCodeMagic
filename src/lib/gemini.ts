@@ -355,6 +355,18 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
   }
 }
 
+export async function fetchOpenRouterModels(): Promise<any[]> {
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/models");
+    if (!response.ok) throw new Error("Failed to fetch OpenRouter models");
+    const data = await response.json();
+    return data.data || [];
+  } catch (error) {
+    console.error("Error fetching OpenRouter models:", error);
+    return [];
+  }
+}
+
 export async function generateAdditionalCharacter(idea: string, mode: AppMode | string): Promise<{ name: string; description: string; personality: string; appearance: string }> {
   const settings = getSettings();
   const contents = `Generate a detailed NPC or additional character based on this idea: "${idea}" for a ${mode} setting.`;

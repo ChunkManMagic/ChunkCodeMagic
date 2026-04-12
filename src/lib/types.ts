@@ -126,11 +126,23 @@ export interface CodexEntry {
   imageUrl?: string;
 }
 
+export interface OpenRouterModel {
+  id: string;
+  name: string;
+  description?: string;
+  pricing?: {
+    prompt: string;
+    completion: string;
+  };
+  context_length?: number;
+}
+
 export interface AppSettings {
   activeTextProvider: 'Google' | 'OpenRouter';
   activeModel: string;
   openRouterApiKey?: string;
   openRouterModel?: string;
+  openRouterModels?: OpenRouterModel[];
   voiceEngine: 'Cinematic' | 'Fast Browser';
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;

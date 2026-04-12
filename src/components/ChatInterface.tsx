@@ -200,12 +200,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   };
 
   const recognitionRef = useRef<any>(null);
-  const handleSendTextRef = useRef<((overrideText?: string) => Promise<void>) | null>(null);
-  const isLiveModeRef = useRef(isLiveMode);
 
-  useEffect(() => {
-    isLiveModeRef.current = isLiveMode;
-  }, [isLiveMode]);
+  const handleSendTextRef = useRef<((overrideText?: string) => Promise<void>) | null>(null);
 
   useEffect(() => {
     if ('SpeechRecognition' in window || 'webkitSpeechRecognition' in window) {
@@ -235,7 +231,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
       recognitionRef.current.onend = () => {
         // Auto-restart if still in live mode
-        if (isLiveModeRef.current) {
+        if (isLiveMode) {
           try {
             recognitionRef.current?.start();
           } catch (e) {
@@ -244,13 +240,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         }
       };
     }
-    
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    };
-  }, [toastError]); // Include toastError in dependencies
+  }, [isLiveMode]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -501,7 +491,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       }
       
       const { mainText } = parseMessageContent(displayReply, 'model');
-      if ((isAutoRead || isLiveMode) && mainText) {
+      if (isAutoRead && mainText && !isLiveMode) {
         handleReadAloud(mainText);
       }
 
@@ -601,7 +591,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   useEffect(() => {
     handleSendTextRef.current = handleSendText;
-  });
+  }, [handleSendText]);
 
 
 

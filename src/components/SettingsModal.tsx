@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
 import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2, RefreshCw } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
-import { AppSettings, getSettings, defaultSettings, saveSettings } from '../lib/types';
+import { AppSettings, getSettings, defaultSettings, saveSettings, OpenRouterModel } from '../lib/types';
 import { db } from '../firebase';
-import { refineText } from '../lib/gemini';
+import { refineText, fetchOpenRouterModels } from '../lib/gemini';
 import { RefineButton } from './RefineButton';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { clear } from 'idb-keyval';
@@ -21,6 +21,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRefining, setIsRefining] = useState(false);
+  const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [showOnlyFree, setShowOnlyFree] = useState(true);
+  const [modelSearch, setModelSearch] = useState('');
   const { toastSuccess, toastError } = useToast();
 
   useEffect(() => {
@@ -71,6 +74,24 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
       toastError("Failed to refine instructions");
     } finally {
       setIsRefining(false);
+    }
+  };
+
+  const handleRefreshModels = async () => {
+    setIsFetchingModels(true);
+    try {
+      const models = await fetchOpenRouterModels();
+      if (models && models.length > 0) {
+        handleChange('openRouterModels', models);
+        toastSuccess(`Fetched ${models.length} models from OpenRouter`);
+      } else {
+        toastError("No models returned from OpenRouter");
+      }
+    } catch (err) {
+      console.error("Failed to fetch models:", err);
+      toastError("Failed to fetch OpenRouter models");
+    } finally {
+      setIsFetchingModels(false);
     }
   };
 
@@ -149,25 +170,98 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </div>
                 <div className="space-y-2">
-                  <label className="text-sm text-gray-300">OpenRouter Model</label>
-                  <input 
-                    type="text"
-                    list="or-models"
-                    value={settings.openRouterModel || 'meta-llama/llama-3-8b-instruct:free'}
-                    onChange={e => handleChange('openRouterModel', e.target.value)}
-                    placeholder="e.g. meta-llama/llama-3-8b-instruct:free"
-                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
-                  />
-                  <datalist id="or-models">
-                    <option value="meta-llama/llama-3-8b-instruct:free" />
-                    <option value="meta-llama/llama-3.1-70b-instruct" />
-                    <option value="mistralai/mistral-7b-instruct:free" />
-                    <option value="microsoft/phi-3-mini-128k-instruct:free" />
-                    <option value="google/gemma-2-9b-it:free" />
-                    <option value="anthropic/claude-3-haiku" />
-                    <option value="openai/gpt-4o-mini" />
-                    <option value="nousresearch/hermes-3-llama-3.1-405b" />
-                  </datalist>
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm text-gray-300">OpenRouter Model</label>
+                    <div className="flex items-center gap-3">
+                      <button 
+                        type="button"
+                        onClick={() => setShowOnlyFree(!showOnlyFree)}
+                        className={`text-[10px] px-2 py-0.5 rounded-full transition-colors ${showOnlyFree ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-zinc-800 text-zinc-500 border border-white/5'}`}
+                      >
+                        {showOnlyFree ? 'Free Only' : 'All Models'}
+                      </button>
+                      <button 
+                        type="button"
+                        onClick={handleRefreshModels}
+                        disabled={isFetchingModels}
+                        className="text-[10px] flex items-center gap-1 text-indigo-400 hover:text-indigo-300 disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${isFetchingModels ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1">
+                    <input 
+                      type="text"
+                      value={modelSearch}
+                      onChange={e => setModelSearch(e.target.value)}
+                      placeholder="Search models..."
+                      className="w-full bg-black/30 border border-white/10 rounded-t-xl px-4 py-2 text-xs text-gray-300 focus:outline-none focus:border-indigo-500/50"
+                    />
+                    <select 
+                      value={settings.openRouterModel || 'meta-llama/llama-3-8b-instruct:free'}
+                      onChange={e => handleChange('openRouterModel', e.target.value)}
+                      className="w-full bg-black/50 border border-white/10 border-t-0 rounded-b-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                    >
+                      {settings.openRouterModels && settings.openRouterModels.length > 0 ? (
+                        <>
+                          <optgroup label="Free Models">
+                            {settings.openRouterModels
+                              .filter((m: OpenRouterModel) => {
+                                const isFreeById = m.id.toLowerCase().includes(':free');
+                                const isFreeByPricing = m.pricing && 
+                                  parseFloat(m.pricing.prompt) === 0 && 
+                                  parseFloat(m.pricing.completion) === 0;
+                                const isFree = isFreeById || isFreeByPricing;
+                                if (!isFree) return false;
+                                
+                                if (!modelSearch) return true;
+                                return m.name.toLowerCase().includes(modelSearch.toLowerCase()) || 
+                                       m.id.toLowerCase().includes(modelSearch.toLowerCase());
+                              })
+                              .map((m: OpenRouterModel) => (
+                                <option key={m.id} value={m.id}>{m.name}</option>
+                              ))
+                            }
+                          </optgroup>
+                          {!showOnlyFree && (
+                            <optgroup label="Paid Models">
+                              {settings.openRouterModels
+                                .filter((m: OpenRouterModel) => {
+                                  const isFreeById = m.id.toLowerCase().includes(':free');
+                                  const isFreeByPricing = m.pricing && 
+                                    parseFloat(m.pricing.prompt) === 0 && 
+                                    parseFloat(m.pricing.completion) === 0;
+                                  const isFree = isFreeById || isFreeByPricing;
+                                  if (isFree) return false;
+                                  
+                                  if (!modelSearch) return true;
+                                  return m.name.toLowerCase().includes(modelSearch.toLowerCase()) || 
+                                         m.id.toLowerCase().includes(modelSearch.toLowerCase());
+                                })
+                                .map((m: OpenRouterModel) => (
+                                  <option key={m.id} value={m.id}>{m.name} (Paid)</option>
+                                ))
+                              }
+                            </optgroup>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <option value="meta-llama/llama-3-8b-instruct:free">Llama 3 8B (Free)</option>
+                          <option value="meta-llama/llama-3.1-70b-instruct">Llama 3.1 70B (Paid)</option>
+                          <option value="mistralai/mistral-7b-instruct:free">Mistral 7B (Free)</option>
+                          <option value="microsoft/phi-3-mini-128k-instruct:free">Phi-3 Mini (Free)</option>
+                          <option value="google/gemma-2-9b-it:free">Gemma 2 9B (Free)</option>
+                          <option value="anthropic/claude-3-haiku">Claude 3 Haiku (Paid)</option>
+                          <option value="openai/gpt-4o-mini">GPT-4o Mini (Paid)</option>
+                          <option value="nousresearch/hermes-3-llama-3.1-405b">Hermes 3 405B (Paid)</option>
+                        </>
+                      )}
+                    </select>
+                  </div>
                 </div>
               </>
             )}
