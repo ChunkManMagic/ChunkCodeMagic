@@ -45,11 +45,11 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000): Pr
       throw new Error("Gemini is not available in your current location.");
     }
 
-    if (retries > 0 && (status === 429 || status === 500 || errorMessage.includes('429') || errorMessage.includes('500') || errorMessage.includes('quota') || errorMessage.includes('limit'))) {
-      const waitTime = delay + Math.random() * 2000;
+    if (retries > 0 && (status === 429 || status === 500 || errorMessage.includes('429') || errorMessage.includes('500') || errorMessage.includes('quota') || errorMessage.includes('limit') || errorMessage.includes('exhausted'))) {
+      const waitTime = delay + Math.random() * 3000;
       console.warn(`Transient error hit (status ${status}), retrying in ${Math.round(waitTime)}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
-      return withRetry(fn, retries - 1, delay * 2.5);
+      return withRetry(fn, retries - 1, delay * 3);
     }
     
     throw error;
@@ -78,7 +78,7 @@ ${inventoryBlock}`;
 
 function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEntry[], currentSummary: string, customInstructions?: string): string {
   const codexContext = codexEntries.length > 0
-    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
+    ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntries.slice(-15).map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
     : '';
 
   const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
@@ -201,6 +201,8 @@ DM BEHAVIOR DIALS:
 ${traitDirectives}
 
 DUNGEON MASTER RULES:
+- SESSION ZERO: If this is the start of the game, clearly explain the core mechanics (dice, difficulty, lethality) and invite the player to adjust them.
+- RULE MODIFICATIONS: If the player asks to change a mechanic (e.g., "make it less lethal", "use d20 instead of d6"), acknowledge the change and apply it consistently for the rest of the session.
 - When the player attempts an action with uncertain outcome, describe the roll result narratively (e.g., "You roll a 14 — just enough to..."). Simulate dice based on the game system and difficulty.
 - Track the fiction's internal logic: wounds slow characters down, resources deplete, NPCs remember past interactions.
 - Give NPCs distinct personalities, motivations, and secrets. They are not just obstacles.
@@ -269,17 +271,22 @@ async function callOpenRouter(history: any[], systemInstruction: string, userInp
     throw new Error("OpenRouter API key is missing. Please configure it in Settings.");
   }
 
+  const apiKey = settings.openRouterApiKey.trim();
+  const referer = "https://personaforge.app";
+
   const messages = [
     { role: "system", content: systemInstruction },
     ...convertHistoryToOpenRouter(history),
     { role: "user", content: userInput }
-  ];
+  ].filter(m => m.content && m.content.trim());
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${settings.openRouterApiKey}`,
-      "Content-Type": "application/json"
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": referer,
+      "X-Title": "PersonaForge"
     },
     body: JSON.stringify({
       model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
@@ -289,7 +296,12 @@ async function callOpenRouter(history: any[], systemInstruction: string, userInp
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(`OpenRouter Error: ${response.status} ${errorData.error?.message || response.statusText}`);
+    console.error("OpenRouter Error Data:", errorData);
+    const msg = errorData.error?.message || response.statusText;
+    if (response.status === 401) {
+      throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
+    }
+    throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
   }
 
   const data = await response.json();
@@ -301,17 +313,22 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
     throw new Error("OpenRouter API key is missing. Please configure it in Settings.");
   }
 
+  const apiKey = settings.openRouterApiKey.trim();
+  const referer = "https://personaforge.app";
+
   const messages = [
     { role: "system", content: systemInstruction },
     ...convertHistoryToOpenRouter(history),
     { role: "user", content: userInput }
-  ];
+  ].filter(m => m.content && m.content.trim());
 
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${settings.openRouterApiKey}`,
-      "Content-Type": "application/json"
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": referer,
+      "X-Title": "PersonaForge"
     },
     body: JSON.stringify({
       model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
@@ -322,7 +339,12 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(`OpenRouter Error: ${response.status} ${errorData.error?.message || response.statusText}`);
+    console.error("OpenRouter Stream Error Data:", errorData);
+    const msg = errorData.error?.message || response.statusText;
+    if (response.status === 401) {
+      throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
+    }
+    throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
   }
 
   if (!response.body) throw new Error("No response body");
@@ -357,7 +379,12 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
 
 export async function fetchOpenRouterModels(): Promise<any[]> {
   try {
-    const response = await fetch("https://openrouter.ai/api/v1/models");
+    const response = await fetch("https://openrouter.ai/api/v1/models", {
+      headers: {
+        "HTTP-Referer": window.location.origin,
+        "X-Title": "PersonaForge"
+      }
+    });
     if (!response.ok) throw new Error("Failed to fetch OpenRouter models");
     const data = await response.json();
     return data.data || [];
@@ -407,21 +434,62 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
   const settings = getSettings();
   
   const modeGuidance = mode === AppMode.GAME
-    ? `This is a GAME (tabletop RPG) mode. The "character" being created IS the Dungeon Master persona — not a player character. Populate gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, and currentCampaignArc with rich, specific values. The DM's "personality" is their DMing style. The "backstory" is the campaign's origin. The "appearance" is how the DM presents the game world aesthetically.`
+    ? `This is a GAME (tabletop RPG) mode. 
+       - "name" is the Campaign Name.
+       - "personality" is the Dungeon Master's style (e.g., "Merciless but fair", "Focuses on high-fantasy wonder").
+       - "backstory" is the campaign's lore and origin.
+       - "appearance" is a vivid description of the starting world.
+       - "clothing" is the Setting Type (e.g., "Grimy Dungeon", "Bustling Tavern").
+       - "accessories" are Key Elements/Props (e.g., "Ancient maps, glowing crystals").
+       - "hairStyle" is the Atmosphere (e.g., "Dark fantasy", "High magic").
+       - "hairColor" is the Color Theme (e.g., "Crimson and gold").
+       - "eyeColor" is the Art Style (e.g., "Oil painting", "Sketch").
+       - Populate gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, and currentCampaignArc with rich, specific values. 
+       - The DM's "personality" is their DMing style.`
     : mode === AppMode.SCENARIO
-    ? `This is a SCENARIO (interactive story) mode. The "character" is actually the world/setting personified as a narrator. Populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, and incitingIncident with vivid, specific details. The narrator's "personality" is the world's narrative voice. The "backstory" is the world's history.`
-    : `This is a ROLEPLAY mode. Create a compelling single character for deep one-on-one interaction. Populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values that will create memorable interactions.`;
+    ? `This is a SCENARIO (interactive story) mode. 
+       - "name" is the Scenario Title.
+       - "personality" is the world's narrative voice (e.g., "Noir detective style", "Epic poetic").
+       - "backstory" is the world's history.
+       - "appearance" is a visual description of the setting.
+       - "clothing" is the Environment Type (e.g., "Cyberpunk City", "Fantasy Forest").
+       - "accessories" are Lighting/Weather (e.g., "Neon glow", "Moonlit").
+       - "hairStyle" is the Primary Color Palette (e.g., "Cool blues").
+       - "hairColor" is the Secondary Color Palette (e.g., "Gritty browns").
+       - "eyeColor" is the Key Landmark (e.g., "Giant glowing tree").
+       - Populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, and incitingIncident with vivid, specific details. 
+       - The narrator's "personality" is the world's narrative voice.`
+    : `This is a ROLEPLAY mode. Create a compelling single character for deep one-on-one interaction. 
+       - Populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values.
+       - "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor" are all for the character.`;
 
   const contents = `Generate a detailed character profile based on this idea: "${idea}"
 
 ${modeGuidance}
 
-Also generate a detailed player character profile that would be a compelling fit for this story/session.`;
+Instructions:
+1. You MUST fill in EVERY field in the schema. Do not leave any field empty or as a placeholder.
+2. Ensure the content is creative, immersive, and fits the ${mode} mode perfectly.
+3. Also generate a detailed player character profile (playerProfile) that would be a compelling fit for this story/session. Fill in all fields for the player character too.
+
+CRITICAL INSTRUCTIONS FOR FIELDS:
+- worldAtmosphere: Describe the WORLD'S mood, environment, and general feel (e.g., "A dark, rainy cyberpunk city with neon lights and constant surveillance"). Do NOT describe a person.
+- keyLocations: List 3-4 specific, interesting locations in the WORLD.
+- gameSystem: Describe the rules or mechanics if in GAME mode (e.g., "D&D 5e", "Powered by the Apocalypse").
+- playerProfile: This is the profile for the USER'S character. Ensure it is distinct from the main character.`;
 
   let responseText = "{}";
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    const systemPrompt = "You are a character creation assistant for an interactive fiction app. Return ONLY a valid JSON object with no markdown, no backticks, no explanation. Include all of these fields: name, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor, storyTone, relationship, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, incitingIncident, gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, currentCampaignArc, currentMood, and a playerProfile object with name and description.";
+    const systemPrompt = `You are a character creation assistant for an interactive fiction app. Return ONLY a valid JSON object with no markdown, no backticks, no explanation. 
+    
+    CRITICAL INSTRUCTIONS FOR FIELDS:
+    - worldAtmosphere: Describe the WORLD'S mood, environment, and general feel (e.g., "A dark, rainy cyberpunk city with neon lights and constant surveillance"). Do NOT describe a person.
+    - keyLocations: List 3-4 specific, interesting locations in the WORLD.
+    - gameSystem: Describe the rules or mechanics if in GAME mode (e.g., "D&D 5e", "Powered by the Apocalypse").
+    - playerProfile: This is the profile for the USER'S character. Ensure it is distinct from the main character.
+    
+    Include all of these fields: name, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor, storyTone, relationship, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, incitingIncident, gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, currentCampaignArc, currentMood, and a playerProfile object with name, description, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor.`;
     responseText = await callOpenRouter([], systemPrompt, contents, settings);
   } else {
     const ai = getGenAI();
@@ -482,10 +550,16 @@ Also generate a detailed player character profile that would be a compelling fit
                 hairColor: { type: Type.STRING },
                 eyeColor: { type: Type.STRING },
               },
-              required: ["name", "description"]
+              required: ["name", "description", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor"]
             }
           },
-          required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
+          required: [
+            "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor",
+            "storyTone", "relationship", "characterFlaws", "secretMotive", "speechPattern", "likesAndDislikes", "coreBeliefs", "quirks",
+            "worldAtmosphere", "keyLocations", "scenarioStakes", "scenarioConflict", "timePeriod", "factions", "magicOrTechnologyLevel", "incitingIncident",
+            "gameSystem", "questObjective", "dungeonMasterStyle", "rulesComplexity", "difficultyLevel", "partyComposition", "startingEquipment", "currentCampaignArc",
+            "currentMood", "playerProfile"
+          ]
         }
       }
     }));
@@ -504,43 +578,54 @@ Also generate a detailed player character profile that would be a compelling fit
   return {
     mode,
     name: data.name || "Unknown",
-    personality: data.personality || "",
-    backstory: data.backstory || "",
-    appearance: data.appearance || "",
-    clothing: data.clothing || "",
-    accessories: data.accessories || "",
-    hairStyle: data.hairStyle || "",
-    hairColor: data.hairColor || "",
-    eyeColor: data.eyeColor || "",
+    personality: data.personality || "Mysterious and deep.",
+    backstory: data.backstory || "A tale lost to time.",
+    appearance: data.appearance || "Striking and memorable.",
+    clothing: data.clothing || "Appropriate for the setting.",
+    accessories: data.accessories || "None.",
+    hairStyle: data.hairStyle || "Natural.",
+    hairColor: data.hairColor || "Natural.",
+    eyeColor: data.eyeColor || "Natural.",
     voiceName: "Kore",
     voiceSettings: { pitch: "Normal", speed: "Normal", accent: "None" },
     traits: defaultTraits,
     storyTone: data.storyTone || "Dramatic",
     relationship: data.relationship || "Strangers",
-    playerProfile: data.playerProfile || { name: "The Protagonist", description: "A mysterious traveler." },
+    playerProfile: data.playerProfile || { 
+      name: "The Protagonist", 
+      description: "A mysterious traveler.",
+      personality: "Determined.",
+      backstory: "Seeking answers.",
+      appearance: "Average build.",
+      clothing: "Traveler's gear.",
+      accessories: "None.",
+      hairStyle: "Short.",
+      hairColor: "Brown.",
+      eyeColor: "Brown."
+    },
     inventory: [],
-    worldAtmosphere: data.worldAtmosphere || "",
-    keyLocations: data.keyLocations || "",
-    characterFlaws: data.characterFlaws || "",
-    secretMotive: data.secretMotive || "",
-    speechPattern: data.speechPattern || "",
-    likesAndDislikes: data.likesAndDislikes || "",
-    coreBeliefs: data.coreBeliefs || "",
-    quirks: data.quirks || "",
-    gameSystem: data.gameSystem || "",
-    questObjective: data.questObjective || "",
-    scenarioStakes: data.scenarioStakes || "",
-    scenarioConflict: data.scenarioConflict || "",
-    timePeriod: data.timePeriod || "",
-    factions: data.factions || "",
-    magicOrTechnologyLevel: data.magicOrTechnologyLevel || "",
-    incitingIncident: data.incitingIncident || "",
-    dungeonMasterStyle: data.dungeonMasterStyle || "",
-    rulesComplexity: data.rulesComplexity || "",
-    difficultyLevel: data.difficultyLevel || "",
-    partyComposition: data.partyComposition || "",
-    startingEquipment: data.startingEquipment || "",
-    currentCampaignArc: data.currentCampaignArc || "",
+    worldAtmosphere: data.worldAtmosphere || "Atmospheric.",
+    keyLocations: data.keyLocations || "Vast lands.",
+    characterFlaws: data.characterFlaws || "None.",
+    secretMotive: data.secretMotive || "None.",
+    speechPattern: data.speechPattern || "Natural.",
+    likesAndDislikes: data.likesAndDislikes || "None.",
+    coreBeliefs: data.coreBeliefs || "None.",
+    quirks: data.quirks || "None.",
+    gameSystem: data.gameSystem || "Narrative.",
+    questObjective: data.questObjective || "Explore.",
+    scenarioStakes: data.scenarioStakes || "Survival.",
+    scenarioConflict: data.scenarioConflict || "Man vs Nature.",
+    timePeriod: data.timePeriod || "Unknown.",
+    factions: data.factions || "None.",
+    magicOrTechnologyLevel: data.magicOrTechnologyLevel || "None.",
+    incitingIncident: data.incitingIncident || "A chance encounter.",
+    dungeonMasterStyle: data.dungeonMasterStyle || "Narrative.",
+    rulesComplexity: data.rulesComplexity || "Simple.",
+    difficultyLevel: data.difficultyLevel || "Balanced.",
+    partyComposition: data.partyComposition || "Solo.",
+    startingEquipment: data.startingEquipment || "Standard gear.",
+    currentCampaignArc: data.currentCampaignArc || "The Beginning.",
     currentMood: data.currentMood || "Neutral"
   };
 }
@@ -553,17 +638,17 @@ export async function generateAvatar(profile: CharacterProfile): Promise<string>
   if (profile.mode === AppMode.SCENARIO) {
     prompt = `A highly detailed, photorealistic 8k concept art of a scenario setting.
 Setting Description: ${profile.appearance}
-Environment Type: ${profile.clothing || 'appropriate for the setting'}
+Environment Type: ${profile.clothing || profile.worldAtmosphere || 'appropriate for the setting'}
 Lighting/Weather: ${profile.accessories || 'natural'}
 Color Palette: ${profile.hairStyle || 'natural'} ${profile.hairColor || ''}
-Key Landmark: ${profile.eyeColor || 'none'}
+Key Landmark: ${profile.eyeColor || profile.keyLocations || 'none'}
 Style: Cinematic lighting, professional photography, sharp focus, intricate textures, epic scale.
 The environment should be the central focus.`;
   } else if (profile.mode === AppMode.GAME) {
     prompt = `A highly detailed, photorealistic 8k concept art of a tabletop RPG campaign setting.
 Setting Description: ${profile.appearance}
-Key Elements: ${profile.clothing || 'appropriate for the setting'}
-Atmosphere: ${profile.accessories || 'natural'}
+Key Elements: ${profile.clothing || profile.gameSystem || 'appropriate for the setting'}
+Atmosphere: ${profile.accessories || profile.worldAtmosphere || 'natural'}
 Color Theme: ${profile.hairStyle || 'natural'} ${profile.hairColor || ''}
 Art Style: ${profile.eyeColor || 'none'}
 Style: Cinematic lighting, professional photography, sharp focus, intricate textures, epic scale.
@@ -580,7 +665,7 @@ The character should be the central focus, looking towards the camera.`;
   }
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
+    model: 'gemini-flash-latest',
     contents: {
       parts: [{ text: prompt }]
     },
@@ -613,7 +698,7 @@ Style: Digital art, detailed, atmospheric, professional concept art, sharp focus
 The subject should be the central focus, capturing the essence of the description.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
+    model: 'gemini-flash-latest',
     contents: {
       parts: [{ text: prompt }]
     },
@@ -644,7 +729,7 @@ Tone: ${profile.storyTone}
 Style: RPG item icon, digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures, centered on a neutral background.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
+    model: 'gemini-flash-latest',
     contents: {
       parts: [{ text: prompt }]
     },
@@ -804,14 +889,33 @@ export async function refineProfile(profile: CharacterProfile): Promise<Characte
   const ai = getGenAI();
   
   const modeGuidance = profile.mode === AppMode.GAME
-    ? `This is a GAME (tabletop RPG) mode. You MUST populate gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, and currentCampaignArc with rich, specific values.`
+    ? `This is a GAME (tabletop RPG) mode. 
+       - "name" is the Campaign Name.
+       - "personality" is the Dungeon Master's style.
+       - "backstory" is the campaign's lore.
+       - "appearance" is the world description.
+       - "clothing" is the Setting Type.
+       - "accessories" are Key Elements/Props.
+       - "hairStyle" is the Atmosphere.
+       - "hairColor" is the Color Theme.
+       - "eyeColor" is the Art Style.
+       - You MUST populate gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, and currentCampaignArc with rich, specific values.`
     : profile.mode === AppMode.SCENARIO
-    ? `This is a SCENARIO (interactive story) mode. You MUST populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, and incitingIncident with vivid, specific details.`
-    : `This is a ROLEPLAY mode. You MUST populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values.`;
+    ? `This is a SCENARIO (interactive story) mode. 
+       - "name" is the Scenario Title.
+       - "personality" is the world's narrative voice.
+       - "backstory" is the world's history.
+       - "appearance" is the visual description of the setting.
+       - "clothing" is the Environment Type.
+       - "accessories" are Lighting/Weather.
+       - "hairStyle" is the Primary Color Palette.
+       - "hairColor" is the Secondary Color Palette.
+       - "eyeColor" is the Key Landmark.
+       - You MUST populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, and incitingIncident with vivid, specific details.`
+    : `This is a ROLEPLAY mode. 
+       - You MUST populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values.`;
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: getSettings().activeModel,
-    contents: `You are an expert creative writer and game designer. Your task is to refine, expand, and complete this ${profile.mode} profile. 
+  const contents = `You are an expert creative writer and game designer. Your task is to refine, expand, and complete this ${profile.mode} profile. 
 
 Instructions:
 1. Refine and expand ALL fields, even if they are already filled, to ensure they are compelling, consistent, and well-developed. 
@@ -819,12 +923,22 @@ Instructions:
 3. ${modeGuidance}
 4. Ensure all fields are contextually consistent with each other (e.g., personality matches backstory, world atmosphere matches factions).
 5. For the "traits" section, ensure the values (0-100) accurately reflect the character's personality and role.
-6. For the "playerProfile", ensure it fits naturally into the scenario or game mode.
+6. For the "playerProfile", ensure it fits naturally into the scenario or game mode. Fill in all fields for the player character too (description, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor).
 7. IMPORTANT: Do NOT include field names or labels within the values of the fields themselves.
+
+CRITICAL INSTRUCTIONS FOR FIELDS:
+- worldAtmosphere: Describe the WORLD'S mood, environment, and general feel. Do NOT describe a person.
+- keyLocations: List 3-4 specific, interesting locations in the WORLD.
+- gameSystem: Describe the rules or mechanics if in GAME mode.
+- playerProfile: This is the profile for the USER'S character. Ensure it is distinct from the main character.
 
 Current Profile: ${JSON.stringify(profile)}
 
-Return the complete, updated profile as a JSON object with the exact same structure.`,
+Return the complete, updated profile as a JSON object with the exact same structure.`;
+
+  const response = await withRetry(() => ai.models.generateContent({
+    model: getSettings().activeModel,
+    contents,
     config: {
       maxOutputTokens: 8192,
       responseMimeType: "application/json",
@@ -879,10 +993,16 @@ Return the complete, updated profile as a JSON object with the exact same struct
               hairColor: { type: Type.STRING },
               eyeColor: { type: Type.STRING },
             },
-            required: ["name", "description"]
+            required: ["name", "description", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor"]
           }
         },
-        required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
+        required: [
+          "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor",
+          "storyTone", "relationship", "characterFlaws", "secretMotive", "speechPattern", "likesAndDislikes", "coreBeliefs", "quirks",
+          "worldAtmosphere", "keyLocations", "scenarioStakes", "scenarioConflict", "timePeriod", "factions", "magicOrTechnologyLevel", "incitingIncident",
+          "gameSystem", "questObjective", "dungeonMasterStyle", "rulesComplexity", "difficultyLevel", "partyComposition", "startingEquipment", "currentCampaignArc",
+          "currentMood", "playerProfile"
+        ]
       }
     }
   }));
@@ -1048,7 +1168,7 @@ export async function suggestNextAction(
   customInstructions?: string
 ): Promise<string> {
   const codexContext = codexEntries.length > 0
-    ? `\nWORLD CODEX (Lore & Rules):\n${codexEntries.map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
+    ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntries.slice(-15).map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
     : '';
 
   const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
@@ -1166,9 +1286,12 @@ Text: ${text}`;
     },
   };
 
+  const settings = getSettings();
+  const activeTTSModel = settings.activeTTSModel || "gemini-flash-latest";
+
   const modelsToTry = [
-    "gemini-2.5-pro-preview-tts",
-    "gemini-2.5-flash-preview-tts"
+    activeTTSModel,
+    activeTTSModel === "gemini-pro-latest" ? "gemini-flash-latest" : "gemini-pro-latest"
   ];
 
   let lastError: any = null;
@@ -1387,7 +1510,7 @@ Style: Cinematic lighting, professional photography, sharp focus, intricate text
 The character should be the central focus, looking towards the camera.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
+    model: 'gemini-flash-latest',
     contents: {
       parts: [{ text: prompt }]
     },

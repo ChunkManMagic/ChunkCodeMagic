@@ -9,7 +9,7 @@ export function useProfileUpdate(profile: CharacterProfile, onUpdateProfile: (pr
   const handleAutoUpdateProfile = useCallback(async (messages: any[], force = false, historyOverride?: any[]) => {
     const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
     if (isUpdatingProfile || currentHistory.length < 5) return;
-    if (!force && (!isAutoProfileEnabled || currentHistory.length % 5 !== 0)) return;
+    if (!force && (!isAutoProfileEnabled || currentHistory.length % 20 !== 0)) return;
 
     setIsUpdatingProfile(true);
     try {

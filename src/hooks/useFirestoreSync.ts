@@ -7,7 +7,8 @@ import {
   deleteDoc, 
   query, 
   getDocFromServer,
-  getDocs
+  getDocs,
+  writeBatch
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import { db, auth } from '../firebase';
@@ -86,15 +87,35 @@ export function useFirestoreSync() {
   const deleteScenario = useCallback(async (scenarioId: string) => {
     if (!user) return;
     try {
-      await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId));
+      // We use multiple batches if needed to stay under the 500 limit
+      let batch = writeBatch(db);
+      let count = 0;
+
+      const commitBatch = async () => {
+        if (count > 0) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      };
+
+      batch.delete(doc(db, 'users', user.uid, 'scenarios', scenarioId));
+      count++;
       
       for (const name of ['messages', 'codex', 'inventory']) {
         const snap = await getDocs(collection(db, 'users', user.uid, 'scenarios', scenarioId, name));
         for (const d of snap.docs) {
-          await deleteDoc(d.ref);
+          batch.delete(d.ref);
+          count++;
+          if (count >= 500) await commitBatch();
         }
       }
-      await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'summary', 'current')).catch(() => {});
+      
+      batch.delete(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'summary', 'current'));
+      count++;
+      if (count >= 500) await commitBatch();
+      
+      await commitBatch();
     } catch (error) {
       console.error("Firestore Error (Delete Scenario):", error);
       throw error;
@@ -127,6 +148,54 @@ export function useFirestoreSync() {
       });
     } catch (error) {
       console.error("Firestore Error (Save Message):", error);
+      throw error;
+    }
+  }, [user]);
+
+  const saveMessagesBatch = useCallback(async (scenarioId: string, messages: Message[]) => {
+    if (!user || messages.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+
+      for (const message of messages) {
+        const ref = doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', message.id);
+        batch.set(ref, {
+          ...message,
+          timestamp: message.timestamp || Date.now()
+        });
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (error) {
+      console.error("Firestore Error (Save Messages Batch):", error);
+      throw error;
+    }
+  }, [user]);
+
+  const deleteMessagesBatch = useCallback(async (scenarioId: string, messageIds: string[]) => {
+    if (!user || messageIds.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+
+      for (const id of messageIds) {
+        batch.delete(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', id));
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (error) {
+      console.error("Firestore Error (Delete Messages Batch):", error);
       throw error;
     }
   }, [user]);
@@ -168,6 +237,33 @@ export function useFirestoreSync() {
     }
   }, [user]);
 
+  const saveCodexEntriesBatch = useCallback(async (scenarioId: string, entries: CodexEntry[]) => {
+    if (!user || entries.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+
+      for (const entry of entries) {
+        const finalEntry = { ...entry };
+        if (finalEntry.imageUrl && finalEntry.imageUrl.length > 500000) {
+          finalEntry.imageUrl = await compressImage(finalEntry.imageUrl, 512, 0.7);
+        }
+        const ref = doc(db, 'users', user.uid, 'scenarios', scenarioId, 'codex', finalEntry.id);
+        batch.set(ref, finalEntry);
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (error) {
+      console.error("Firestore Error (Save Codex Batch):", error);
+      throw error;
+    }
+  }, [user]);
+
   const syncInventory = useCallback((scenarioId: string, callback: (items: InventoryItem[]) => void) => {
     if (!user) return () => {};
 
@@ -191,6 +287,33 @@ export function useFirestoreSync() {
       await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', finalItem.id), finalItem);
     } catch (error) {
       console.error("Firestore Error (Save Inventory):", error);
+      throw error;
+    }
+  }, [user]);
+
+  const saveInventoryItemsBatch = useCallback(async (scenarioId: string, items: InventoryItem[]) => {
+    if (!user || items.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+
+      for (const item of items) {
+        const finalItem = { ...item };
+        if (finalItem.imageUrl && finalItem.imageUrl.length > 500000) {
+          finalItem.imageUrl = await compressImage(finalItem.imageUrl, 512, 0.7);
+        }
+        const ref = doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', finalItem.id);
+        batch.set(ref, finalItem);
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (error) {
+      console.error("Firestore Error (Save Inventory Batch):", error);
       throw error;
     }
   }, [user]);
@@ -238,11 +361,15 @@ export function useFirestoreSync() {
     deleteScenario,
     syncMessages,
     saveMessage,
+    saveMessagesBatch,
     deleteMessage,
+    deleteMessagesBatch,
     syncCodex,
     saveCodexEntry,
+    saveCodexEntriesBatch,
     syncInventory,
     saveInventoryItem,
+    saveInventoryItemsBatch,
     deleteInventoryItem,
     syncSummary,
     saveSummary

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package, User, Cloud, Download } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, RotateCcw, Edit2, X as CloseIcon, X, AlertCircle, Volume2, VolumeX, Sparkles, Pause, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, GitBranch, Phone, Package, User, Cloud, Download } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { useVoice } from '../hooks/useVoice';
 import { useCodex } from '../hooks/useCodex';
@@ -153,7 +153,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [isTyping, setIsTyping] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
-  const [isAutoRead, setIsAutoRead] = useState(true);
+  const [isAutoRead, setIsAutoRead] = useState(false);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [editInput, setEditInput] = useState('');
   const [regeneratingMessageId, setRegeneratingMessageId] = useState<string | null>(null);
@@ -240,7 +240,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         }
       };
     }
-  }, [isLiveMode]);
+  }, [isLiveMode, toastError]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -253,7 +253,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const [error, setError] = useState<string | null>(null);
 
-  const handleRefine = async (guidance?: string) => {
+  const handleRefine = useCallback(async (guidance?: string) => {
     if (!input.trim() || isRefining) return;
     setIsRefining(true);
     setError(null);
@@ -281,9 +281,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     } finally {
       setIsRefining(false);
     }
-  };
+  }, [input, isRefining, messages, profile, toastSuccess, toastError]);
 
-  const handleSuggest = async () => {
+  const handleSuggest = useCallback(async () => {
     if (isSuggesting) return;
     setIsSuggesting(true);
     setError(null);
@@ -312,7 +312,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     } finally {
       setIsSuggesting(false);
     }
-  };
+  }, [isSuggesting, messages, profile, codexEntries, storySummary, input, toastSuccess, toastError]);
 
   const handleRewind = (messageId: string) => {
     setConfirmModal({
@@ -344,16 +344,22 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [isUpdatingAvatar, setIsUpdatingAvatar] = useState(false);
   const [currentMood, setCurrentMood] = useState<string>(profile.currentMood || 'Neutral');
 
-  const handleAutoUpdateAvatar = useCallback(async (history: Message[]) => {
+  const handleAutoUpdateAvatar = useCallback(async (history: Message[], force = false) => {
     const settings = getSettings();
     if (isUpdatingAvatar) return;
     
+    // Only run every 20 messages unless forced
+    if (!force && history.length % 20 !== 0) return;
+
     setIsUpdatingAvatar(true);
     try {
-      // Always detect mood for visual effects
-      const mood = await detectMood(history.map(m => ({ role: m.role, parts: [{ text: m.text }] })));
-      setCurrentMood(mood);
-      onUpdateProfile({ ...profile, currentMood: mood });
+      // Only detect mood if it's not already set or we are forcing an update
+      // Usually the mood is parsed from the model response directly in generateReply
+      if (force) {
+        const mood = await detectMood(history.map(m => ({ role: m.role, parts: [{ text: m.text }] })));
+        setCurrentMood(mood);
+        onUpdateProfile({ ...profile, currentMood: mood });
+      }
 
       // Only update image if premium auto-avatar is on
       if (settings.premiumAutoAvatar) {
@@ -418,14 +424,14 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   };
 
-  const generateReply = async (baseMessages: Message[], userInput: string, userMsgId: string) => {
+  const generateReply = useCallback(async (baseMessages: Message[], userInput: string, userMsgId: string) => {
     setIsTyping(true);
     try {
       let currentSummary = storySummary;
       let unsummarizedMessages = baseMessages.filter(m => !m.isSummarized);
       
-      if (unsummarizedMessages.length > 10) {
-        const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 10);
+      if (unsummarizedMessages.length > 20) {
+        const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 15);
         const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
         
         currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
@@ -436,7 +442,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           .filter(m => summarizedIds.has(m.id));
         await updateMessages(updatedMessages);
         
-        unsummarizedMessages = unsummarizedMessages.slice(-10);
+        unsummarizedMessages = unsummarizedMessages.slice(-15);
       }
 
       const historyForAi = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
@@ -487,6 +493,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       await updateMessage(finalAiMessage);
       
       if (newMood !== profile.currentMood) {
+        setCurrentMood(newMood);
         onUpdateProfile({ ...profile, currentMood: newMood });
       }
       
@@ -519,7 +526,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     } finally {
       setIsTyping(false);
     }
-  };
+  }, [storySummary, updateSummary, messages, updateMessages, addMessage, profile, codexEntries, updateMessage, onUpdateProfile, isAutoRead, isLiveMode, handleReadAloud, isAutoCodexEnabled, handleAutoPopulateCodex, isAutoInventoryEnabled, handleAutoUpdateInventory, isAutoProfileEnabled, handleAutoUpdateProfile, handleAutoUpdateAvatar, toastError, setMessages]);
 
   const saveEdit = async (messageId: string) => {
     if (!editInput.trim() || isTyping) return;
@@ -569,7 +576,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     await generateReply(historyBeforeUser, userInput, lastUserMessage.id);
   };
 
-  const handleSendText = async (overrideText?: string) => {
+  const handleSendText = useCallback(async (overrideText?: string) => {
     let textToSend = overrideText || input;
     if (directorNote.trim()) {
       if (textToSend.trim()) {
@@ -587,28 +594,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     setDirectorNote('');
     
     await generateReply(messages, textToSend, userMsgId);
-  };
+  }, [input, directorNote, isTyping, addMessage, messages, generateReply]);
 
   useEffect(() => {
     handleSendTextRef.current = handleSendText;
   }, [handleSendText]);
 
-
-
-  const handleGenerateOpening = async () => {
-    let prompt = "";
-    if (profile.mode === AppMode.ROLEPLAY) {
-      prompt = `[SYSTEM: Please provide the opening statement for this roleplay. Set the scene, establish your character's mood and current activity, and give the user a starting point or hook to react to. Stay fully in character as ${profile.name}. Do not act for the user.]`;
-    } else if (profile.mode === AppMode.SCENARIO) {
-      prompt = `[SYSTEM: Please provide the opening statement for this scenario. Describe the current environment, establish the atmosphere, and introduce the immediate situation or conflict. Give the user a clear hook to react to. Do not act for the user's character.]`;
-    } else if (profile.mode === AppMode.GAME) {
-      prompt = `[SYSTEM: Please provide the opening statement for this game campaign. As the Dungeon Master, set the scene, describe the starting location, and introduce the initial quest hook or immediate challenge facing the player. End by asking the player what they want to do.]`;
-    }
-    
-    await generateReply([], prompt, "");
-  };
-
-  const toggleLiveMode = async () => {
+  const toggleLiveMode = useCallback(async () => {
     if (isLiveMode) {
       setIsLiveMode(false);
       setIsMicActive(false);
@@ -635,6 +627,80 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       console.error("Failed to start speech recognition:", err);
       toastError("Failed to start voice session. Check your microphone permissions.");
     }
+  }, [isLiveMode, toastError, toastSuccess]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input (except for specific shortcuts like Ctrl+Enter)
+      const target = e.target as HTMLElement;
+      const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+
+      if (isInput) {
+        // Ctrl+Enter to send from textarea
+        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          handleSendText();
+        }
+        return;
+      }
+
+      if (e.altKey) {
+        switch (e.key.toLowerCase()) {
+          case 'c':
+            e.preventDefault();
+            setShowCodex(prev => !prev);
+            break;
+          case 'i':
+            e.preventDefault();
+            setShowInventory(prev => !prev);
+            break;
+          case 'v':
+            e.preventDefault();
+            toggleLiveMode();
+            break;
+          case 'r':
+            e.preventDefault();
+            handleRefine();
+            break;
+          case 'g':
+            e.preventDefault();
+            handleSuggest();
+            break;
+          case 'a':
+            e.preventDefault();
+            setShowAddCharacter(true);
+            break;
+          case 'e':
+            e.preventDefault();
+            onEditCharacter();
+            break;
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [setShowCodex, setShowInventory, toggleLiveMode, handleRefine, handleSuggest, setShowAddCharacter, onEditCharacter, handleSendText]);
+
+
+
+  const handleGenerateOpening = async () => {
+    let prompt = "";
+    if (profile.mode === AppMode.ROLEPLAY) {
+      prompt = `[SYSTEM: Please provide the opening statement for this roleplay. Set the scene, establish your character's mood and current activity, and give the user a starting point or hook to react to. Stay fully in character as ${profile.name}. Do not act for the user.]`;
+    } else if (profile.mode === AppMode.SCENARIO) {
+      prompt = `[SYSTEM: Please provide the opening statement for this scenario. Describe the current environment, establish the atmosphere, and introduce the immediate situation or conflict. Give the user a clear hook to react to. Do not act for the user's character.]`;
+    } else if (profile.mode === AppMode.GAME) {
+      prompt = `[SYSTEM: Please provide the opening statement for this game campaign. As the Dungeon Master, conduct a "Session Zero" introduction. 
+      1. Briefly explain the core mechanics of the game system (${profile.gameSystem || 'Narrative/Flexible'}) and how you will handle dice rolls and player actions.
+      2. Provide a brief "tutorial" example of how the player should interact (e.g., "To perform an action, describe what you want to do. I will then tell you if a roll is needed or describe the outcome.").
+      3. Describe the starting location and the initial quest hook in a compelling way.
+      4. Explicitly ask the player if they are comfortable with these rules or if they would like to modify any mechanics (like difficulty, lethality, or rule strictness) before beginning.
+      5. End by asking the player what they want to do or if they have any rule adjustments.]`;
+    }
+    
+    await generateReply([], prompt, "");
   };
 
   const toggleMic = () => {
@@ -968,9 +1034,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           appMode={profile.mode}
         />
 
-        <div className="flex-1 flex flex-col relative bg-black/10">
+        <div className="flex-1 flex flex-col relative bg-black/10 min-h-0">
           {/* Avatar Display */}
-          <div className="h-72 border-b border-white/5 relative bg-black/20 flex items-center justify-center overflow-hidden">
+          <div className="h-48 sm:h-64 border-b border-white/5 relative bg-black/20 flex items-center justify-center overflow-hidden shrink-0">
             <motion.img
               initial={{ opacity: 0, scale: 1.1 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -997,7 +1063,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                 <img 
                   src={avatarBase64} 
                   alt={profile.name} 
-                  className="h-60 w-60 object-cover rounded-3xl shadow-2xl border border-white/10 relative z-10 transition-all duration-1000" 
+                  className="h-40 w-40 sm:h-52 sm:w-52 object-cover rounded-3xl shadow-2xl border border-white/10 relative z-10 transition-all duration-1000" 
                   style={{ filter: getMoodEffects().filter }}
                   referrerPolicy="no-referrer" 
                 />
@@ -1017,6 +1083,42 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                   )}
                 </AnimatePresence>
               </motion.div>
+            </div>
+          </div>
+
+          {/* Scene Status Rail */}
+          <div className="px-6 py-2 bg-black/40 border-b border-white/5 flex items-center justify-between text-[10px] font-bold tracking-[0.2em] uppercase text-zinc-500 overflow-x-auto no-scrollbar">
+            <div className="flex items-center gap-4 shrink-0">
+              <div className="flex items-center gap-2">
+                <span className="w-1 h-1 bg-emerald-500 rounded-full animate-pulse" />
+                <span className="text-zinc-400">STATUS:</span>
+                <span className="text-white">{isTyping ? 'PROCESSING NARRATIVE' : 'AWAITING RESPONSE'}</span>
+              </div>
+              <div className="h-3 w-px bg-white/10" />
+              <div className="flex items-center gap-2">
+                <span className="text-zinc-400">SCENE:</span>
+                <span className="text-emerald-400">{profile.storyTone}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 shrink-0 ml-4">
+              {profile.mode === AppMode.GAME && profile.questObjective && (
+                <>
+                  <div className="h-3 w-px bg-white/10" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-zinc-400">OBJECTIVE:</span>
+                    <span className="text-purple-400">{profile.questObjective}</span>
+                  </div>
+                </>
+              )}
+              {profile.mode === AppMode.SCENARIO && profile.scenarioStakes && (
+                <>
+                  <div className="h-3 w-px bg-white/10" />
+                  <div className="flex items-center gap-2">
+                    <span className="text-zinc-400">STAKES:</span>
+                    <span className="text-blue-400">{profile.scenarioStakes}</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -1063,7 +1165,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                         Your adventure awaits, {profile.playerProfile?.name || 'adventurer'}...
                       </p>
                       <p className="text-sm text-zinc-500 max-w-sm mx-auto">
-                        Have the DM set the scene and introduce your first challenge, or take the initiative.
+                        Have the DM explain the rules and set the scene for your adventure, or take the initiative.
                       </p>
                     </div>
                   </>
@@ -1074,12 +1176,20 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                   className="mt-4 px-8 py-4 bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 border border-emerald-500/30 rounded-2xl font-bold uppercase tracking-widest text-xs transition-all shadow-[0_0_20px_rgba(16,185,129,0.1)] hover:shadow-[0_0_30px_rgba(16,185,129,0.2)] flex items-center gap-2"
                 >
                   <Sparkles className="w-4 h-4" />
-                  Generate Opening
+                  {profile.mode === AppMode.GAME ? 'Start Session Zero' : 'Generate Opening'}
                 </button>
               </div>
             ) : (
-              messages.map((msg) => (
-                <motion.div key={msg.id} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className={`flex group relative ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <AnimatePresence initial={false}>
+                {messages.map((msg) => (
+                  <motion.div 
+                    key={msg.id} 
+                    layout
+                    initial={{ opacity: 0, y: 20, scale: 0.98 }} 
+                    animate={{ opacity: 1, y: 0, scale: 1 }} 
+                    exit={{ opacity: 0, scale: 0.95 }}
+                    className={`flex group relative ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                  >
                   <div className={`absolute -top-6 opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 z-10 ${msg.role === 'user' ? 'right-0' : 'left-0'}`}>
                     <button onClick={() => handleRewind(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Rewind to here"><RotateCcw className="w-3.5 h-3.5" /></button>
                     <button onClick={() => startEditing(msg)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /></button>
@@ -1095,7 +1205,11 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     )}
                     {msg.timestamp && <span className="text-[10px] text-zinc-600 font-mono px-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
                   </div>
-                  <div className={`max-w-[85%] rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
+                  <div className={`max-w-[85%] rounded-[1.5rem] px-6 py-4 shadow-xl transition-all duration-300 ${
+                    msg.role === 'user' 
+                      ? 'bg-emerald-600 text-white rounded-tr-none hover:bg-emerald-500' 
+                      : 'glass-panel text-zinc-200 rounded-tl-none hover:border-white/20'
+                  }`}>
                     {editingMessageId === msg.id ? (
                       <div className="space-y-3 min-w-[280px]">
                         <textarea value={editInput} onChange={(e) => setEditInput(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none" rows={4} autoFocus />
@@ -1117,11 +1231,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                                   </div>
                             )}
                             {oocText && (
-                              <div className={`text-sm p-3 rounded-xl border ${msg.role === 'user' ? 'bg-emerald-700/30 border-emerald-500/30 text-emerald-100' : 'bg-zinc-800/50 border-zinc-700/50 text-zinc-300'}`}>
-                                <div className="text-xs font-bold uppercase tracking-wider mb-1 opacity-70">
-                                  {msg.role === 'user' ? "Director's Note" : "OOC Reply"}
+                              <div className={`text-sm p-4 rounded-xl border relative overflow-hidden ${
+                                msg.role === 'user' 
+                                  ? 'bg-emerald-700/30 border-emerald-500/30 text-emerald-100' 
+                                  : 'bg-black/40 border-white/10 text-zinc-300'
+                              }`}>
+                                <div className="absolute top-0 right-0 p-1 opacity-10">
+                                  <Sliders className={`w-8 h-8 ${msg.role === 'user' ? 'text-emerald-400' : 'text-zinc-500'}`} />
                                 </div>
-                                <div className="prose prose-invert max-w-none text-sm">
+                                <div className="text-[10px] font-bold uppercase tracking-[0.2em] mb-2 flex items-center gap-2">
+                                  <div className={`w-1 h-3 ${msg.role === 'user' ? 'bg-emerald-400' : 'bg-zinc-500'}`} />
+                                  <span className="opacity-70">{msg.role === 'user' ? "Director's Note" : "AI Context / OOC"}</span>
+                                </div>
+                                <div className="prose prose-invert max-w-none text-sm leading-relaxed opacity-90">
                                   <ReactMarkdown>{oocText}</ReactMarkdown>
                                 </div>
                               </div>
@@ -1166,22 +1288,33 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     )}
                   </div>
                 </motion.div>
-              ))
-            )}
+              ))}
+            </AnimatePresence>
+          )}
             {isTyping && (
-              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex justify-start">
-                <div className="glass-panel rounded-[1.5rem] rounded-tl-none px-6 py-4 flex items-center gap-3">
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce" />
-                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.2s]" />
-                    <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-bounce [animation-delay:0.4s]" />
+              <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex justify-start">
+                <div className="glass-panel rounded-[1.5rem] rounded-tl-none px-6 py-4 flex flex-col gap-3 min-w-[200px] border border-emerald-500/10">
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1.5 }} className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                      <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1.5, delay: 0.2 }} className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                      <motion.div animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }} transition={{ repeat: Infinity, duration: 1.5, delay: 0.4 }} className="w-1.5 h-1.5 bg-emerald-500 rounded-full" />
+                    </div>
+                    <span className="text-[10px] text-emerald-400 uppercase tracking-[0.2em] font-bold">
+                      {profile.mode === AppMode.ROLEPLAY
+                        ? 'TRANSMITTING'
+                        : profile.mode === AppMode.SCENARIO
+                        ? 'WEAVING'
+                        : 'DM DECIDING'}
+                    </span>
                   </div>
-                  <span className="text-[10px] text-zinc-600 uppercase tracking-widest font-bold">
+                  <div className="h-[1px] w-full bg-gradient-to-r from-emerald-500/20 to-transparent" />
+                  <span className="text-[11px] text-zinc-500 italic font-serif">
                     {profile.mode === AppMode.ROLEPLAY
-                      ? profile.name.split(' ')[0] + ' is thinking...'
+                      ? `${profile.name.split(' ')[0]} is forming a reply...`
                       : profile.mode === AppMode.SCENARIO
-                      ? 'The story unfolds...'
-                      : 'The DM is deciding...'}
+                      ? 'The world is responding to your presence...'
+                      : 'The Dungeon Master is narrating the outcome...'}
                   </span>
                 </div>
               </motion.div>
@@ -1218,303 +1351,327 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           </AnimatePresence>
 
           {/* Input Area */}
-          <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
-
-            <AnimatePresence>
-              {showGuidedRefine && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden mb-4"
-                >
-                  <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-emerald-500">Guided Refinement</h4>
-                      <button onClick={() => setShowGuidedRefine(false)} className="text-zinc-500 hover:text-white">
-                        <CloseIcon className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <textarea
-                      value={refineGuidance}
-                      onChange={(e) => setRefineGuidance(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleRefine(refineGuidance);
-                        }
-                      }}
-                      placeholder="How should the AI change this? (e.g., 'Make it more aggressive', 'Focus on the environment')"
-                      className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:border-emerald-500/50 min-h-[80px] resize-y"
-                      autoFocus
-                    />
-                    <div className="flex flex-wrap gap-2">
-                      {['More descriptive', 'More concise', 'More aggressive', 'More polite', 'Add sensory details'].map((chip) => (
-                        <button
-                          key={chip}
-                          onClick={() => {
-                            setRefineGuidance(chip);
-                            handleRefine(chip);
-                          }}
-                          className="px-2 py-1 bg-white/5 hover:bg-white/10 border border-white/10 rounded-full text-[10px] text-zinc-400 hover:text-white transition-all"
-                        >
-                          {chip}
-                        </button>
-                      ))}
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-4">
-                        <p className="text-xs text-zinc-500">Press Enter to apply.</p>
-                        <button
-                          onClick={handleSuggest}
-                          disabled={isSuggesting}
-                          className="text-[10px] font-bold text-zinc-500 hover:text-emerald-400 flex items-center gap-1 transition-colors"
-                          title="Get a completely new suggestion"
-                        >
-                          {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                          REGENERATE
+          <div className="p-6 bg-black/40 backdrop-blur-3xl border-t border-white/5 shadow-[0_-8px_32px_rgba(0,0,0,0.5)]">
+            <div className="max-w-4xl mx-auto">
+              <AnimatePresence>
+                {showGuidedRefine && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden mb-6"
+                  >
+                    <div className="glass-panel p-6 rounded-2xl border border-emerald-500/20 shadow-lg shadow-emerald-500/5 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <Wand2 className="w-4 h-4 text-emerald-400" />
+                          <h4 className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-400">Tactical Refinement</h4>
+                        </div>
+                        <button onClick={() => setShowGuidedRefine(false)} className="text-zinc-500 hover:text-white transition-colors">
+                          <X className="w-4 h-4" />
                         </button>
                       </div>
-                      <button
-                        onClick={() => handleRefine(refineGuidance)}
-                        disabled={!refineGuidance.trim() || isRefining}
-                        className="px-4 py-2 bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 rounded-lg text-xs font-bold uppercase tracking-widest transition-colors flex items-center gap-2"
-                      >
-                        {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                        Apply
-                      </button>
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <AnimatePresence>
-              {showVoiceSettings && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden mb-4"
-                >
-                  <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Voice Customizer</h4>
-                      <div className="flex gap-2">
-                        {voicePresets.map(preset => (
+                      <textarea
+                        value={refineGuidance}
+                        onChange={(e) => setRefineGuidance(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            handleRefine(refineGuidance);
+                          }
+                        }}
+                        placeholder="Specify adjustment parameters (e.g., 'Increase descriptive density', 'Set urgent pace')"
+                        className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:outline-none focus:border-emerald-500/50 min-h-[100px] resize-none font-mono"
+                        autoFocus
+                      />
+                      <div className="flex flex-wrap gap-2">
+                        {['Atmospheric', 'Concise', 'Aggressive', 'Polite', 'Sensory'].map((chip) => (
                           <button
-                            key={preset.name}
-                            onClick={() => handleUpdateVoice({
-                              voiceSettings: { ...profile.voiceSettings, pitch: preset.pitch, speed: preset.speed },
-                              storyTone: preset.tone
-                            })}
-                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[9px] font-bold text-zinc-400 transition-all"
+                            key={chip}
+                            onClick={() => {
+                              const note = `Make it more ${chip.toLowerCase()}`;
+                              setRefineGuidance(note);
+                              handleRefine(note);
+                            }}
+                            className="px-3 py-1.5 bg-white/5 hover:bg-emerald-500/10 border border-white/10 hover:border-emerald-500/30 rounded-lg text-[10px] font-bold text-zinc-400 hover:text-emerald-400 transition-all uppercase tracking-widest"
                           >
-                            {preset.name}
+                            {chip}
                           </button>
                         ))}
                       </div>
-                    </div>
-
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="flex items-center justify-between text-[9px] font-bold text-zinc-500 uppercase tracking-widest">
-                            <span>Pitch: {profile.voiceSettings?.pitch}</span>
-                            <Sliders className="w-3 h-3" />
-                          </label>
-                          <div className="flex gap-2">
-                            {['Low', 'Normal', 'High'].map(p => (
-                              <button
-                                key={p}
-                                onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, pitch: p } })}
-                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${profile.voiceSettings?.pitch === p ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'}`}
-                              >
-                                {p}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div className="space-y-2">
-                          <label className="flex items-center justify-between text-[9px] font-bold text-zinc-500 uppercase tracking-widest">
-                            <span>Speed: {profile.voiceSettings?.speed}</span>
-                            <Sliders className="w-3 h-3" />
-                          </label>
-                          <div className="flex gap-2">
-                            {['Slow', 'Normal', 'Fast'].map(s => (
-                              <button
-                                key={s}
-                                onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, speed: s } })}
-                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${profile.voiceSettings?.speed === s ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'}`}
-                              >
-                                {s}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Narrative Tone</label>
-                          <input
-                            type="text"
-                            value={profile.storyTone}
-                            onChange={(e) => handleUpdateVoice({ storyTone: e.target.value })}
-                            placeholder="e.g. Dramatic, Epic, Whispered..."
-                            className="w-full glass-input rounded-xl px-4 py-2 text-xs text-white placeholder-zinc-700 focus:ring-1 focus:ring-blue-500/30"
-                          />
-                        </div>
-                        
-                        <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
-                          <p className="text-[9px] text-blue-400/60 leading-relaxed italic">
-                            Tip: The tone affects both the AI's writing style and the emotional delivery of the voice.
-                          </p>
-                        </div>
+                      <div className="flex justify-between items-center pt-2">
+                        <button
+                          onClick={handleSuggest}
+                          disabled={isSuggesting}
+                          className="text-[10px] font-bold text-zinc-500 hover:text-emerald-400 flex items-center gap-2 transition-colors uppercase tracking-widest"
+                        >
+                          {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                          REGENERATE ALL
+                        </button>
+                        <button
+                          onClick={() => handleRefine(refineGuidance)}
+                          disabled={!refineGuidance.trim() || isRefining}
+                          className="px-6 py-2 bg-emerald-500 text-white hover:bg-emerald-400 rounded-xl text-[10px] font-bold uppercase tracking-[0.2em] transition-all shadow-lg shadow-emerald-900/40 disabled:opacity-50 disabled:shadow-none"
+                        >
+                          Apply Instruction
+                        </button>
                       </div>
                     </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
-            <div className="flex items-center gap-2 sm:gap-3 mb-4 px-2">
-              <button
-                onClick={() => {
-                  if (input.startsWith('*') && input.endsWith('*')) setInput(input.slice(1, -1));
-                  else setInput(`*${input}*`);
-                }}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest ${
-                  input.startsWith('*') && input.endsWith('*')
-                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
-                    : 'glass-input text-zinc-500 border-transparent hover:text-zinc-300'
-                }`}
-              >
-                {profile.mode === AppMode.ROLEPLAY ? 'FEELING' : profile.mode === AppMode.GAME ? 'EMOTE' : 'ACTION'}
-              </button>
-              <button
-                onClick={() => handleRefine()}
-                disabled={!input.trim() || isRefining}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-l-lg border-y border-l transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
-                  isRefining ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
-                }`}
-              >
-                {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                REFINE
-              </button>
-              <button
-                onClick={() => setShowGuidedRefine(!showGuidedRefine)}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 py-1 rounded-r-lg border-y border-r transition-all tracking-widest flex items-center ${
-                  showGuidedRefine ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
-                }`}
-                title="Guided Refinement"
-              >
-                <Edit3 className="w-3 h-3" />
-              </button>
-              <button
-                onClick={handleSuggest}
-                disabled={isSuggesting}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
-                  isSuggesting ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
-                }`}
-              >
-                {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                {profile.mode === AppMode.ROLEPLAY ? 'SUGGEST DIALOGUE' : profile.mode === AppMode.GAME ? 'SUGGEST MOVE' : 'SUGGEST ACTION'}
-              </button>
-              {profile.mode === AppMode.GAME && (
-                <div className="flex items-center gap-1">
-                  {(['d4','d6','d8','d10','d12','d20'] as const).map(die => (
-                    <button
-                      key={die}
-                      onClick={() => {
-                        const sides = parseInt(die.slice(1));
-                        const result = Math.floor(Math.random() * sides) + 1;
-                        setInput(prev => prev ? `${prev} [Rolled ${die}: ${result}]` : `[Rolled ${die}: ${result}]`);
-                      }}
-                      className="text-[9px] font-bold px-1.5 py-1 rounded-lg glass-input text-purple-400 border border-purple-500/20 hover:bg-purple-500/20 hover:border-purple-500/40 transition-all tracking-widest"
-                      title={`Roll ${die}`}
-                    >
-                      {die.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <button
-                onClick={() => setIsAutoRead(!isAutoRead)}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
-                  isAutoRead ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-zinc-300'
-                }`}
-              >
-                {isAutoRead ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
-                AUTO-READ
-              </button>
-              <div className="text-[8px] sm:text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold ml-auto hidden sm:block">
-                Playing as: <span className="text-zinc-400">{profile.playerProfile?.name || 'The Protagonist'}</span>
-              </div>
-            </div>
-            <div className="flex items-end gap-2 sm:gap-3">
-              {error && (
-                <div className="absolute -top-10 left-0 right-0 bg-red-500/20 border border-red-500/30 text-red-400 text-[10px] px-3 py-1 rounded-lg backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2">
-                  {error}
-                  <button onClick={() => setError(null)} className="ml-2 hover:text-white">×</button>
-                </div>
-              )}
-              {isLiveMode && (
-                <button
-                  onClick={toggleMic}
-                  className={`p-3 sm:p-4 rounded-2xl transition-all shadow-lg ${
-                    isMicActive ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'glass-input text-zinc-500 hover:text-white'
-                  }`}
-                >
-                  {isMicActive ? <Mic className="w-5 h-5 sm:w-6 sm:h-6" /> : <MicOff className="w-5 h-5 sm:w-6 sm:h-6" />}
-                </button>
-              )}
-              <div className="flex-1 flex flex-col gap-2 relative group">
-                {showLeaveWarning && (
-                  <div className="absolute -top-14 left-0 right-0 bg-red-500/10 border border-red-500/20 rounded-xl p-2 flex items-center justify-between z-10 backdrop-blur-md">
-                    <span className="text-xs text-red-400 font-medium px-2">You have an unsaved message. Leave anyway?</span>
-                    <div className="flex gap-2">
-                      <button onClick={handleCancelLeave} className="px-3 py-1 text-xs text-zinc-400 hover:text-white transition-colors">No</button>
-                      <button onClick={handleConfirmLeave} className="px-3 py-1 text-xs bg-red-600 hover:bg-red-500 text-white rounded-lg transition-colors">Yes</button>
-                    </div>
-                  </div>
+                  </motion.div>
                 )}
-                <div className="relative">
-                  <textarea
-                    value={input}
-                    onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
-                    placeholder={isLiveMode ? "Type or speak..." : "Type a message, or enter a hint and click Suggest..."}
-                    className={`w-full glass-input rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base text-white placeholder-zinc-600 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none ${isInputExpanded ? 'h-64 sm:h-80' : 'h-[50px] max-h-40'}`}
-                    rows={1}
-                  />
-                  <button 
-                    onClick={() => setIsInputExpanded(!isInputExpanded)}
-                    className="absolute right-3 top-3 p-1.5 text-zinc-600 hover:text-emerald-400 transition-colors"
-                    title={isInputExpanded ? "Collapse" : "Expand"}
+              </AnimatePresence>
+
+              <AnimatePresence>
+                {showVoiceSettings && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden mb-6"
                   >
-                    {isInputExpanded ? <SkipBack className="w-4 h-4 rotate-90" /> : <Repeat className="w-4 h-4 rotate-90" />}
+                    <div className="glass-panel p-6 rounded-2xl border border-blue-500/20 shadow-lg shadow-blue-500/5 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-blue-400">
+                          <Sliders className="w-4 h-4" />
+                          <h4 className="text-[10px] font-bold uppercase tracking-[0.2em]">Acoustic Parameters</h4>
+                        </div>
+                        <div className="flex gap-2">
+                          {voicePresets.map(preset => (
+                            <button
+                              key={preset.name}
+                              onClick={() => handleUpdateVoice({
+                                voiceSettings: { ...profile.voiceSettings, pitch: preset.pitch, speed: preset.speed },
+                                storyTone: preset.tone
+                              })}
+                              className="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-[9px] font-bold text-zinc-400 transition-all uppercase tracking-widest border border-white/5"
+                            >
+                              {preset.name}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <div className="space-y-6">
+                          <div className="space-y-3">
+                            <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Voice Pitch</label>
+                            <div className="flex gap-2">
+                              {['Low', 'Normal', 'High'].map(p => (
+                                <button
+                                  key={p}
+                                  onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, pitch: p } })}
+                                  className={`flex-1 py-2 rounded-xl text-[10px] font-bold transition-all ${profile.voiceSettings?.pitch === p ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30 shadow-lg shadow-blue-900/20' : 'bg-white/5 text-zinc-500 border border-white/5 hover:text-zinc-300'}`}
+                                >
+                                  {p}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Delivery Speed</label>
+                            <div className="flex gap-2">
+                              {['Slow', 'Normal', 'Fast'].map(s => (
+                                <button
+                                  key={s}
+                                  onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, speed: s } })}
+                                  className={`flex-1 py-2 rounded-xl text-[10px] font-bold transition-all ${profile.voiceSettings?.speed === s ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-white/5 text-zinc-500 border border-white/5 hover:text-zinc-300'}`}
+                                >
+                                  {s}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-[0.2em]">Narrative Cadence</label>
+                          <div className="grid grid-cols-2 gap-2">
+                            {['Dramatic', 'Epic', 'Mysterious', 'Warm', 'Cold', 'Intense'].map(t => (
+                              <button
+                                key={t}
+                                onClick={() => handleUpdateVoice({ storyTone: t })}
+                                className={`py-2 rounded-xl text-[10px] font-bold transition-all ${profile.storyTone === t ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-white/5 text-zinc-500 border border-white/5 hover:text-zinc-300'}`}
+                              >
+                                {t}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="space-y-4">
+                {/* Input Control Bar */}
+                <div className="flex items-center gap-4 mb-2">
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => {
+                        if (input.startsWith('*') && input.endsWith('*')) setInput(input.slice(1, -1));
+                        else setInput(`*${input}*`);
+                      }}
+                      className={`px-3 py-1.5 rounded-lg border transition-all text-[9px] font-bold tracking-[0.2em] uppercase ${
+                        input.startsWith('*') && input.endsWith('*')
+                          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                          : 'bg-white/5 text-zinc-500 border-white/5 hover:text-white'
+                      }`}
+                    >
+                      {profile.mode === AppMode.ROLEPLAY ? 'EXPRESSION' : 'ACTION'}
+                    </button>
+                    
+                    <div className="flex rounded-lg overflow-hidden border border-white/5">
+                      <button
+                        onClick={() => handleRefine()}
+                        disabled={!input.trim() || isRefining}
+                        className={`px-3 py-1.5 bg-white/5 text-[9px] font-bold tracking-[0.2em] transition-all flex items-center gap-2 ${
+                          isRefining ? 'text-emerald-400' : 'text-zinc-500 hover:text-emerald-400'
+                        }`}
+                      >
+                        {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                        REFINE
+                      </button>
+                      <button
+                        onClick={() => setShowGuidedRefine(!showGuidedRefine)}
+                        className={`px-2 py-1.5 bg-white/5 text-[9px] font-bold transition-all border-l border-white/10 ${
+                          showGuidedRefine ? 'text-emerald-400' : 'text-zinc-500 hover:text-emerald-400'
+                        }`}
+                      >
+                        <Edit3 className="w-3 h-3" />
+                      </button>
+                    </div>
+
+                    <button
+                      onClick={handleSuggest}
+                      disabled={isSuggesting}
+                      className={`px-3 py-1.5 rounded-lg border transition-all text-[9px] font-bold tracking-[0.2em] flex items-center gap-2 ${
+                        isSuggesting ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-white/5 text-zinc-500 border-white/5 hover:text-emerald-400'
+                      }`}
+                    >
+                      {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                      SUGGEST
+                    </button>
+                  </div>
+
+                  <div className="h-4 w-[1px] bg-white/10" />
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => setIsAutoRead(!isAutoRead)}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-[9px] font-bold tracking-[0.2em] ${
+                        isAutoRead ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-white/5 text-zinc-500 border-white/5 hover:text-white'
+                      }`}
+                    >
+                      {isAutoRead ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
+                      READBACK
+                    </button>
+                    
+                    {profile.mode === AppMode.GAME && (
+                      <div className="flex items-center gap-1 p-1 bg-white/5 rounded-lg border border-white/5">
+                        {['d6', 'd20'].map(die => (
+                          <button
+                            key={die}
+                            onClick={() => {
+                              const sides = parseInt(die.slice(1));
+                              const result = Math.floor(Math.random() * sides) + 1;
+                              setInput(prev => prev ? `${prev} [Rolled ${die}: ${result}]` : `[Rolled ${die}: ${result}]`);
+                            }}
+                            className="px-2 py-0.5 rounded text-[8px] font-bold text-purple-400 hover:bg-purple-500/20 transition-all uppercase"
+                          >
+                            {die}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="text-[9px] text-zinc-600 uppercase tracking-[0.3em] font-bold ml-auto hidden md:block">
+                    OPERATOR: <span className="text-zinc-400">{profile.playerProfile?.name || 'GUEST'}</span>
+                  </div>
+                </div>
+
+                <div className="flex items-end gap-4">
+                  {isLiveMode && (
+                    <button
+                      onClick={toggleMic}
+                      className={`p-4 rounded-2xl transition-all shadow-xl group flex-shrink-0 ${
+                        isMicActive ? 'bg-red-500/20 text-red-400 border border-red-500/30 shadow-red-500/10' : 'bg-white/5 text-zinc-500 border border-white/5 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      {isMicActive ? <Mic className="w-6 h-6 animate-pulse" /> : <MicOff className="w-6 h-6" />}
+                    </button>
+                  )}
+
+                  <div className="flex-1 flex flex-col gap-2 relative">
+                    {error && (
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="absolute -top-12 left-0 right-0 bg-red-500/20 border border-red-500/30 text-red-400 text-[10px] px-3 py-2 rounded-xl backdrop-blur-md flex items-center justify-between z-20">
+                        <div className="flex items-center gap-2 font-bold uppercase tracking-widest text-[8px]">
+                          <AlertCircle className="w-3 h-3" />
+                          {error}
+                        </div>
+                        <button onClick={() => setError(null)} className="hover:text-white transition-colors">×</button>
+                      </motion.div>
+                    )}
+                    
+                    {showLeaveWarning && (
+                      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="absolute -top-16 left-0 right-0 bg-red-500/30 border border-red-500/40 rounded-xl p-3 flex items-center justify-between z-10 backdrop-blur-md shadow-2xl">
+                        <span className="text-xs text-red-100 font-bold px-2 tracking-wide">PENDING THOUGHTS EXIST. DISCARD?</span>
+                        <div className="flex gap-3">
+                          <button onClick={handleCancelLeave} className="px-3 py-1 text-xs text-red-200 hover:text-white font-bold transition-colors">NO</button>
+                          <button onClick={handleConfirmLeave} className="px-4 py-1 text-xs bg-red-600 text-white rounded-lg font-bold transition-colors shadow-lg">YES</button>
+                        </div>
+                      </motion.div>
+                    )}
+
+                    <div className="relative group/input shadow-2xl">
+                    <textarea
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
+                        placeholder={isLiveMode ? "Listening for your resonance..." : "Enter narrative command..."}
+                        className={`w-full bg-black/60 border border-white/10 rounded-2xl px-6 py-4 text-base text-white placeholder-zinc-700 focus:bg-white/[0.05] focus:border-emerald-500/40 transition-all resize-none shadow-inner no-scrollbar ${isInputExpanded ? 'h-64 sm:h-80' : 'h-[60px]'}`}
+                        rows={1}
+                      />
+                      <button 
+                        onClick={() => setIsInputExpanded(!isInputExpanded)}
+                        className="absolute right-4 top-4.5 p-1 text-zinc-700 hover:text-emerald-400 transition-colors opacity-0 group-hover/input:opacity-100"
+                        title={isInputExpanded ? "Collapse" : "Expand"}
+                      >
+                        <Repeat className={`w-4 h-4 rotate-90 transition-transform duration-500 ${isInputExpanded ? 'rotate-[270deg]' : ''}`} />
+                      </button>
+                    </div>
+
+                    <div className="relative group/note">
+                      <div className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-700 group-focus-within/note:text-emerald-500 transition-colors">
+                        <Edit3 className="w-3 h-3" />
+                      </div>
+                      <input
+                        type="text"
+                        value={directorNote}
+                        onChange={(e) => setDirectorNote(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendText(); } }}
+                        placeholder={
+                          profile.mode === AppMode.ROLEPLAY
+                            ? "AI WHISPER (e.g. 'Project confidence')"
+                            : "DIRECTOR NOTE (e.g. 'Escalate tension')"
+                        }
+                        className="w-full bg-white/[0.02] border border-white/5 rounded-xl pl-10 pr-4 py-2.5 text-[10px] text-zinc-500 placeholder-zinc-700 focus:bg-white/5 focus:border-emerald-500/20 focus:ring-0 transition-all font-mono uppercase tracking-[0.1em]"
+                      />
+                    </div>
+                  </div>
+
+                  <button 
+                    onClick={() => handleSendText()} 
+                    disabled={(!input.trim() && !directorNote.trim()) || isTyping} 
+                    className="group relative flex items-center justify-center p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-900 disabled:text-zinc-700 text-white rounded-2xl shadow-xl transition-all active:scale-95 disabled:hover:scale-100 flex-shrink-0 min-w-[60px] h-[60px]"
+                  >
+                    <div className="absolute inset-0 bg-emerald-400 opacity-0 group-hover:opacity-20 rounded-2xl blur-lg transition-opacity" />
+                    {isTyping ? <Loader2 className="w-6 h-6 animate-spin opacity-50" /> : <Send className="w-6 h-6 relative z-10" />}
                   </button>
                 </div>
-                <input
-                  type="text"
-                  value={directorNote}
-                  onChange={(e) => setDirectorNote(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendText(); } }}
-                  placeholder={
-                    profile.mode === AppMode.ROLEPLAY
-                      ? "Whisper to the AI (e.g. 'Seem nervous', 'Reveal something small')"
-                      : profile.mode === AppMode.SCENARIO
-                      ? "Director's Note (e.g. 'Introduce a new character', 'Escalate the tension')"
-                      : "DM Note (e.g. 'Make this harder', 'Add a hidden trap', 'NPC knows a secret')"
-                  }
-                  className="w-full glass-input rounded-xl px-4 py-2 text-xs text-zinc-300 placeholder-zinc-600 focus:ring-1 focus:ring-emerald-500/30 transition-all"
-                />
               </div>
-              <button onClick={() => handleSendText()} disabled={(!input.trim() && !directorNote.trim()) || isTyping} className="p-3 sm:p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-2xl shadow-xl transition-all">
-                <Send className="w-5 h-5 sm:w-6 sm:h-6" />
-              </button>
             </div>
           </div>
         </div>

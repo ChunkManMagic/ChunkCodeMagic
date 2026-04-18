@@ -16,7 +16,7 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
   const [isLoaded, setIsLoaded] = useState(false);
   const { loadData, saveData } = useStorage();
   const { toastSuccess, toastError } = useToast();
-  const { user, isAuthReady, syncCodex, saveCodexEntry } = useFirestoreSync();
+  const { user, isAuthReady, syncCodex, saveCodexEntry, saveCodexEntriesBatch } = useFirestoreSync();
 
   useEffect(() => {
     const loadCodexData = async () => {
@@ -48,9 +48,7 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
               const savedCodex = await loadData<CodexEntry[]>(STORAGE_KEYS.SCENARIO_CODEX(scenarioId));
               if (savedCodex && savedCodex.length > 0) {
                 console.log("Migrating local codex to Firestore...");
-                for (const entry of savedCodex) {
-                  await saveCodexEntry(scenarioId, entry);
-                }
+                await saveCodexEntriesBatch(scenarioId, savedCodex);
               }
               localStorage.setItem(`migrated_codex_${scenarioId}_${user.uid}`, 'true');
             }
@@ -60,7 +58,7 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
       });
       return () => unsubscribe();
     }
-  }, [isAuthReady, user, scenarioId, syncCodex, loadData, saveCodexEntry]);
+  }, [isAuthReady, user, scenarioId, syncCodex, loadData, saveCodexEntriesBatch]);
 
   useEffect(() => {
     if (isLoaded) {
@@ -75,10 +73,17 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
     }
   }, [user, scenarioId, saveCodexEntry]);
 
+  const addCodexEntriesBatch = useCallback(async (entries: CodexEntry[]) => {
+    setCodexEntries(prev => [...prev, ...entries]);
+    if (user) {
+      await saveCodexEntriesBatch(scenarioId, entries);
+    }
+  }, [user, scenarioId, saveCodexEntriesBatch]);
+
   const handleAutoPopulateCodex = useCallback(async (force = false, historyOverride?: any[]) => {
     const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
     if (isAutoPopulatingCodex || currentHistory.length < 2) return;
-    if (!force && (!isAutoCodexEnabled || currentHistory.length % 3 !== 0)) return;
+    if (!force && (!isAutoCodexEnabled || currentHistory.length % 12 !== 0)) return;
     
     setIsAutoPopulatingCodex(true);
     try {
@@ -90,9 +95,7 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
           id: generateId(),
         } as CodexEntry));
         
-        for (const entry of entriesWithIds) {
-          await addCodexEntry(entry);
-        }
+        await addCodexEntriesBatch(entriesWithIds);
         toastSuccess(`Added ${newEntries.length} new codex entries`);
       } else if (force) {
         toastSuccess("No new codex entries found");
@@ -105,7 +108,7 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
     } finally {
       setIsAutoPopulatingCodex(false);
     }
-  }, [messages, profile, codexEntries, isAutoPopulatingCodex, isAutoCodexEnabled, toastSuccess, toastError, addCodexEntry]);
+  }, [messages, profile, codexEntries, isAutoPopulatingCodex, isAutoCodexEnabled, toastSuccess, toastError, addCodexEntriesBatch]);
 
   const handleRefineCodexEntry = useCallback(async (entry: Partial<CodexEntry>) => {
     if (isRefiningCodexEntry || !entry.title || !entry.content) return entry;

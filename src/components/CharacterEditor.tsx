@@ -279,7 +279,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
   };
 
   return (
-    <div className="p-4 sm:p-8 max-w-6xl mx-auto w-full">
+    <div className="p-4 sm:p-8 max-w-6xl mx-auto w-full max-h-[90vh] overflow-y-auto custom-scrollbar">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-8 gap-4">
         <div>
           <h2 className="text-3xl sm:text-4xl font-serif text-white">{getPageTitle(profile.mode, !!isInitialReview)}</h2>

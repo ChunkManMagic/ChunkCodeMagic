@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Component, ErrorInfo, ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, Component, ErrorInfo, ReactNode } from 'react';
 import { get, set, del } from 'idb-keyval';
 import { motion, AnimatePresence } from 'motion/react';
 import { CharacterCreator } from './components/CharacterCreator';
@@ -319,7 +319,7 @@ export default function App() {
     }
   }, [currentScenarioId, isScenariosLoaded]);
 
-  const handleLogin = async () => {
+  const handleLogin = useCallback(async () => {
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
@@ -328,7 +328,7 @@ export default function App() {
       console.error("Login Error:", error);
       toastError(`Login failed: ${error.message}`);
     }
-  };
+  }, [toastSuccess, toastError]);
 
   const handleLogout = async () => {
     try {
@@ -341,14 +341,14 @@ export default function App() {
     }
   };
 
-  const handleCreateNew = () => {
+  const handleCreateNew = useCallback(() => {
     if (!user) {
       handleLogin();
       return;
     }
     setIsCreating(true);
     setCurrentScenarioId(null);
-  };
+  }, [user, handleLogin]);
 
   const handleSelectScenario = (scenario: Scenario) => {
     setCurrentScenarioId(scenario.id);
@@ -612,13 +612,64 @@ export default function App() {
     return () => window.removeEventListener('confirm-navigate-library', handleConfirm);
   }, []);
 
-  const handleLibraryClick = () => {
+  const handleLibraryClick = useCallback(() => {
     if (currentScenarioId) {
       window.dispatchEvent(new CustomEvent('request-navigate-library'));
     } else {
       setCurrentScenarioId(null);
     }
-  };
+  }, [currentScenarioId]);
+
+  // Keyboard Shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+        if (e.key === 'Escape') {
+          target.blur();
+        }
+        return;
+      }
+
+      // Global Shortcuts
+      if (e.altKey) {
+        switch (e.key.toLowerCase()) {
+          case 's':
+            e.preventDefault();
+            setShowSettings(prev => !prev);
+            break;
+          case 'n':
+            e.preventDefault();
+            handleCreateNew();
+            break;
+          case 'l':
+            e.preventDefault();
+            handleLibraryClick();
+            break;
+        }
+      }
+
+      // Escape to close modals or go back
+      if (e.key === 'Escape') {
+        if (showSettings) {
+          handleSettingsClose();
+        } else if (confirmModal.isOpen) {
+          setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }));
+        } else if (isCreating || showDraft) {
+          setIsCreating(false);
+          setShowDraft(false);
+        } else if (isEditing) {
+          setIsEditing(false);
+        } else if (currentScenarioId) {
+          handleLibraryClick();
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [showSettings, confirmModal.isOpen, isCreating, showDraft, isEditing, currentScenarioId, handleCreateNew, handleLibraryClick]);
 
   if (!isAuthReady) {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500">Initializing Engine...</div>;
@@ -630,51 +681,69 @@ export default function App() {
       <OfflineBanner />
       <div className="min-h-screen animated-bg text-zinc-100 p-4 md:p-8 flex flex-col selection:bg-emerald-500/30">
       {/* Background Ambience */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
+      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <motion.div 
-          animate={{ backgroundColor: backgroundColors.primary.replace('bg-', '').split('/')[0] }}
-          className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${backgroundColors.primary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
+          animate={{ 
+            backgroundColor: backgroundColors.primary.replace('bg-', '').split('/')[0],
+            scale: [1, 1.2, 1],
+            x: [0, 50, 0],
+            y: [0, 30, 0]
+          }}
+          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+          className={`absolute top-[-20%] left-[-20%] w-[60%] h-[60%] ${backgroundColors.primary} blur-[140px] rounded-full transition-colors duration-2000`} 
         />
         <motion.div 
-          animate={{ backgroundColor: backgroundColors.secondary.replace('bg-', '').split('/')[0] }}
-          className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${backgroundColors.secondary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
-          style={{ animationDelay: '-3s' }} 
+          animate={{ 
+            backgroundColor: backgroundColors.secondary.replace('bg-', '').split('/')[0],
+            scale: [1.2, 1, 1.2],
+            x: [0, -50, 0],
+            y: [0, -30, 0]
+          }}
+          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+          className={`absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] ${backgroundColors.secondary} blur-[140px] rounded-full transition-colors duration-2000`} 
         />
+        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay" />
       </div>
 
-      <header className="mb-12 flex items-center justify-between relative z-10">
-        <div className="w-32">
+      <header className="mb-12 flex items-center justify-between relative z-10 px-4">
+        <div className="w-48">
           {currentScenarioId && (
-            <button
+            <motion.button
+              initial={{ opacity: 0, x: -20 }}
+              animate={{ opacity: 1, x: 0 }}
               onClick={handleLibraryClick}
-              className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 hover:text-white uppercase tracking-widest transition-all"
+              className="flex items-center gap-3 text-[10px] font-bold text-zinc-500 hover:text-white uppercase tracking-[0.2em] transition-all group"
             >
-              <Library className="w-4 h-4" />
+              <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center group-hover:bg-emerald-500/10 group-hover:border-emerald-500/20 transition-all">
+                <Library className="w-4 h-4" />
+              </div>
               Library
-            </button>
+            </motion.button>
           )}
         </div>
+        
         <div className="text-center">
-          <h1 className="text-4xl font-serif font-bold text-white tracking-tighter">PersonaForge</h1>
-          <div className="flex items-center justify-center gap-2 mt-2">
-            <p className="text-[10px] uppercase tracking-[0.4em] text-zinc-500 font-bold">Immersive Narrative Engine</p>
-            <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
-              settings.activeTextProvider === 'Google' 
-                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' 
-                : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
-            }`}>
-              {settings.activeTextProvider}
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="flex flex-col items-center"
+          >
+            <h1 className="text-5xl sm:text-6xl font-serif font-bold text-white tracking-tighter mb-2 bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">PersonaForge</h1>
+            <div className="flex items-center justify-center gap-3">
+              <div className="h-[1px] w-8 bg-gradient-to-r from-transparent to-emerald-500/30" />
+              <p className="text-[9px] uppercase tracking-[0.6em] text-zinc-500 font-bold mix-blend-plus-lighter">Immersive Narrative Engine</p>
+              <div className="h-[1px] w-8 bg-gradient-to-l from-transparent to-emerald-500/30" />
             </div>
-            <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
-              settings.voiceEngine === 'Cinematic'
-                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-            }`}>
-              {settings.voiceEngine}
+            
+            <div className="flex items-center gap-2 mt-4">
+              <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest px-2 py-0.5 border border-white/5 rounded-full">{settings.activeTextProvider} CORE</span>
+              <div className="w-1 h-1 rounded-full bg-zinc-700" />
+              <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest px-2 py-0.5 border border-white/5 rounded-full">{settings.voiceEngine} VOICE</span>
             </div>
-          </div>
+          </motion.div>
         </div>
-        <div className="w-32 flex justify-end gap-4 items-center">
+
+        <div className="w-48 flex justify-end gap-5 items-center">
           {user ? (
             <div className="flex items-center gap-3">
               <div className="flex flex-col items-end">
@@ -724,60 +793,88 @@ export default function App() {
       {showSettings && <SettingsModal onClose={handleSettingsClose} />}
 
       <main className="flex-1 flex flex-col max-w-7xl mx-auto w-full relative z-10">
-        {!currentScenarioId && !isCreating && !showDraft ? (
-          <ErrorBoundary>
-            <ScenarioLibrary 
-              scenarios={scenarios} 
-              onSelect={handleSelectScenario} 
-              onEdit={handleEditScenario}
-              onDuplicate={handleDuplicateScenario}
-              onDelete={handleDeleteScenario} 
-              onNew={handleCreateNew} 
-              hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
-              onRestoreDraft={() => setShowDraft(true)}
-              onImport={handleImportScenario}
-            />
-          </ErrorBoundary>
-        ) : (isCreating || showDraft) && !currentScenarioId ? (
-          <div className="flex-1 flex items-center justify-center py-10">
-            <ErrorBoundary>
-              <CharacterCreator 
-                scenarios={scenarios}
-                onCharacterCreated={handleCharacterCreated} 
-                onCancel={() => {
-                  setIsCreating(false);
-                  setShowDraft(false);
-                }}
-              />
-            </ErrorBoundary>
-          </div>
-        ) : isEditing && currentScenario ? (
-          <div className="flex-1 flex items-center justify-center py-10">
-            <ErrorBoundary>
-              <CharacterEditor
-                profile={currentScenario.profile}
-                avatarBase64={currentScenario.avatarBase64}
-                onSave={handleSaveEdit}
-                onCancel={() => setIsEditing(false)}
-              />
-            </ErrorBoundary>
-          </div>
-        ) : currentScenario ? (
-          <div className="flex-1 h-[85vh]">
-            <ErrorBoundary>
-              <ChatInterface 
-                profile={currentScenario.profile} 
-                avatarBase64={currentScenario.avatarBase64} 
-                scenarioId={currentScenario.id}
-                onEditCharacter={() => setIsEditing(true)} 
-                onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
-                onUpdateProfile={handleUpdateProfile}
-                onUpdateAvatar={handleUpdateAvatar}
-                onBranchScenario={handleBranchScenario}
-              />
-            </ErrorBoundary>
-          </div>
-        ) : null}
+        <AnimatePresence mode="wait">
+          {!currentScenarioId && !isCreating && !showDraft ? (
+            <motion.div
+              key="library"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -20 }}
+              className="flex-1"
+            >
+              <ErrorBoundary>
+                <ScenarioLibrary 
+                  scenarios={scenarios} 
+                  onSelect={handleSelectScenario} 
+                  onEdit={handleEditScenario}
+                  onDuplicate={handleDuplicateScenario}
+                  onDelete={handleDeleteScenario} 
+                  onNew={handleCreateNew} 
+                  hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
+                  onRestoreDraft={() => setShowDraft(true)}
+                  onImport={handleImportScenario}
+                />
+              </ErrorBoundary>
+            </motion.div>
+          ) : (isCreating || showDraft) && !currentScenarioId ? (
+            <motion.div
+              key="creator"
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="flex-1 flex items-center justify-center py-10"
+            >
+              <ErrorBoundary>
+                <CharacterCreator 
+                  scenarios={scenarios}
+                  onCharacterCreated={handleCharacterCreated} 
+                  onCancel={() => {
+                    setIsCreating(false);
+                    setShowDraft(false);
+                  }}
+                />
+              </ErrorBoundary>
+            </motion.div>
+          ) : isEditing && currentScenario ? (
+            <motion.div
+              key="editor"
+              initial={{ opacity: 0, x: 50 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -50 }}
+              className="flex-1 flex items-center justify-center py-10"
+            >
+              <ErrorBoundary>
+                <CharacterEditor
+                  profile={currentScenario.profile}
+                  avatarBase64={currentScenario.avatarBase64}
+                  onSave={handleSaveEdit}
+                  onCancel={() => setIsEditing(false)}
+                />
+              </ErrorBoundary>
+            </motion.div>
+          ) : currentScenario ? (
+            <motion.div
+              key="chat"
+              initial={{ opacity: 0, scale: 1.05 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 1.05 }}
+              className="flex-1 min-h-0"
+            >
+              <ErrorBoundary>
+                <ChatInterface 
+                  profile={currentScenario.profile} 
+                  avatarBase64={currentScenario.avatarBase64} 
+                  scenarioId={currentScenario.id}
+                  onEditCharacter={() => setIsEditing(true)} 
+                  onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
+                  onUpdateProfile={handleUpdateProfile}
+                  onUpdateAvatar={handleUpdateAvatar}
+                  onBranchScenario={handleBranchScenario}
+                />
+              </ErrorBoundary>
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
       </main>
 
       {branchData && (

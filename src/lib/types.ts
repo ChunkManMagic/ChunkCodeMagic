@@ -144,6 +144,7 @@ export interface AppSettings {
   openRouterModel?: string;
   openRouterModels?: OpenRouterModel[];
   voiceEngine: 'Cinematic' | 'Fast Browser';
+  activeTTSModel: string;
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;
@@ -172,9 +173,10 @@ export const CURRENT_SCHEMA_VERSION = 1;
 
 export const defaultSettings: AppSettings = {
   activeTextProvider: 'Google',
-  activeModel: 'gemini-2.5-flash',
+  activeModel: 'gemini-flash-latest',
   openRouterModel: 'meta-llama/llama-3-8b-instruct:free',
   voiceEngine: 'Cinematic',
+  activeTTSModel: 'gemini-flash-latest',
   premiumCustomVoices: true,
   premiumContextAnimations: true,
   premiumAutoAvatar: true,

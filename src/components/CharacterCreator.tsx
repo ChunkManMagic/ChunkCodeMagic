@@ -485,7 +485,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="w-full max-w-4xl mx-auto p-10 glass-panel rounded-[2.5rem] shadow-2xl relative overflow-hidden border border-white/5"
+      className="w-full max-w-4xl mx-auto p-6 sm:p-10 glass-panel rounded-[2.5rem] shadow-2xl relative overflow-y-auto max-h-[90vh] border border-white/5 custom-scrollbar"
     >
       {/* Background Glows */}
       <div className="absolute -top-24 -right-24 w-96 h-96 bg-emerald-500/5 blur-[120px] rounded-full" />

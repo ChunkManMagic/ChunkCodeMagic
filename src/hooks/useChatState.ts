@@ -9,7 +9,7 @@ export function useChatState(scenarioId: string) {
   const [storySummary, setStorySummary] = useState<string>('');
   const [isLoaded, setIsLoaded] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const { user, isAuthReady, syncMessages, saveMessage, deleteMessage: cloudDeleteMessage, syncSummary, saveSummary } = useFirestoreSync();
+  const { user, isAuthReady, syncMessages, saveMessage, saveMessagesBatch, deleteMessage: cloudDeleteMessage, deleteMessagesBatch, syncSummary, saveSummary } = useFirestoreSync();
 
   // Load initial data from local storage
   useEffect(() => {
@@ -66,9 +66,7 @@ export function useChatState(scenarioId: string) {
               }
               if (saved && Array.isArray(saved) && saved.length > 0) {
                 console.log("Migrating local messages to Firestore...");
-                for (const msg of saved) {
-                  await saveMessage(scenarioId, msg);
-                }
+                await saveMessagesBatch(scenarioId, saved);
               } else {
                 // If there's nothing to migrate, just set messages to empty
                 setMessages([]);
@@ -116,7 +114,7 @@ export function useChatState(scenarioId: string) {
         unsubSummary();
       };
     }
-  }, [isAuthReady, user, scenarioId, syncMessages, syncSummary, saveMessage, saveSummary]);
+  }, [isAuthReady, user, scenarioId, syncMessages, syncSummary, saveMessage, saveMessagesBatch, saveSummary]);
 
   // Save to local and cloud
   useEffect(() => {
@@ -172,9 +170,7 @@ export function useChatState(scenarioId: string) {
     if (user) {
       setIsSaving(true);
       try {
-        for (const msg of updatedMessages) {
-          await saveMessage(scenarioId, msg);
-        }
+        await saveMessagesBatch(scenarioId, updatedMessages);
       } finally {
         setIsSaving(false);
       }
@@ -207,9 +203,7 @@ export function useChatState(scenarioId: string) {
     if (user) {
       setIsSaving(true);
       try {
-        for (const msg of messagesToDelete) {
-          await cloudDeleteMessage(scenarioId, msg.id);
-        }
+        await deleteMessagesBatch(scenarioId, messagesToDelete.map(m => m.id));
       } finally {
         setIsSaving(false);
       }
@@ -223,9 +217,7 @@ export function useChatState(scenarioId: string) {
     if (user) {
       setIsSaving(true);
       try {
-        for (const msg of messagesToDelete) {
-          await cloudDeleteMessage(scenarioId, msg.id);
-        }
+        await deleteMessagesBatch(scenarioId, messagesToDelete.map(m => m.id));
       } finally {
         setIsSaving(false);
       }

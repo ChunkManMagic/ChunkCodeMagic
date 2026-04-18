@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2, RefreshCw } from 'lucide-react';
+import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2, RefreshCw, Keyboard } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { AppSettings, getSettings, defaultSettings, saveSettings, OpenRouterModel } from '../lib/types';
 import { db } from '../firebase';
@@ -125,7 +125,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           </button>
         </div>
         
-        <div className="p-6 space-y-6 overflow-y-auto max-h-[70vh]">
+        <div className="p-6 space-y-6 overflow-y-auto max-h-[85vh] custom-scrollbar">
           <div className="space-y-4">
             <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Preferences</h3>
             
@@ -149,12 +149,20 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   onChange={e => handleChange('activeModel', e.target.value)}
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="gemini-2.5-pro">gemini-2.5-pro (Pro)</option>
-                  <option value="gemini-2.5-flash">gemini-2.5-flash (Fast)</option>
-                  <option value="gemini-2.5-flash-8b">gemini-2.5-flash-8b (Lite)</option>
-                  <option value="gemini-3-flash-preview">gemini-3-flash-preview (Standard)</option>
-                  <option value="gemini-3.1-flash-lite-preview">gemini-3.1-flash-lite-preview (Lite)</option>
-                  <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Pro)</option>
+                  <optgroup label="Latest (Free)">
+                    <option value="gemini-flash-latest">Gemini Flash Latest</option>
+                    <option value="gemini-pro-latest">Gemini Pro Latest</option>
+                    <option value="gemini-flash-lite-latest">Gemini Flash-Lite Latest</option>
+                  </optgroup>
+                  <optgroup label="Previews (Free)">
+                    <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                    <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
+                  </optgroup>
+                  <optgroup label="Classic (Free)">
+                    <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
+                    <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  </optgroup>
                 </select>
               </div>
             ) : (
@@ -222,7 +230,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                                        m.id.toLowerCase().includes(modelSearch.toLowerCase());
                               })
                               .map((m: OpenRouterModel) => (
-                                <option key={m.id} value={m.id}>{m.name}</option>
+                                <option key={m.id} value={m.id}>{m.name} ({m.id}) (Free)</option>
                               ))
                             }
                           </optgroup>
@@ -241,9 +249,22 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                                   return m.name.toLowerCase().includes(modelSearch.toLowerCase()) || 
                                          m.id.toLowerCase().includes(modelSearch.toLowerCase());
                                 })
-                                .map((m: OpenRouterModel) => (
-                                  <option key={m.id} value={m.id}>{m.name} (Paid)</option>
-                                ))
+                                .map((m: OpenRouterModel) => {
+                                  const isFreeById = m.id.toLowerCase().includes(':free');
+                                  const isFreeByPricing = m.pricing && 
+                                    parseFloat(m.pricing.prompt) === 0 && 
+                                    parseFloat(m.pricing.completion) === 0;
+                                  const isFree = isFreeById || isFreeByPricing;
+                                  
+                                  const price = m.pricing ? (parseFloat(m.pricing.prompt) * 1000000).toFixed(2) : '??';
+                                  const priceLabel = isFree ? '(Free)' : `($${price}/1M tokens)`;
+
+                                  return (
+                                    <option key={m.id} value={m.id}>
+                                      {m.name} ({m.id}) {priceLabel}
+                                    </option>
+                                  );
+                                })
                               }
                             </optgroup>
                           )}
@@ -278,6 +299,23 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </select>
             </div>
 
+            {settings.voiceEngine === 'Cinematic' && (
+              <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+                <label className="text-sm text-gray-300">Active TTS Model</label>
+                <select 
+                  value={settings.activeTTSModel}
+                  onChange={e => handleChange('activeTTSModel', e.target.value)}
+                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+                >
+                  <option value="gemini-flash-latest">Gemini Flash Latest (Fastest)</option>
+                  <option value="gemini-pro-latest">Gemini Pro Latest (High Quality)</option>
+                  <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                </select>
+                <p className="text-[10px] text-gray-500">Flash is faster and has higher limits. Pro offers better narration quality.</p>
+              </div>
+            )}
+
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-sm text-gray-300">Global Writing Style Instructions</label>
@@ -293,6 +331,55 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500 min-h-[80px] resize-y"
               />
               <p className="text-xs text-gray-500">These instructions affect all AI responses, suggestions, and refinements.</p>
+            </div>
+
+            <div className="pt-4 space-y-4">
+              <div className="flex items-center gap-2">
+                <Keyboard className="w-4 h-4 text-zinc-400" />
+                <h3 className="text-sm font-medium text-gray-400 uppercase tracking-wider">Keyboard Shortcuts</h3>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">Settings</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+S</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">New Character</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+N</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">Library</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+L</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">World Codex</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+C</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">Inventory</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+I</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">Voice/Mic</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+V</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">Refine Input</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+R</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">AI Suggestion</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Alt+G</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">Send Msg</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Ctrl+Ent</kbd>
+                </div>
+                <div className="flex justify-between items-center bg-white/5 px-3 py-2 rounded-xl border border-white/5">
+                  <span className="text-[10px] text-zinc-400 uppercase tracking-wider">Close/Back</span>
+                  <kbd className="px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 text-[10px] font-mono border border-white/10">Esc</kbd>
+                </div>
+              </div>
             </div>
 
             {/* Premium Features Section */}

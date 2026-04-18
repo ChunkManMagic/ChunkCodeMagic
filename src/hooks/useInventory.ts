@@ -14,7 +14,7 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
   const [isGeneratingItemImage, setIsGeneratingItemImage] = useState<string | null>(null);
   const { toastSuccess, toastError } = useToast();
   
-  const { user, isAuthReady, syncInventory, saveInventoryItem, deleteInventoryItem } = useFirestoreSync();
+  const { user, isAuthReady, syncInventory, saveInventoryItem, saveInventoryItemsBatch, deleteInventoryItem } = useFirestoreSync();
   const { loadData, saveData } = useStorage();
   const [isLoaded, setIsLoaded] = useState(false);
   
@@ -57,9 +57,7 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
               const itemsToMigrate = savedInventory || profileInventoryRef.current || [];
               if (itemsToMigrate.length > 0) {
                 console.log("Migrating local inventory to Firestore...");
-                for (const item of itemsToMigrate) {
-                  await saveInventoryItem(scenarioId, item);
-                }
+                await saveInventoryItemsBatch(scenarioId, itemsToMigrate);
               }
               localStorage.setItem(`migrated_inv_${scenarioId}_${user.uid}`, 'true');
             }
@@ -69,7 +67,7 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
       });
       return () => unsub();
     }
-  }, [isAuthReady, user, scenarioId, syncInventory, loadData, saveInventoryItem]);
+  }, [isAuthReady, user, scenarioId, syncInventory, loadData, saveInventoryItemsBatch]);
 
   useEffect(() => {
     if (isLoaded) {
@@ -88,10 +86,36 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
     }
   }, [user, scenarioId, saveInventoryItem]);
 
+  const addOrUpdateItemsBatch = useCallback(async (items: InventoryItem[]) => {
+    setInventory(prev => {
+      const next = [...prev];
+      items.forEach(item => {
+        const index = next.findIndex(i => i.id === item.id);
+        if (index !== -1) next[index] = item;
+        else next.push(item);
+      });
+      return next;
+    });
+    if (user) {
+      await saveInventoryItemsBatch(scenarioId, items);
+    }
+  }, [user, scenarioId, saveInventoryItemsBatch]);
+
   const removeItem = useCallback(async (itemId: string) => {
     setInventory(prev => prev.filter(i => i.id !== itemId));
     if (user) {
       await deleteInventoryItem(scenarioId, itemId);
+    }
+  }, [user, scenarioId, deleteInventoryItem]);
+
+  const removeItemsBatch = useCallback(async (itemIds: string[]) => {
+    setInventory(prev => prev.filter(i => !itemIds.includes(i.id)));
+    if (user) {
+      // We don't have deleteInventoryItemsBatch yet, but we can add it or just loop for now if it's small.
+      // Actually, let's add it to useFirestoreSync for completeness.
+      for (const id of itemIds) {
+        await deleteInventoryItem(scenarioId, id);
+      }
     }
   }, [user, scenarioId, deleteInventoryItem]);
 
@@ -113,8 +137,8 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
   }, [profile, addOrUpdateItem, toastSuccess, toastError]);
 
   const handleAutoUpdateInventory = useCallback(async (force = false, messagesOverride?: any[]) => {
-    if (!force && !isAutoInventoryEnabled) return;
     const currentMessages = messagesOverride || messages;
+    if (!force && (!isAutoInventoryEnabled || currentMessages.length % 8 !== 0)) return;
     if (currentMessages.length < 2) return;
 
     setIsScanningInventory(true);
@@ -122,13 +146,15 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
       const updates = await extractInventoryUpdates(currentMessages, inventory);
       
       let changed = false;
+      const itemsToAddOrUpdate: InventoryItem[] = [];
+      const itemIdsToRemove: string[] = [];
 
       // Handle removals
       if (updates.removed.length > 0) {
         updates.removed.forEach(idOrName => {
           const item = inventory.find(i => i.id === idOrName || i.name === idOrName);
           if (item) {
-            removeItem(item.id);
+            itemIdsToRemove.push(item.id);
             changed = true;
           }
         });
@@ -139,7 +165,7 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
         for (const update of updates.updated) {
           const item = inventory.find(i => i.id === update.id || i.name === (update as any).name);
           if (item) {
-            await addOrUpdateItem({ ...item, quantity: update.quantity });
+            itemsToAddOrUpdate.push({ ...item, quantity: update.quantity });
             changed = true;
           }
         }
@@ -157,9 +183,16 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
             rarity: newItem.rarity,
             value: newItem.value
           };
-          await addOrUpdateItem(item);
+          itemsToAddOrUpdate.push(item);
           changed = true;
         }
+      }
+
+      if (itemIdsToRemove.length > 0) {
+        await removeItemsBatch(itemIdsToRemove);
+      }
+      if (itemsToAddOrUpdate.length > 0) {
+        await addOrUpdateItemsBatch(itemsToAddOrUpdate);
       }
 
       if (changed && force) {
@@ -175,7 +208,7 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
     } finally {
       setIsScanningInventory(false);
     }
-  }, [inventory, isAutoInventoryEnabled, messages, addOrUpdateItem, removeItem, toastSuccess, toastError]);
+  }, [inventory, isAutoInventoryEnabled, messages, addOrUpdateItemsBatch, removeItemsBatch, toastSuccess, toastError]);
 
   return {
     inventory,
