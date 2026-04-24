@@ -665,7 +665,7 @@ The character should be the central focus, looking towards the camera.`;
   }
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-flash-latest',
+    model: 'gemini-2.5-flash-image',
     contents: {
       parts: [{ text: prompt }]
     },
@@ -698,7 +698,7 @@ Style: Digital art, detailed, atmospheric, professional concept art, sharp focus
 The subject should be the central focus, capturing the essence of the description.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-flash-latest',
+    model: 'gemini-2.5-flash-image',
     contents: {
       parts: [{ text: prompt }]
     },
@@ -729,7 +729,7 @@ Tone: ${profile.storyTone}
 Style: RPG item icon, digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures, centered on a neutral background.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-flash-latest',
+    model: 'gemini-2.5-flash-image',
     contents: {
       parts: [{ text: prompt }]
     },
@@ -1510,7 +1510,7 @@ Style: Cinematic lighting, professional photography, sharp focus, intricate text
 The character should be the central focus, looking towards the camera.`;
 
   const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-flash-latest',
+    model: 'gemini-2.5-flash-image',
     contents: {
       parts: [{ text: prompt }]
     },
