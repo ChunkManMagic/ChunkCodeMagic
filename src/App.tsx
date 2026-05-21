@@ -125,7 +125,8 @@ export default function App() {
     isAuthReady, 
     syncScenarios, 
     saveScenario, 
-    deleteScenario 
+    deleteScenario,
+    saveMessagesBatch
   } = useFirestoreSync();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [isScenariosLoaded, setIsScenariosLoaded] = useState(false);
@@ -150,7 +151,7 @@ export default function App() {
           const migratedFlag = localStorage.getItem(`migrated_to_firestore_${user.uid}`);
           if (migratedFlag) return;
 
-          let localScenarios = await get(STORAGE_KEYS.SCENARIOS) || [];
+          let localScenarios: Scenario[] = await get(STORAGE_KEYS.SCENARIOS) || [];
           const localScenariosStr = localStorage.getItem(STORAGE_KEYS.SCENARIOS);
           if (localScenariosStr) {
             const ls = JSON.parse(localScenariosStr);
@@ -162,7 +163,7 @@ export default function App() {
           if (localScenarios.length > 0) {
             console.log("Migrating local scenarios to Firestore...");
             // Remove duplicates
-            const uniqueScenarios = new Map();
+            const uniqueScenarios = new Map<string, Scenario>();
             for (const s of localScenarios) {
               if (!uniqueScenarios.has(s.id)) {
                 uniqueScenarios.set(s.id, s);
@@ -172,20 +173,23 @@ export default function App() {
             for (const scenario of uniqueScenarios.values()) {
               await saveScenario(scenario);
               
-              // Also try to migrate messages from localStorage
+              // Also migrate messages from localStorage/IndexedDB to Firestore
               try {
-                const msgsStr = localStorage.getItem(STORAGE_KEYS.SCENARIO_MESSAGES(scenario.id));
-                if (msgsStr) {
-                  const msgs = JSON.parse(msgsStr);
-                  if (Array.isArray(msgs)) {
-                    for (const _msg of msgs) {
-                      // We don't have saveMessage here, but we can use setDoc directly if needed.
-                      // Or we can just let useChatState handle it when the user opens the scenario.
-                      // useChatState loads from localStorage and saves to Firestore!
-                    }
+                // Try IndexedDB first, then localStorage
+                let msgs: Message[] = await get(STORAGE_KEYS.SCENARIO_MESSAGES(scenario.id)) || [];
+                if (!msgs.length) {
+                  const msgsStr = localStorage.getItem(STORAGE_KEYS.SCENARIO_MESSAGES(scenario.id));
+                  if (msgsStr) {
+                    const parsed = JSON.parse(msgsStr);
+                    if (Array.isArray(parsed)) msgs = parsed;
                   }
                 }
-              } catch (e) {}
+                if (msgs.length > 0) {
+                  await saveMessagesBatch(scenario.id, msgs);
+                }
+              } catch (e) {
+                console.warn(`Failed to migrate messages for scenario ${scenario.id}:`, e);
+              }
             }
           }
           localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
@@ -202,7 +206,7 @@ export default function App() {
       });
       return () => unsubscribe();
     } else if (isAuthReady && !user) {
-      // If not logged in, we could load from IndexedDB or show login
+      // If not logged in, load from IndexedDB
       const loadLocal = async () => {
         let savedScenarios = await get(STORAGE_KEYS.SCENARIOS);
         
@@ -215,7 +219,7 @@ export default function App() {
               // Merge localScenarios with savedScenarios
               if (!savedScenarios) savedScenarios = [];
               
-              const existingIds = new Set(savedScenarios.map((s: any) => s.id));
+              const existingIds = new Set(savedScenarios.map((s: Scenario) => s.id));
               let migrated = false;
               
               for (const ls of localScenarios) {
@@ -240,7 +244,7 @@ export default function App() {
       };
       loadLocal();
     }
-  }, [isAuthReady, user, syncScenarios, saveScenario]);
+  }, [isAuthReady, user, syncScenarios, saveScenario, saveMessagesBatch]);
 
   // Load current ID from IndexedDB
   useEffect(() => {
@@ -290,13 +294,12 @@ export default function App() {
     }
   }, [currentScenario?.profile.storyTone]);
 
-  // Debounced save to IndexedDB (and Firestore if logged in)
+  // Debounced save to IndexedDB
   useEffect(() => {
     if (!isScenariosLoaded) return;
 
     setSaveStatus('saving');
     const timeoutId = setTimeout(() => {
-      // Local save
       set(STORAGE_KEYS.SCENARIOS, scenarios)
         .then(() => setSaveStatus('saved'))
         .catch(e => {
@@ -324,22 +327,25 @@ export default function App() {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
       toastSuccess("Successfully signed in!");
-    } catch (error: any) {
-      console.error("Login Error:", error);
-      toastError(`Login failed: ${error.message}`);
+    } catch (error: unknown) {
+      const err = error as Error;
+      console.error("Login Error:", err);
+      toastError(`Login failed: ${err.message}`);
     }
   }, [toastSuccess, toastError]);
 
-  const handleLogout = async () => {
+  // FIX: wrapped in useCallback so it's stable for dependency arrays
+  const handleLogout = useCallback(async () => {
     try {
       await signOut(auth);
       toastSuccess("Successfully signed out!");
       setCurrentScenarioId(null);
-    } catch (error: any) {
-      console.error("Logout Error:", error);
-      toastError("Logout failed");
+    } catch (error: unknown) {
+      const err = error as Error;
+      console.error("Logout Error:", err);
+      toastError(`Logout failed: ${err.message}`);
     }
-  };
+  }, [toastSuccess, toastError]);
 
   const handleCreateNew = useCallback(() => {
     if (!user) {
@@ -369,7 +375,6 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, 'idle');
     localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, '');
     
-    // Also save a rescue backup just in case
     localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
       step: 'idle',
       appMode: scenario.profile.mode,
@@ -414,7 +419,14 @@ export default function App() {
     });
   };
 
-  const handleImportScenario = async (importedData: any) => {
+  // FIX: typed importedData instead of using `any` blindly
+  const handleImportScenario = async (importedData: {
+    scenario: Scenario;
+    messages?: Message[];
+    codex?: CodexEntry[];
+    inventory?: unknown[];
+    summary?: string;
+  }) => {
     try {
       const newScenarioId = generateId();
       const newScenario: Scenario = {
@@ -425,6 +437,10 @@ export default function App() {
 
       if (user) {
         await saveScenario(newScenario);
+        // Also push imported messages straight to Firestore
+        if (importedData.messages && importedData.messages.length > 0) {
+          await saveMessagesBatch(newScenarioId, importedData.messages);
+        }
       }
       
       if (importedData.messages) {
@@ -441,7 +457,6 @@ export default function App() {
       }
 
       setScenarios(prev => [...prev, newScenario]);
-      // toastSuccess is handled in ScenarioLibrary, but we could do it here too
     } catch (err) {
       console.error("Import error:", err);
       toastError("Failed to import scenario data.");
@@ -476,9 +491,10 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEYS.DRAFT_SETUP_TYPE);
       localStorage.removeItem(STORAGE_KEYS.RESCUE_BACKUP);
       toastSuccess("Character created successfully!");
-    } catch (e: any) {
-      console.error("Failed to create character:", e);
-      toastError(`Failed to create character: ${e.message || 'Unknown error'}`);
+    } catch (e: unknown) {
+      const err = e as Error;
+      console.error("Failed to create character:", err);
+      toastError(`Failed to create character: ${err.message || 'Unknown error'}`);
     }
   };
 
@@ -503,14 +519,13 @@ export default function App() {
   };
 
   const handleCarryOver = async (profile: CharacterProfile, avatarBase64: string) => {
-    // Create a new scenario with the same character but new ID (empty messages)
     let newScenario: Scenario = {
       id: generateId(),
       profile: {
         ...profile,
-        relationship: 'Strangers', // Reset relationship for new scenario
-        storyTone: 'Dramatic', // Reset tone
-        currentMood: 'Neutral' // Reset mood
+        relationship: 'Strangers',
+        storyTone: 'Dramatic',
+        currentMood: 'Neutral'
       },
       avatarBase64,
       lastUpdated: Date.now()
@@ -590,7 +605,6 @@ export default function App() {
       newScenario = await saveScenario(newScenario);
     }
 
-    // Save the branched data to IndexedDB
     await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), branchData.messages);
     await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), branchData.codex);
     await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), branchData.summary);
@@ -623,7 +637,6 @@ export default function App() {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is typing in an input
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
         if (e.key === 'Escape') {
@@ -632,7 +645,6 @@ export default function App() {
         return;
       }
 
-      // Global Shortcuts
       if (e.altKey) {
         switch (e.key.toLowerCase()) {
           case 's':
@@ -650,7 +662,6 @@ export default function App() {
         }
       }
 
-      // Escape to close modals or go back
       if (e.key === 'Escape') {
         if (showSettings) {
           handleSettingsClose();
