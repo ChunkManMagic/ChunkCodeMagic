@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { CodexEntry, CharacterProfile } from '../lib/types';
+import { CodexEntry, CharacterProfile, Message } from '../lib/types';
 import { extractCodexEntries, refineCodexEntry, generateCodexImage } from '../lib/gemini';
 import { useStorage } from './useStorage';
 import { STORAGE_KEYS } from '../constants';
@@ -7,7 +7,7 @@ import { generateId } from '../lib/gemini';
 import { useToast } from './useToast';
 import { useFirestoreSync } from './useFirestoreSync';
 
-export function useCodex(scenarioId: string, profile: CharacterProfile, messages: any[]) {
+export function useCodex(scenarioId: string, profile: CharacterProfile, messages: Message[]) {
   const [codexEntries, setCodexEntries] = useState<CodexEntry[]>([]);
   const [isAutoPopulatingCodex, setIsAutoPopulatingCodex] = useState(false);
   const [isAutoCodexEnabled, setIsAutoCodexEnabled] = useState(false);
@@ -80,7 +80,7 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
     }
   }, [user, scenarioId, saveCodexEntriesBatch]);
 
-  const handleAutoPopulateCodex = useCallback(async (force = false, historyOverride?: any[]) => {
+  const handleAutoPopulateCodex = useCallback(async (force = false, historyOverride?: { role: string; parts: { text: string }[] }[]) => {
     const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
     if (isAutoPopulatingCodex || currentHistory.length < 2) return;
     if (!force && (!isAutoCodexEnabled || currentHistory.length % 12 !== 0)) return;

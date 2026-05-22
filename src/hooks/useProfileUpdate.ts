@@ -1,12 +1,12 @@
 import { useState, useCallback } from 'react';
-import { CharacterProfile } from '../lib/types';
+import { CharacterProfile, Message } from '../lib/types';
 import { updateCharacterProfilesFromHistory } from '../lib/gemini';
 
 export function useProfileUpdate(profile: CharacterProfile, onUpdateProfile: (profile: CharacterProfile) => void) {
   const [isAutoProfileEnabled, setIsAutoProfileEnabled] = useState(false);
   const [isUpdatingProfile, setIsUpdatingProfile] = useState(false);
 
-  const handleAutoUpdateProfile = useCallback(async (messages: any[], force = false, historyOverride?: any[]) => {
+  const handleAutoUpdateProfile = useCallback(async (messages: Message[], force = false, historyOverride?: { role: string; parts: { text: string }[] }[]) => {
     const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
     if (isUpdatingProfile || currentHistory.length < 5) return;
     if (!force && (!isAutoProfileEnabled || currentHistory.length % 20 !== 0)) return;

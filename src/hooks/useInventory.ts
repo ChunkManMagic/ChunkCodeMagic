@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
-import { CharacterProfile, InventoryItem } from '../lib/types';
+import { CharacterProfile, InventoryItem, Message } from '../lib/types';
 import { extractInventoryUpdates, generateItemImage } from '../lib/gemini';
 import { generateId } from '../lib/gemini';
 import { useToast } from './useToast';
@@ -7,7 +7,7 @@ import { useFirestoreSync } from './useFirestoreSync';
 import { useStorage } from './useStorage';
 import { STORAGE_KEYS } from '../constants';
 
-export function useInventory(scenarioId: string, profile: CharacterProfile, messages: any[]) {
+export function useInventory(scenarioId: string, profile: CharacterProfile, messages: Message[]) {
   const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [isScanningInventory, setIsScanningInventory] = useState(false);
   const [isAutoInventoryEnabled, setIsAutoInventoryEnabled] = useState(false);
@@ -136,7 +136,7 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
     }
   }, [profile, addOrUpdateItem, toastSuccess, toastError]);
 
-  const handleAutoUpdateInventory = useCallback(async (force = false, messagesOverride?: any[]) => {
+  const handleAutoUpdateInventory = useCallback(async (force = false, messagesOverride?: Message[]) => {
     const currentMessages = messagesOverride || messages;
     if (!force && (!isAutoInventoryEnabled || currentMessages.length % 8 !== 0)) return;
     if (currentMessages.length < 2) return;

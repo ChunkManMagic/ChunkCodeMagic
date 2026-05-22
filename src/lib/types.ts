@@ -47,6 +47,7 @@ export interface AdditionalCharacter {
   description: string;
   personality?: string;
   appearance?: string;
+  avatarBase64?: string;
 }
 
 export interface CharacterProfile {
@@ -158,6 +159,8 @@ export interface Message {
   text: string;
   isSummarized?: boolean;
   timestamp?: number;
+  versions?: string[]; // Multiple drafts for this message
+  activeVersionIndex?: number;
 }
 
 declare global {
@@ -188,6 +191,18 @@ export function getSettings(): AppSettings {
     const stored = localStorage.getItem('personaforge_settings');
     if (stored) {
       const parsed = JSON.parse(stored);
+      // Migrate deprecated models
+      if (parsed.activeModel === 'gemini-1.5-flash' || parsed.activeModel === 'gemini-2.0-flash-exp') {
+        parsed.activeModel = 'gemini-flash-latest';
+      } else if (parsed.activeModel === 'gemini-1.5-pro') {
+        parsed.activeModel = 'gemini-pro-latest';
+      }
+      
+      if (parsed.activeTTSModel === 'gemini-1.5-flash') {
+        parsed.activeTTSModel = 'gemini-flash-latest';
+      } else if (parsed.activeTTSModel === 'gemini-1.5-pro') {
+        parsed.activeTTSModel = 'gemini-pro-latest';
+      }
       return { ...defaultSettings, ...parsed };
     }
   } catch (e) {

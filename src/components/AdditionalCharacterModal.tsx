@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { X, Wand2, Loader2 } from 'lucide-react';
+import { X, Wand2, Loader2, Image as ImageIcon, RotateCcw } from 'lucide-react';
 import { AdditionalCharacter } from '../lib/types';
-import { generateAdditionalCharacter, refineField } from '../lib/gemini';
+import { generateAdditionalCharacter, refineField, generateAvatar } from '../lib/gemini';
 import { RefineButton } from './RefineButton';
 
 interface Props {
@@ -14,13 +14,15 @@ interface Props {
 export function AdditionalCharacterModal({ isOpen, onClose, onSave, appMode }: Props) {
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingAvatar, setIsGeneratingAvatar] = useState(false);
   const [isRefiningField, setIsRefiningField] = useState<string | null>(null);
   const [character, setCharacter] = useState<AdditionalCharacter>({
     id: '',
     name: '',
     description: '',
     personality: '',
-    appearance: ''
+    appearance: '',
+    avatarBase64: ''
   });
 
   if (!isOpen) return null;
@@ -30,11 +32,24 @@ export function AdditionalCharacterModal({ isOpen, onClose, onSave, appMode }: P
     setIsGenerating(true);
     try {
       const generated = await generateAdditionalCharacter(prompt, appMode);
-      setCharacter({
+      const newChar = {
         ...character,
         ...generated,
         id: character.id || Math.random().toString(36).substr(2, 9)
-      });
+      };
+      
+      // Also trigger avatar generation
+      setIsGeneratingAvatar(true);
+      try {
+        const avatar = await generateAvatar(newChar as any);
+        newChar.avatarBase64 = avatar;
+      } catch (err) {
+        console.error("Avatar generation failed for NPC", err);
+      } finally {
+        setIsGeneratingAvatar(false);
+      }
+
+      setCharacter(newChar);
     } catch (error) {
       console.error(error);
     } finally {
@@ -45,7 +60,6 @@ export function AdditionalCharacterModal({ isOpen, onClose, onSave, appMode }: P
   const handleRefineField = async (field: string, guidance?: string) => {
     setIsRefiningField(field);
     try {
-      // We can use refineField by passing the character as a partial profile
       const refined = await refineField(field as any, { ...character, mode: appMode } as any, guidance);
       setCharacter(prev => ({ ...prev, [field]: refined }));
     } catch (err) {
@@ -55,13 +69,26 @@ export function AdditionalCharacterModal({ isOpen, onClose, onSave, appMode }: P
     }
   };
 
+  const handleRegenerateAvatar = async () => {
+    if (isGeneratingAvatar || !character.appearance) return;
+    setIsGeneratingAvatar(true);
+    try {
+      const avatar = await generateAvatar(character as any);
+      setCharacter(prev => ({ ...prev, avatarBase64: avatar }));
+    } catch (err) {
+      console.error("Manual avatar generation failed", err);
+    } finally {
+      setIsGeneratingAvatar(false);
+    }
+  };
+
   const handleSave = () => {
     if (!character.name || !character.description) return;
     onSave({
       ...character,
       id: character.id || Math.random().toString(36).substr(2, 9)
     });
-    setCharacter({ id: '', name: '', description: '', personality: '', appearance: '' });
+    setCharacter({ id: '', name: '', description: '', personality: '', appearance: '', avatarBase64: '' });
     setPrompt('');
     onClose();
   };
@@ -77,6 +104,43 @@ export function AdditionalCharacterModal({ isOpen, onClose, onSave, appMode }: P
         </div>
         
         <div className="p-6 overflow-y-auto space-y-6">
+          {/* Avatar Section */}
+          <div className="flex flex-col items-center gap-4">
+            <div className="relative group">
+              <div className="w-32 h-32 rounded-3xl overflow-hidden glass-panel border border-white/10 shadow-2xl bg-zinc-800 flex items-center justify-center">
+                {isGeneratingAvatar ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <Loader2 className="w-8 h-8 text-emerald-400 animate-spin" />
+                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Imaging...</span>
+                  </div>
+                ) : character.avatarBase64 ? (
+                  <img 
+                    src={character.avatarBase64} 
+                    alt={character.name} 
+                    className="w-full h-full object-cover"
+                    referrerPolicy="no-referrer"
+                  />
+                ) : (
+                  <ImageIcon className="w-10 h-10 text-zinc-700" />
+                )}
+              </div>
+              
+              <button
+                onClick={handleRegenerateAvatar}
+                disabled={isGeneratingAvatar || !character.appearance}
+                className="absolute -bottom-2 -right-2 p-2 bg-emerald-500 text-black rounded-xl shadow-lg hover:scale-110 active:scale-95 transition-all disabled:opacity-0"
+                title="Regenerate Avatar"
+              >
+                <RotateCcw className="w-4 h-4" />
+              </button>
+            </div>
+            {!character.avatarBase64 && !isGeneratingAvatar && (
+              <p className="text-[10px] text-zinc-600 font-bold uppercase tracking-widest text-center">
+                Fill Appearance to Generate Face
+              </p>
+            )}
+          </div>
+
           <div className="space-y-2">
             <label className="block text-xs font-bold text-zinc-500 uppercase tracking-widest">Quick Generate</label>
             <div className="flex gap-2">

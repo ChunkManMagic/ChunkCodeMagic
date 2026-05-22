@@ -15,8 +15,10 @@ import { ToastContainer } from './components/ToastContainer';
 import { OfflineBanner } from './components/OfflineBanner';
 import { useToast } from './hooks/useToast';
 import { useFirestoreSync } from './hooks/useFirestoreSync';
+import { SyncConflictModal } from './components/SyncConflictModal';
+import { collection, getDocs } from 'firebase/firestore';
+import { db, auth } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
-import { auth } from './firebase';
 
 // Custom Confirmation Modal
 interface ConfirmationModalProps {
@@ -119,19 +121,22 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 
+
 export default function App() {
   const { 
     user, 
     isAuthReady, 
+    isSyncing,
     syncScenarios, 
     saveScenario, 
-    deleteScenario,
-    saveMessagesBatch
+    deleteScenario 
   } = useFirestoreSync();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
   const [isScenariosLoaded, setIsScenariosLoaded] = useState(false);
   const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [conflict, setConflict] = useState<{ local: Scenario, remote: Scenario } | null>(null);
+  const [conflictQueue, setConflictQueue] = useState<{ local: Scenario, remote: Scenario }[]>([]);
   const [confirmModal, setConfirmModal] = useState<{
     isOpen: boolean;
     title: string;
@@ -151,48 +156,63 @@ export default function App() {
           const migratedFlag = localStorage.getItem(`migrated_to_firestore_${user.uid}`);
           if (migratedFlag) return;
 
-          let localScenarios: Scenario[] = await get(STORAGE_KEYS.SCENARIOS) || [];
+          const localScenarios: Scenario[] = await get(STORAGE_KEYS.SCENARIOS) || [];
           const localScenariosStr = localStorage.getItem(STORAGE_KEYS.SCENARIOS);
           if (localScenariosStr) {
-            const ls = JSON.parse(localScenariosStr);
-            if (Array.isArray(ls)) {
-              localScenarios = [...localScenarios, ...ls];
-            }
+            try {
+              const ls = JSON.parse(localScenariosStr);
+              if (Array.isArray(ls)) {
+                // Merge and deduplicate
+                const seenIds = new Set(localScenarios.map(s => s.id));
+                for (const s of ls) {
+                  if (!seenIds.has(s.id)) {
+                    localScenarios.push(s);
+                    seenIds.add(s.id);
+                  }
+                }
+              }
+            } catch (e) {}
           }
 
           if (localScenarios.length > 0) {
-            console.log("Migrating local scenarios to Firestore...");
-            // Remove duplicates
-            const uniqueScenarios = new Map<string, Scenario>();
-            for (const s of localScenarios) {
-              if (!uniqueScenarios.has(s.id)) {
-                uniqueScenarios.set(s.id, s);
+            console.log("Checking for sync conflicts...");
+            
+            // Get current remote scenarios
+            const remoteSnap = await getDocs(collection(db, 'users', user.uid, 'scenarios'));
+            const remoteScenariosMap = new Map(remoteSnap.docs.map(doc => [doc.id, doc.data() as Scenario]));
+            
+            const conflicts: { local: Scenario, remote: Scenario }[] = [];
+            const freshMigrates: Scenario[] = [];
+
+            for (const local of localScenarios) {
+              const remote = remoteScenariosMap.get(local.id);
+              if (remote) {
+                // Potential conflict if they differ significantly (e.g. timestamps or name)
+                const isDifferent = Math.abs(local.lastUpdated - remote.lastUpdated) > 5000 || 
+                                   local.profile.name !== remote.profile.name;
+                
+                if (isDifferent) {
+                  conflicts.push({ local, remote });
+                }
+              } else {
+                freshMigrates.push(local);
               }
             }
 
-            for (const scenario of uniqueScenarios.values()) {
+            // Save non-conflicting ones
+            for (const scenario of freshMigrates) {
               await saveScenario(scenario);
-              
-              // Also migrate messages from localStorage/IndexedDB to Firestore
-              try {
-                // Try IndexedDB first, then localStorage
-                let msgs: Message[] = await get(STORAGE_KEYS.SCENARIO_MESSAGES(scenario.id)) || [];
-                if (!msgs.length) {
-                  const msgsStr = localStorage.getItem(STORAGE_KEYS.SCENARIO_MESSAGES(scenario.id));
-                  if (msgsStr) {
-                    const parsed = JSON.parse(msgsStr);
-                    if (Array.isArray(parsed)) msgs = parsed;
-                  }
-                }
-                if (msgs.length > 0) {
-                  await saveMessagesBatch(scenario.id, msgs);
-                }
-              } catch (e) {
-                console.warn(`Failed to migrate messages for scenario ${scenario.id}:`, e);
-              }
             }
+
+            if (conflicts.length > 0) {
+              setConflictQueue(conflicts.slice(1));
+              setConflict(conflicts[0]);
+            } else {
+              localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
+            }
+          } else {
+            localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
           }
-          localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
         } catch (e) {
           console.error("Migration to Firestore failed", e);
         }
@@ -206,7 +226,7 @@ export default function App() {
       });
       return () => unsubscribe();
     } else if (isAuthReady && !user) {
-      // If not logged in, load from IndexedDB
+      // If not logged in, we could load from IndexedDB or show login
       const loadLocal = async () => {
         let savedScenarios = await get(STORAGE_KEYS.SCENARIOS);
         
@@ -219,7 +239,7 @@ export default function App() {
               // Merge localScenarios with savedScenarios
               if (!savedScenarios) savedScenarios = [];
               
-              const existingIds = new Set(savedScenarios.map((s: Scenario) => s.id));
+              const existingIds = new Set(savedScenarios.map((s: any) => s.id));
               let migrated = false;
               
               for (const ls of localScenarios) {
@@ -244,7 +264,7 @@ export default function App() {
       };
       loadLocal();
     }
-  }, [isAuthReady, user, syncScenarios, saveScenario, saveMessagesBatch]);
+  }, [isAuthReady, user, syncScenarios, saveScenario]);
 
   // Load current ID from IndexedDB
   useEffect(() => {
@@ -294,12 +314,13 @@ export default function App() {
     }
   }, [currentScenario?.profile.storyTone]);
 
-  // Debounced save to IndexedDB
+  // Debounced save to IndexedDB (and Firestore if logged in)
   useEffect(() => {
     if (!isScenariosLoaded) return;
 
     setSaveStatus('saving');
     const timeoutId = setTimeout(() => {
+      // Local save
       set(STORAGE_KEYS.SCENARIOS, scenarios)
         .then(() => setSaveStatus('saved'))
         .catch(e => {
@@ -327,25 +348,22 @@ export default function App() {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
       toastSuccess("Successfully signed in!");
-    } catch (error: unknown) {
-      const err = error as Error;
-      console.error("Login Error:", err);
-      toastError(`Login failed: ${err.message}`);
+    } catch (error: any) {
+      console.error("Login Error:", error);
+      toastError(`Login failed: ${error.message}`);
     }
   }, [toastSuccess, toastError]);
 
-  // FIX: wrapped in useCallback so it's stable for dependency arrays
-  const handleLogout = useCallback(async () => {
+  const handleLogout = async () => {
     try {
       await signOut(auth);
       toastSuccess("Successfully signed out!");
       setCurrentScenarioId(null);
-    } catch (error: unknown) {
-      const err = error as Error;
-      console.error("Logout Error:", err);
-      toastError(`Logout failed: ${err.message}`);
+    } catch (error: any) {
+      console.error("Logout Error:", error);
+      toastError("Logout failed");
     }
-  }, [toastSuccess, toastError]);
+  };
 
   const handleCreateNew = useCallback(() => {
     if (!user) {
@@ -375,6 +393,7 @@ export default function App() {
     localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, 'idle');
     localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, '');
     
+    // Also save a rescue backup just in case
     localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
       step: 'idle',
       appMode: scenario.profile.mode,
@@ -409,6 +428,77 @@ export default function App() {
     setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }));
   };
 
+  const handleResolveConflict = async (choice: 'local' | 'remote' | 'branch' | 'delete-local' | 'delete-remote') => {
+    if (!conflict || !user) return;
+    const { local, remote } = conflict;
+
+    try {
+      switch (choice) {
+        case 'local': {
+          await saveScenario(local);
+          toastSuccess(`Updated cloud with local version of "${local.profile.name}"`);
+          break;
+        }
+        case 'remote': {
+          toastSuccess(`Using cloud version of "${remote.profile.name}"`);
+          break;
+        }
+        case 'branch': {
+          const newId = generateId();
+          const branched: Scenario = { 
+            ...local, 
+            id: newId, 
+            profile: { ...local.profile, name: `${local.profile.name} (Local Copy)` },
+            lastUpdated: Date.now()
+          };
+          
+          await saveScenario(branched);
+          
+          // Copy messages/data
+          const msgs = await get(STORAGE_KEYS.SCENARIO_MESSAGES(local.id)) || [];
+          if (msgs.length > 0) {
+            await set(STORAGE_KEYS.SCENARIO_MESSAGES(newId), msgs);
+          }
+          const codex = await get(STORAGE_KEYS.SCENARIO_CODEX(local.id)) || [];
+          if (codex.length > 0) {
+            await set(STORAGE_KEYS.SCENARIO_CODEX(newId), codex);
+          }
+          const summary = await get(STORAGE_KEYS.SCENARIO_SUMMARY(local.id)) || "";
+          if (summary) {
+            await set(STORAGE_KEYS.SCENARIO_SUMMARY(newId), summary);
+          }
+          
+          toastSuccess(`Branched "${local.profile.name}" into new scenario`);
+          break;
+        }
+        case 'delete-local': {
+          // Handled by just closing and not saving local
+          toastSuccess(`Local version of "${local.profile.name}" discarded`);
+          break;
+        }
+        case 'delete-remote': {
+          await deleteScenario(remote.id);
+          await saveScenario(local);
+          toastSuccess(`Cloud version of "${remote.profile.name}" deleted and replaced with local`);
+          break;
+        }
+      }
+    } catch (err) {
+      console.error("Conflict resolution error:", err);
+      toastError("Failed to resolve conflict");
+    } finally {
+      setConflict(null);
+      if (conflictQueue.length > 0) {
+        setTimeout(() => {
+          setConflict(conflictQueue[0]);
+          setConflictQueue(prev => prev.slice(1));
+        }, 300);
+      } else {
+        localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
+      }
+    }
+  };
+
   const handleDeleteScenario = (id: string) => {
     setConfirmModal({
       isOpen: true,
@@ -419,14 +509,7 @@ export default function App() {
     });
   };
 
-  // FIX: typed importedData instead of using `any` blindly
-  const handleImportScenario = async (importedData: {
-    scenario: Scenario;
-    messages?: Message[];
-    codex?: CodexEntry[];
-    inventory?: unknown[];
-    summary?: string;
-  }) => {
+  const handleImportScenario = async (importedData: any) => {
     try {
       const newScenarioId = generateId();
       const newScenario: Scenario = {
@@ -437,10 +520,6 @@ export default function App() {
 
       if (user) {
         await saveScenario(newScenario);
-        // Also push imported messages straight to Firestore
-        if (importedData.messages && importedData.messages.length > 0) {
-          await saveMessagesBatch(newScenarioId, importedData.messages);
-        }
       }
       
       if (importedData.messages) {
@@ -457,6 +536,7 @@ export default function App() {
       }
 
       setScenarios(prev => [...prev, newScenario]);
+      // toastSuccess is handled in ScenarioLibrary, but we could do it here too
     } catch (err) {
       console.error("Import error:", err);
       toastError("Failed to import scenario data.");
@@ -491,10 +571,9 @@ export default function App() {
       localStorage.removeItem(STORAGE_KEYS.DRAFT_SETUP_TYPE);
       localStorage.removeItem(STORAGE_KEYS.RESCUE_BACKUP);
       toastSuccess("Character created successfully!");
-    } catch (e: unknown) {
-      const err = e as Error;
-      console.error("Failed to create character:", err);
-      toastError(`Failed to create character: ${err.message || 'Unknown error'}`);
+    } catch (e: any) {
+      console.error("Failed to create character:", e);
+      toastError(`Failed to create character: ${e.message || 'Unknown error'}`);
     }
   };
 
@@ -519,13 +598,14 @@ export default function App() {
   };
 
   const handleCarryOver = async (profile: CharacterProfile, avatarBase64: string) => {
+    // Create a new scenario with the same character but new ID (empty messages)
     let newScenario: Scenario = {
       id: generateId(),
       profile: {
         ...profile,
-        relationship: 'Strangers',
-        storyTone: 'Dramatic',
-        currentMood: 'Neutral'
+        relationship: 'Strangers', // Reset relationship for new scenario
+        storyTone: 'Dramatic', // Reset tone
+        currentMood: 'Neutral' // Reset mood
       },
       avatarBase64,
       lastUpdated: Date.now()
@@ -605,6 +685,7 @@ export default function App() {
       newScenario = await saveScenario(newScenario);
     }
 
+    // Save the branched data to IndexedDB
     await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), branchData.messages);
     await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), branchData.codex);
     await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), branchData.summary);
@@ -637,6 +718,7 @@ export default function App() {
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger if user is typing in an input
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
         if (e.key === 'Escape') {
@@ -645,6 +727,7 @@ export default function App() {
         return;
       }
 
+      // Global Shortcuts
       if (e.altKey) {
         switch (e.key.toLowerCase()) {
           case 's':
@@ -662,6 +745,7 @@ export default function App() {
         }
       }
 
+      // Escape to close modals or go back
       if (e.key === 'Escape') {
         if (showSettings) {
           handleSettingsClose();
@@ -689,72 +773,54 @@ export default function App() {
   return (
     <>
       <ToastContainer />
-      <OfflineBanner />
+      <OfflineBanner isSyncing={isSyncing} />
       <div className="min-h-screen animated-bg text-zinc-100 p-4 md:p-8 flex flex-col selection:bg-emerald-500/30">
       {/* Background Ambience */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden z-0">
+      <div className="fixed inset-0 pointer-events-none overflow-hidden">
         <motion.div 
-          animate={{ 
-            backgroundColor: backgroundColors.primary.replace('bg-', '').split('/')[0],
-            scale: [1, 1.2, 1],
-            x: [0, 50, 0],
-            y: [0, 30, 0]
-          }}
-          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-          className={`absolute top-[-20%] left-[-20%] w-[60%] h-[60%] ${backgroundColors.primary} blur-[140px] rounded-full transition-colors duration-2000`} 
+          animate={{ backgroundColor: backgroundColors.primary.replace('bg-', '').split('/')[0] }}
+          className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${backgroundColors.primary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
         />
         <motion.div 
-          animate={{ 
-            backgroundColor: backgroundColors.secondary.replace('bg-', '').split('/')[0],
-            scale: [1.2, 1, 1.2],
-            x: [0, -50, 0],
-            y: [0, -30, 0]
-          }}
-          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-          className={`absolute bottom-[-20%] right-[-20%] w-[60%] h-[60%] ${backgroundColors.secondary} blur-[140px] rounded-full transition-colors duration-2000`} 
+          animate={{ backgroundColor: backgroundColors.secondary.replace('bg-', '').split('/')[0] }}
+          className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${backgroundColors.secondary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
+          style={{ animationDelay: '-3s' }} 
         />
-        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-[0.03] mix-blend-overlay" />
       </div>
 
-      <header className="mb-12 flex items-center justify-between relative z-10 px-4">
-        <div className="w-48">
+      <header className="mb-12 flex items-center justify-between relative z-10">
+        <div className="w-32">
           {currentScenarioId && (
-            <motion.button
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
+            <button
               onClick={handleLibraryClick}
-              className="flex items-center gap-3 text-[10px] font-bold text-zinc-500 hover:text-white uppercase tracking-[0.2em] transition-all group"
+              className="flex items-center gap-2 text-[10px] font-bold text-zinc-500 hover:text-white uppercase tracking-widest transition-all"
             >
-              <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 flex items-center justify-center group-hover:bg-emerald-500/10 group-hover:border-emerald-500/20 transition-all">
-                <Library className="w-4 h-4" />
-              </div>
+              <Library className="w-4 h-4" />
               Library
-            </motion.button>
+            </button>
           )}
         </div>
-        
         <div className="text-center">
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="flex flex-col items-center"
-          >
-            <h1 className="text-5xl sm:text-6xl font-serif font-bold text-white tracking-tighter mb-2 bg-gradient-to-b from-white to-white/60 bg-clip-text text-transparent">PersonaForge</h1>
-            <div className="flex items-center justify-center gap-3">
-              <div className="h-[1px] w-8 bg-gradient-to-r from-transparent to-emerald-500/30" />
-              <p className="text-[9px] uppercase tracking-[0.6em] text-zinc-500 font-bold mix-blend-plus-lighter">Immersive Narrative Engine</p>
-              <div className="h-[1px] w-8 bg-gradient-to-l from-transparent to-emerald-500/30" />
+          <h1 className="text-4xl font-serif font-bold text-white tracking-tighter">PersonaForge</h1>
+          <div className="flex items-center justify-center gap-2 mt-2">
+            <p className="text-[10px] uppercase tracking-[0.4em] text-zinc-500 font-bold">Immersive Narrative Engine</p>
+            <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
+              settings.activeTextProvider === 'Google' 
+                ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' 
+                : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/20'
+            }`}>
+              {settings.activeTextProvider}
             </div>
-            
-            <div className="flex items-center gap-2 mt-4">
-              <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest px-2 py-0.5 border border-white/5 rounded-full">{settings.activeTextProvider} CORE</span>
-              <div className="w-1 h-1 rounded-full bg-zinc-700" />
-              <span className="text-[8px] font-bold text-zinc-600 uppercase tracking-widest px-2 py-0.5 border border-white/5 rounded-full">{settings.voiceEngine} VOICE</span>
+            <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
+              settings.voiceEngine === 'Cinematic'
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+            }`}>
+              {settings.voiceEngine}
             </div>
-          </motion.div>
+          </div>
         </div>
-
-        <div className="w-48 flex justify-end gap-5 items-center">
+        <div className="w-32 flex justify-end gap-4 items-center">
           {user ? (
             <div className="flex items-center gap-3">
               <div className="flex flex-col items-end">
@@ -803,89 +869,69 @@ export default function App() {
 
       {showSettings && <SettingsModal onClose={handleSettingsClose} />}
 
+      {conflict && (
+        <SyncConflictModal 
+          localScenario={conflict.local} 
+          remoteScenario={conflict.remote} 
+          onResolve={handleResolveConflict} 
+        />
+      )}
+
       <main className="flex-1 flex flex-col max-w-7xl mx-auto w-full relative z-10">
-        <AnimatePresence mode="wait">
-          {!currentScenarioId && !isCreating && !showDraft ? (
-            <motion.div
-              key="library"
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -20 }}
-              className="flex-1"
-            >
-              <ErrorBoundary>
-                <ScenarioLibrary 
-                  scenarios={scenarios} 
-                  onSelect={handleSelectScenario} 
-                  onEdit={handleEditScenario}
-                  onDuplicate={handleDuplicateScenario}
-                  onDelete={handleDeleteScenario} 
-                  onNew={handleCreateNew} 
-                  hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
-                  onRestoreDraft={() => setShowDraft(true)}
-                  onImport={handleImportScenario}
-                />
-              </ErrorBoundary>
-            </motion.div>
-          ) : (isCreating || showDraft) && !currentScenarioId ? (
-            <motion.div
-              key="creator"
-              initial={{ opacity: 0, scale: 0.95 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.95 }}
-              className="flex-1 flex items-center justify-center py-10"
-            >
-              <ErrorBoundary>
-                <CharacterCreator 
-                  scenarios={scenarios}
-                  onCharacterCreated={handleCharacterCreated} 
-                  onCancel={() => {
-                    setIsCreating(false);
-                    setShowDraft(false);
-                  }}
-                />
-              </ErrorBoundary>
-            </motion.div>
-          ) : isEditing && currentScenario ? (
-            <motion.div
-              key="editor"
-              initial={{ opacity: 0, x: 50 }}
-              animate={{ opacity: 1, x: 0 }}
-              exit={{ opacity: 0, x: -50 }}
-              className="flex-1 flex items-center justify-center py-10"
-            >
-              <ErrorBoundary>
-                <CharacterEditor
-                  profile={currentScenario.profile}
-                  avatarBase64={currentScenario.avatarBase64}
-                  onSave={handleSaveEdit}
-                  onCancel={() => setIsEditing(false)}
-                />
-              </ErrorBoundary>
-            </motion.div>
-          ) : currentScenario ? (
-            <motion.div
-              key="chat"
-              initial={{ opacity: 0, scale: 1.05 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 1.05 }}
-              className="flex-1 min-h-0"
-            >
-              <ErrorBoundary>
-                <ChatInterface 
-                  profile={currentScenario.profile} 
-                  avatarBase64={currentScenario.avatarBase64} 
-                  scenarioId={currentScenario.id}
-                  onEditCharacter={() => setIsEditing(true)} 
-                  onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
-                  onUpdateProfile={handleUpdateProfile}
-                  onUpdateAvatar={handleUpdateAvatar}
-                  onBranchScenario={handleBranchScenario}
-                />
-              </ErrorBoundary>
-            </motion.div>
-          ) : null}
-        </AnimatePresence>
+        {!currentScenarioId && !isCreating && !showDraft ? (
+          <ErrorBoundary>
+            <ScenarioLibrary 
+              scenarios={scenarios} 
+              onSelect={handleSelectScenario} 
+              onEdit={handleEditScenario}
+              onDuplicate={handleDuplicateScenario}
+              onDelete={handleDeleteScenario} 
+              onNew={handleCreateNew} 
+              hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
+              onRestoreDraft={() => setShowDraft(true)}
+              onImport={handleImportScenario}
+            />
+          </ErrorBoundary>
+        ) : (isCreating || showDraft) && !currentScenarioId ? (
+          <div className="flex-1 flex items-center justify-center py-10">
+            <ErrorBoundary>
+              <CharacterCreator 
+                scenarios={scenarios}
+                onCharacterCreated={handleCharacterCreated} 
+                onCancel={() => {
+                  setIsCreating(false);
+                  setShowDraft(false);
+                }}
+              />
+            </ErrorBoundary>
+          </div>
+        ) : isEditing && currentScenario ? (
+          <div className="flex-1 flex items-center justify-center py-10">
+            <ErrorBoundary>
+              <CharacterEditor
+                profile={currentScenario.profile}
+                avatarBase64={currentScenario.avatarBase64}
+                onSave={handleSaveEdit}
+                onCancel={() => setIsEditing(false)}
+              />
+            </ErrorBoundary>
+          </div>
+        ) : currentScenario ? (
+          <div className="flex-1 min-h-0">
+            <ErrorBoundary>
+              <ChatInterface 
+                profile={currentScenario.profile} 
+                avatarBase64={currentScenario.avatarBase64} 
+                scenarioId={currentScenario.id}
+                onEditCharacter={() => setIsEditing(true)} 
+                onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
+                onUpdateProfile={handleUpdateProfile}
+                onUpdateAvatar={handleUpdateAvatar}
+                onBranchScenario={handleBranchScenario}
+              />
+            </ErrorBoundary>
+          </div>
+        ) : null}
       </main>
 
       {branchData && (

@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Sparkles, Loader2, User, Image as ImageIcon, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw, Volume2 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
-import { generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech, refineText, refineProfile } from '../lib/gemini';
+import { getSmartSuggestions, generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech, refineText, refineProfile } from '../lib/gemini';
 import { CharacterEditor } from './CharacterEditor';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { RefineButton } from './RefineButton';
@@ -14,6 +14,45 @@ interface CharacterCreatorProps {
   onCharacterCreated: (profile: CharacterProfile, avatarBase64: string) => void;
   onCancel: () => void;
   scenarios?: Scenario[];
+}
+
+function SuggestionPills({ field, profile, onSelect }: { field: string, profile: Partial<CharacterProfile>, onSelect: (val: string) => void }) {
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fetchSuggestions = async () => {
+    setIsLoading(true);
+    try {
+      const res = await getSmartSuggestions(field, profile);
+      setSuggestions(res);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap gap-2 mt-2">
+      {suggestions.map((s, i) => (
+        <button
+          key={i}
+          onClick={() => onSelect(s)}
+          className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] text-zinc-500 hover:text-emerald-400 hover:border-emerald-500/30 transition-all font-bold uppercase tracking-wider"
+        >
+          {s}
+        </button>
+      ))}
+      <button
+        onClick={fetchSuggestions}
+        disabled={isLoading}
+        className="p-1 px-2 rounded-full bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 text-[10px] font-bold border border-emerald-500/20 transition-all flex items-center gap-1"
+      >
+        {isLoading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+        {suggestions.length > 0 ? "Refresh Suggestions" : "Get Suggestions"}
+      </button>
+    </div>
+  );
 }
 
 type CreatorStep = 'mode' | 'idle' | 'profile' | 'avatar' | 'review';
@@ -438,11 +477,11 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     }
   };
 
-  if (step === 'review' && draftProfile && draftAvatar) {
+  if (step === 'review' && draftProfile) {
     return (
       <CharacterEditor
         profile={draftProfile}
-        avatarBase64={draftAvatar}
+        avatarBase64={draftAvatar || ""}
         isInitialReview={true}
         onSave={(finalProfile, finalAvatar) => {
           onCharacterCreated(finalProfile, finalAvatar);
@@ -749,6 +788,15 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           value={detailedProfile[field as keyof CharacterProfile] as string}
                           onChange={e => setDetailedProfile({...detailedProfile, [field]: e.target.value})}
                           placeholder={`Describe ${field}...`}
+                        />
+                        <SuggestionPills 
+                          field={field} 
+                          profile={detailedProfile} 
+                          onSelect={(val) => {
+                            const current = detailedProfile[field as keyof CharacterProfile] as string || '';
+                            const newVal = current ? `${current}\n${val}` : val;
+                            setDetailedProfile({...detailedProfile, [field]: newVal});
+                          }} 
                         />
                       </div>
                     ))}
@@ -1713,6 +1761,45 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                 </button>
               </motion.div>
             )}
+          </motion.div>
+        )}
+
+        {(step === 'profile' || step === 'avatar') && (
+          <motion.div
+            key="generating"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 1.05 }}
+            className="flex flex-col items-center justify-center py-20 space-y-8"
+          >
+            <div className="relative">
+              <div className="absolute inset-0 bg-emerald-500/20 blur-3xl rounded-full animate-pulse" />
+              <div className="relative w-32 h-32 bg-zinc-900 rounded-[2.5rem] border border-white/10 flex items-center justify-center shadow-2xl">
+                {step === 'profile' ? (
+                  <User className="w-12 h-12 text-emerald-400" />
+                ) : (
+                  <ImageIcon className="w-12 h-12 text-blue-400" />
+                )}
+                <div className="absolute inset-0 rounded-[2.5rem] border-2 border-emerald-500/30 border-t-emerald-500 animate-spin" />
+              </div>
+            </div>
+            
+            <div className="text-center space-y-2">
+              <h3 className="text-3xl font-bold text-white font-serif tracking-tight">
+                {step === 'profile' ? 'Forging Identity...' : 'Visualizing Presence...'}
+              </h3>
+              <p className="text-zinc-500 font-medium">
+                {step === 'profile' 
+                  ? 'Dreaming up backstory, personality, and world lore.' 
+                  : 'Generating a high-fidelity avatar based on the character\'s description.'}
+              </p>
+            </div>
+
+            <div className="flex gap-2">
+              <div className={`w-2 h-2 rounded-full ${step === 'profile' ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-zinc-800'}`} />
+              <div className={`w-2 h-2 rounded-full ${step === 'avatar' ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-zinc-800'}`} />
+              <div className="w-2 h-2 rounded-full bg-zinc-800" />
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

@@ -123,7 +123,14 @@ ${traitDirectives}
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
 ${styleInstruction}
-If the player provides a [Director's Note: ...], use it to guide your next response. If the note asks a direct question or requires an out-of-character (OOC) reply, wrap your OOC response in <ooc></ooc> tags at the very end. The rest of your response must remain strictly in-character.
+
+ROLEPLAY RULES:
+- IMPORTANT: You provide the voice and actions for your character (${profile.name}) and any NPCs listed above.
+- CRITICAL: You are strictly forbidden from speaking for, acting for, or describing the internal thoughts or feelings of the PLAYER CHARACTER. 
+- You MUST only respond as ${profile.name} and the world around them.
+- If the player says "I walk into the tavern", do NOT say "You walk into the tavern and feel cold." Instead say "[MOOD: Neutral] ${profile.name} watches as you enter the tavern."
+- Wait for the player's input to advance their actions or dialogue.
+- If the player provides a [Director's Note: ...], use it to guide your next response. If the note asks a direct question or requires an out-of-character (OOC) reply, wrap your OOC response in <ooc></ooc> tags at the very end. The rest of your response must remain strictly in-character.
 
 IMPORTANT: You MUST start every single response with your character's current mood in brackets, like this: [MOOD: Happy] or [MOOD: Suspicious]. Then, write your response.`;
   }
@@ -165,7 +172,9 @@ NARRATOR RULES:
 - Let player choices have real, visible consequences on the world.
 - Use the faction dynamics to create friction and opportunity.
 - Do not resolve the core conflict too early — maintain tension.
-- IMPORTANT: You are the narrator, NOT the player. Do not make decisions for the player character or describe their internal thoughts unless they have explicitly stated them. Wait for the player's input to advance their actions.
+- CRITICAL: You are the narrator, NOT the player. You are strictly forbidden from making decisions for the player character, speaking for them, or describing their internal thoughts or feelings.
+- Maintain the "boundary of agency": The player controls their character's mind and body; you control everything else.
+- Wait for the player's input to advance their actions.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
 ${styleInstruction}
@@ -210,7 +219,8 @@ DUNGEON MASTER RULES:
 - Use the quest objective and current arc to keep the session on track without railroading.
 - Reward clever play and creative thinking (adjust based on Generosity dial).
 - Signal danger clearly before it becomes lethal (adjust based on Lethality dial).
-- IMPORTANT: You are the DM, NOT the player. Do not make decisions for the player character or describe their internal thoughts. Wait for the player to declare their actions before resolving them.
+- CRITICAL: You are the DM, NOT the player. You are strictly forbidden from making decisions for the player character, speaking for them, or describing their internal thoughts or feelings. You provide the world's reaction to their declared actions.
+- Wait for the player to declare their actions before resolving them.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
 ${styleInstruction}
@@ -394,39 +404,113 @@ export async function fetchOpenRouterModels(): Promise<any[]> {
   }
 }
 
-export async function generateAdditionalCharacter(idea: string, mode: AppMode | string): Promise<{ name: string; description: string; personality: string; appearance: string }> {
-  const settings = getSettings();
-  const contents = `Generate a detailed NPC or additional character based on this idea: "${idea}" for a ${mode} setting.`;
+export async function validateOpenRouterKey(apiKey: string): Promise<boolean> {
+  if (!apiKey) return false;
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/auth/key", {
+      headers: {
+        "Authorization": `Bearer ${apiKey.trim()}`,
+      }
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("OpenRouter Key Validation Error:", error);
+    return false;
+  }
+}
 
+async function generateStructuredData(prompt: string, systemPrompt: string, schema?: any): Promise<any> {
+  const settings = getSettings();
+  
   if (settings.activeTextProvider === 'OpenRouter') {
-    const systemPrompt = "You are a character creation assistant. Return ONLY a valid JSON object with no markdown, no backticks, no explanation, containing: name, description, personality, appearance.";
-    const responseText = await callOpenRouter([], systemPrompt, contents, settings);
+    const responseText = await callOpenRouter([], systemPrompt, prompt, settings);
     return parseJsonWithRecovery(responseText);
   }
 
   const ai = getGenAI();
-  const response = await withRetry(() => ai.models.generateContent({
-    model: settings.activeModel,
-    contents,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          name: { type: Type.STRING },
-          description: { type: Type.STRING },
-          personality: { type: Type.STRING },
-          appearance: { type: Type.STRING },
-        },
-        required: ["name", "description", "personality", "appearance"]
+  let response;
+  try {
+    response = await withRetry(() => ai.models.generateContent({
+      model: settings.activeModel,
+      contents: prompt,
+      config: schema ? {
+        responseMimeType: "application/json",
+        responseSchema: schema
+      } : {
+        responseMimeType: "application/json"
       }
+    }));
+  } catch (err: any) {
+    const isPermissionError = 
+      err?.message?.includes('Permission Denied') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('403');
+
+    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
+      console.warn(`Structured Data: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+      response = await withRetry(() => ai.models.generateContent({
+        model: 'gemini-flash-latest',
+        contents: prompt,
+        config: schema ? {
+          responseMimeType: "application/json",
+          responseSchema: schema
+        } : {
+          responseMimeType: "application/json"
+        }
+      }));
+    } else {
+      throw err;
     }
-  }));
+  }
 
   const text = response.text;
   if (!text) throw new Error("No response from AI");
-  
   return parseJsonWithRecovery(text);
+}
+
+export async function getSmartSuggestions(field: string, profile: Partial<CharacterProfile>): Promise<string[]> {
+  const prompt = `Based on the current narrative setting:
+Mode: ${profile.mode}
+Main Idea/Context: ${profile.backstory || 'General'}
+Current Name: ${profile.name || 'Unknown'}
+
+Provide 5 short, creative suggestions (keywords or short phrases) for the field: "${field}".
+Return ONLY a JSON array of strings.`;
+
+  try {
+    const result = await generateStructuredData(
+      prompt, 
+      "You are a narrative assistant. Return ONLY a JSON array of 5 creative string suggestions.",
+      {
+        type: Type.ARRAY,
+        items: { type: Type.STRING }
+      }
+    );
+    if (Array.isArray(result)) return result.map(s => String(s));
+    return [];
+  } catch (error) {
+    console.error("Smart Suggestions Error:", error);
+    return [];
+  }
+}
+
+export async function generateAdditionalCharacter(idea: string, mode: AppMode | string): Promise<{ name: string; description: string; personality: string; appearance: string }> {
+  const prompt = `Generate a detailed NPC or additional character based on this idea: "${idea}" for a ${mode} setting.`;
+  const systemPrompt = "You are a character creation assistant. Return ONLY a valid JSON object with: name, description, personality, appearance.";
+  const schema = {
+    type: Type.OBJECT,
+    properties: {
+      name: { type: Type.STRING },
+      description: { type: Type.STRING },
+      personality: { type: Type.STRING },
+      appearance: { type: Type.STRING },
+    },
+    required: ["name", "description", "personality", "appearance"]
+  };
+
+  return await generateStructuredData(prompt, systemPrompt, schema);
 }
 
 export async function generateCharacterProfile(idea: string, mode: AppMode): Promise<CharacterProfile> {
@@ -493,76 +577,99 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
     responseText = await callOpenRouter([], systemPrompt, contents, settings);
   } else {
     const ai = getGenAI();
-    const response = await withRetry(() => ai.models.generateContent({
-      model: settings.activeModel,
-      contents,
-      config: {
-        maxOutputTokens: 8192,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            name: { type: Type.STRING },
-            personality: { type: Type.STRING },
-            backstory: { type: Type.STRING },
-            appearance: { type: Type.STRING },
-            clothing: { type: Type.STRING },
-            accessories: { type: Type.STRING },
-            hairStyle: { type: Type.STRING },
-            hairColor: { type: Type.STRING },
-            eyeColor: { type: Type.STRING },
-            storyTone: { type: Type.STRING },
-            relationship: { type: Type.STRING },
-            characterFlaws: { type: Type.STRING },
-            secretMotive: { type: Type.STRING },
-            speechPattern: { type: Type.STRING },
-            likesAndDislikes: { type: Type.STRING },
-            coreBeliefs: { type: Type.STRING },
-            quirks: { type: Type.STRING },
-            worldAtmosphere: { type: Type.STRING },
-            keyLocations: { type: Type.STRING },
-            scenarioStakes: { type: Type.STRING },
-            scenarioConflict: { type: Type.STRING },
-            timePeriod: { type: Type.STRING },
-            factions: { type: Type.STRING },
-            magicOrTechnologyLevel: { type: Type.STRING },
-            incitingIncident: { type: Type.STRING },
-            gameSystem: { type: Type.STRING },
-            questObjective: { type: Type.STRING },
-            dungeonMasterStyle: { type: Type.STRING },
-            rulesComplexity: { type: Type.STRING },
-            difficultyLevel: { type: Type.STRING },
-            partyComposition: { type: Type.STRING },
-            startingEquipment: { type: Type.STRING },
-            currentCampaignArc: { type: Type.STRING },
-            currentMood: { type: Type.STRING },
-            playerProfile: {
-              type: Type.OBJECT,
-              properties: {
-                name: { type: Type.STRING },
-                description: { type: Type.STRING },
-                personality: { type: Type.STRING },
-                backstory: { type: Type.STRING },
-                appearance: { type: Type.STRING },
-                clothing: { type: Type.STRING },
-                accessories: { type: Type.STRING },
-                hairStyle: { type: Type.STRING },
-                hairColor: { type: Type.STRING },
-                eyeColor: { type: Type.STRING },
-              },
-              required: ["name", "description", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor"]
-            }
-          },
-          required: [
-            "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor",
-            "storyTone", "relationship", "characterFlaws", "secretMotive", "speechPattern", "likesAndDislikes", "coreBeliefs", "quirks",
-            "worldAtmosphere", "keyLocations", "scenarioStakes", "scenarioConflict", "timePeriod", "factions", "magicOrTechnologyLevel", "incitingIncident",
-            "gameSystem", "questObjective", "dungeonMasterStyle", "rulesComplexity", "difficultyLevel", "partyComposition", "startingEquipment", "currentCampaignArc",
-            "currentMood", "playerProfile"
-          ]
-        }
+    const schemaConfig = {
+      maxOutputTokens: 8192,
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          name: { type: Type.STRING },
+          personality: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          clothing: { type: Type.STRING },
+          accessories: { type: Type.STRING },
+          hairStyle: { type: Type.STRING },
+          hairColor: { type: Type.STRING },
+          eyeColor: { type: Type.STRING },
+          storyTone: { type: Type.STRING },
+          relationship: { type: Type.STRING },
+          characterFlaws: { type: Type.STRING },
+          secretMotive: { type: Type.STRING },
+          speechPattern: { type: Type.STRING },
+          likesAndDislikes: { type: Type.STRING },
+          coreBeliefs: { type: Type.STRING },
+          quirks: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocations: { type: Type.STRING },
+          scenarioStakes: { type: Type.STRING },
+          scenarioConflict: { type: Type.STRING },
+          timePeriod: { type: Type.STRING },
+          factions: { type: Type.STRING },
+          magicOrTechnologyLevel: { type: Type.STRING },
+          incitingIncident: { type: Type.STRING },
+          gameSystem: { type: Type.STRING },
+          questObjective: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplexity: { type: Type.STRING },
+          difficultyLevel: { type: Type.STRING },
+          partyComposition: { type: Type.STRING },
+          startingEquipment: { type: Type.STRING },
+          currentCampaignArc: { type: Type.STRING },
+          currentMood: { type: Type.STRING },
+          playerProfile: {
+            type: Type.OBJECT,
+            properties: {
+              name: { type: Type.STRING },
+              description: { type: Type.STRING },
+              personality: { type: Type.STRING },
+              backstory: { type: Type.STRING },
+              appearance: { type: Type.STRING },
+              clothing: { type: Type.STRING },
+              accessories: { type: Type.STRING },
+              hairStyle: { type: Type.STRING },
+              hairColor: { type: Type.STRING },
+              eyeColor: { type: Type.STRING },
+            },
+            required: ["name", "description", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor"]
+          }
+        },
+        required: [
+          "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor",
+          "storyTone", "relationship", "characterFlaws", "secretMotive", "speechPattern", "likesAndDislikes", "coreBeliefs", "quirks",
+          "worldAtmosphere", "keyLocations", "scenarioStakes", "scenarioConflict", "timePeriod", "factions", "magicOrTechnologyLevel", "incitingIncident",
+          "gameSystem", "questObjective", "dungeonMasterStyle", "rulesComplexity", "difficultyLevel", "partyComposition", "startingEquipment", "currentCampaignArc",
+          "currentMood", "playerProfile"
+        ]
       }
-    }));
+    };
+
+    let response;
+    try {
+      response = await withRetry(() => ai.models.generateContent({
+        model: settings.activeModel,
+        contents,
+        config: schemaConfig
+      }));
+    } catch (err: any) {
+      const isPermissionError = 
+        err?.message?.includes('Permission Denied') || 
+        err?.status === 403 || 
+        err?.code === 403 ||
+        String(err).includes('PERMISSION_DENIED') ||
+        String(err).includes('403');
+
+      if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
+        console.warn(`Profile Generation: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+        response = await withRetry(() => ai.models.generateContent({
+          model: 'gemini-flash-latest',
+          contents,
+          config: schemaConfig
+        }));
+      } else {
+        throw err;
+      }
+    }
     console.log("generateCharacterProfile: API call successful.");
     responseText = response.text || "{}";
   }
@@ -664,26 +771,36 @@ Style: Cinematic lighting, professional photography, sharp focus, intricate text
 The character should be the central focus, looking towards the camera.`;
   }
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: [{ text: prompt }]
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1"
+  let response;
+  try {
+    response = await withRetry(() => ai.models.generateContent({
+      model: 'gemini-3.1-flash-image-preview',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    }));
+    
+    console.log("generateAvatar: API call successful.");
+  } catch (err: any) {
+    console.warn("generateAvatar: Image generation failed or not permitted, using fallback.", err?.message);
+  }
+
+  if (response) {
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        const base64 = `data:image/png;base64,${part.inlineData.data}`;
+        return await compressImage(base64, 512, 0.7);
       }
     }
-  }));
-  
-  console.log("generateAvatar: API call successful.");
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      const base64 = `data:image/png;base64,${part.inlineData.data}`;
-      return await compressImage(base64, 512, 0.7);
-    }
   }
-  return "";
+  // Fallback to a stylised placeholder if image generation is not supported or fails
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://picsum.photos/seed/${seed}/512/512`;
 }
 
 export async function generateCodexImage(entry: CodexEntry, profile: CharacterProfile): Promise<string> {
@@ -697,25 +814,33 @@ Tone: ${profile.storyTone}
 Style: Digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures. 
 The subject should be the central focus, capturing the essence of the description.`;
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: [{ text: prompt }]
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1"
+  let response;
+  try {
+    response = await withRetry(() => ai.models.generateContent({
+      model: 'gemini-3.1-flash-image-preview',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    }));
+  } catch (err: any) {
+    console.warn("generateCodexImage: Image generation failed, using fallback.", err?.message);
+  }
+  
+  if (response) {
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        const base64 = `data:image/png;base64,${part.inlineData.data}`;
+        return await compressImage(base64, 512, 0.7);
       }
     }
-  }));
-  
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      const base64 = `data:image/png;base64,${part.inlineData.data}`;
-      return await compressImage(base64, 512, 0.7);
-    }
   }
-  return "";
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://picsum.photos/seed/${seed}/512/512`;
 }
 
 export async function generateItemImage(item: InventoryItem, profile: CharacterProfile): Promise<string> {
@@ -728,25 +853,33 @@ World Atmosphere: ${profile.worldAtmosphere || 'atmospheric'}
 Tone: ${profile.storyTone}
 Style: RPG item icon, digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures, centered on a neutral background.`;
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: [{ text: prompt }]
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1"
+  let response;
+  try {
+    response = await withRetry(() => ai.models.generateContent({
+      model: 'gemini-3.1-flash-image-preview',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    }));
+  } catch (err: any) {
+    console.warn("generateItemImage: Image generation failed, using fallback.", err?.message);
+  }
+  
+  if (response) {
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        const base64 = `data:image/png;base64,${part.inlineData.data}`;
+        return await compressImage(base64, 512, 0.7);
       }
     }
-  }));
-  
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      const base64 = `data:image/png;base64,${part.inlineData.data}`;
-      return await compressImage(base64, 512, 0.7);
-    }
   }
-  return "";
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://picsum.photos/seed/${seed}/512/512`;
 }
 
 export async function extractInventoryUpdates(history: any[], currentInventory: InventoryItem[]): Promise<{
@@ -1118,21 +1251,45 @@ Return ONLY valid JSON.`,
 
 export async function summarizeHistory(history: any[], previousSummary: string = ""): Promise<string> {
   const settings = getSettings();
-  const prompt = `Summarize the following story history. Keep it concise but include key events, character development, and important details.
-Previous Summary: ${previousSummary}
+  const prompt = `Review the current story summary and the following new events. Provide an updated, concise summary that captures all major plot points and character developments.
+
+CRITICAL: Maintain clear distinction between the player's actions/words and the AI characters' actions/words. Do not blend them.
+
+Current Summary: ${previousSummary}
 New Events:
 ${JSON.stringify(history)}
-Please provide an updated summary.`;
+
+Updated Summary:`;
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    return callOpenRouter([], "You are a helpful assistant that summarizes story history. Return only the updated summary text, no preamble.", prompt, settings);
+    return callOpenRouter([], "You are a professional narrative editor. Provide a concise, clear summary of story developments while maintaining character agency distinctions. Return ONLY the summary text.", prompt, settings);
   }
 
   const ai = getGenAI();
-  const response = await withRetry(() => ai.models.generateContent({
-    model: settings.activeModel,
-    contents: prompt
-  }));
+  let response;
+  try {
+    response = await withRetry(() => ai.models.generateContent({
+      model: settings.activeModel,
+      contents: prompt
+    }));
+  } catch (err: any) {
+    const isPermissionError = 
+      err?.message?.includes('Permission Denied') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('403');
+
+    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
+      console.warn(`summarizeHistory: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+      response = await withRetry(() => ai.models.generateContent({
+        model: 'gemini-flash-latest',
+        contents: prompt
+      }));
+    } else {
+      throw err;
+    }
+  }
   return response.text?.trim() || previousSummary;
 }
 
@@ -1147,13 +1304,36 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
 
   const ai = getGenAI();
   
-  const chat = ai.chats.create({
-    model: settings.activeModel,
-    config: { systemInstruction },
-    history: buildHistory(history)
-  });
+  let chat;
+  let responseStream;
+  try {
+    chat = ai.chats.create({
+      model: settings.activeModel,
+      config: { systemInstruction },
+      history: buildHistory(history)
+    });
+    responseStream = await chat.sendMessageStream({ message: userInput });
+  } catch (err: any) {
+    const isPermissionError = 
+      err?.message?.includes('Permission Denied') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('403');
+
+    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
+      console.warn(`generateTextReplyStream: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+      chat = ai.chats.create({
+        model: 'gemini-flash-latest',
+        config: { systemInstruction },
+        history: buildHistory(history)
+      });
+      responseStream = await chat.sendMessageStream({ message: userInput });
+    } else {
+      throw err;
+    }
+  }
   
-  const responseStream = await chat.sendMessageStream({ message: userInput });
   for await (const chunk of responseStream) {
     yield chunk.text || "";
   }
@@ -1214,13 +1394,35 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
 
   const ai = getGenAI();
 
-  const chat = ai.chats.create({
-    model: settings.activeModel,
-    config: { systemInstruction },
-    history: buildHistory(history)
-  });
+  let chat: any;
+  let response: any;
+  try {
+    chat = ai.chats.create({
+      model: settings.activeModel,
+      config: { systemInstruction },
+      history: buildHistory(history)
+    });
+    response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
+  } catch (err: any) {
+    const isPermissionError = 
+      err?.message?.includes('Permission Denied') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('403');
 
-  const response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
+    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
+      console.warn(`suggestNextAction: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+      chat = ai.chats.create({
+        model: 'gemini-flash-latest',
+        config: { systemInstruction },
+        history: buildHistory(history)
+      });
+      response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
+    } else {
+      throw err;
+    }
+  }
   return response.text?.trim() || "";
 }
 
@@ -1229,22 +1431,20 @@ export async function refineInput(input: string, profile: CharacterProfile, hist
     ? `\nCustom Writing Style Instructions:\n${customInstructions}\n`
     : '';
 
-  const modeInstruction = profile.mode === AppMode.GAME
-    ? `Refine the player's input to feel like a clear, immersive RPG action declaration. Keep the mechanical intent (what they're trying to do) but add flavor, physicality, and character voice. Don't add outcomes — just the action.`
-    : profile.mode === AppMode.SCENARIO
-    ? `Refine the player's input to be more vivid and cinematic. Add sensory details, intentions, and character presence without changing the core action.`
-    : `Refine the player's input to be more emotionally resonant and in-character. Enhance the voice, word choice, and intent to match the character's personality and the scene's tone.`;
-
-  const systemInstruction = `You are an AI writing assistant. ${modeInstruction}
+  const systemInstruction = `You are an AI writing assistant. Your goal is to rewrite the player's draft to be higher quality while maintaining their intent and perspective.
 
 ${buildPlayerBlock(profile)}
 
-They are interacting with:
+The player is interacting with:
 Name: ${profile.name}
 Personality: ${profile.personality}
 Relationship: ${profile.relationship}
 ${styleInstruction}
-Return ONLY the refined text. No quotes, no explanations.`;
+
+RULES:
+- You are writing FOR THE PLAYER. Use THEIR perspective (First person: "I walk", "I say").
+- Do NOT include responses or reactions from other characters.
+- ONLY return the refined message text. No quotes, no explanations.`;
 
   const settings = getSettings();
 
@@ -1254,13 +1454,35 @@ Return ONLY the refined text. No quotes, no explanations.`;
 
   const ai = getGenAI();
 
-  const chat = ai.chats.create({
-    model: settings.activeModel,
-    config: { systemInstruction },
-    history: buildHistory(history)
-  });
+  let chat: any;
+  let response: any;
+  try {
+    chat = ai.chats.create({
+      model: settings.activeModel,
+      config: { systemInstruction },
+      history: buildHistory(history)
+    });
+    response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
+  } catch (err: any) {
+    const isPermissionError = 
+      err?.message?.includes('Permission Denied') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('403');
 
-  const response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
+    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
+      console.warn(`refineInput: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+      chat = ai.chats.create({
+        model: 'gemini-flash-latest',
+        config: { systemInstruction },
+        history: buildHistory(history)
+      });
+      response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
+    } else {
+      throw err;
+    }
+  }
   return response.text?.trim() || input;
 }
 
@@ -1509,25 +1731,33 @@ Eyes: ${profile.eyeColor || 'natural color'}
 Style: Cinematic lighting, professional photography, sharp focus, intricate textures, realistic skin and fabric rendering. 
 The character should be the central focus, looking towards the camera.`;
 
-  const response = await withRetry(() => ai.models.generateContent({
-    model: 'gemini-2.5-flash-image',
-    contents: {
-      parts: [{ text: prompt }]
-    },
-    config: {
-      imageConfig: {
-        aspectRatio: "1:1"
+  let response;
+  try {
+    response = await withRetry(() => ai.models.generateContent({
+      model: 'gemini-3.1-flash-image-preview',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: "1:1"
+        }
+      }
+    }));
+  } catch (err: any) {
+    console.warn("generateDynamicAvatar: Image generation failed, using fallback.", err?.message);
+  }
+  
+  if (response) {
+    for (const part of response.candidates?.[0]?.content?.parts || []) {
+      if (part.inlineData) {
+        const base64 = `data:image/png;base64,${part.inlineData.data}`;
+        return await compressImage(base64, 512, 0.7);
       }
     }
-  }));
-  
-  for (const part of response.candidates?.[0]?.content?.parts || []) {
-    if (part.inlineData) {
-      const base64 = `data:image/png;base64,${part.inlineData.data}`;
-      return await compressImage(base64, 512, 0.7);
-    }
   }
-  return "";
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://picsum.photos/seed/${seed}/512/512`;
 }
 
 export async function generateVeoAnimation() {

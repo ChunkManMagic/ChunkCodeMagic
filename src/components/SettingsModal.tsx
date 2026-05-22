@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react';
-import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2, RefreshCw, Keyboard } from 'lucide-react';
+import { X, Save, Sparkles, Crown, CheckCircle, ArrowRight, Loader2, Trash2, RefreshCw, Keyboard, Check, AlertCircle } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { AppSettings, getSettings, defaultSettings, saveSettings, OpenRouterModel } from '../lib/types';
 import { db } from '../firebase';
-import { refineText, fetchOpenRouterModels } from '../lib/gemini';
+import { refineText, fetchOpenRouterModels, validateOpenRouterKey } from '../lib/gemini';
 import { RefineButton } from './RefineButton';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 import { clear } from 'idb-keyval';
@@ -22,6 +22,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [error, setError] = useState<string | null>(null);
   const [isRefining, setIsRefining] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const [isValidatingKey, setIsValidatingKey] = useState(false);
+  const [keyValidationStatus, setKeyValidationStatus] = useState<'none' | 'valid' | 'invalid'>('none');
   const [showOnlyFree, setShowOnlyFree] = useState(true);
   const [modelSearch, setModelSearch] = useState('');
   const { toastSuccess, toastError } = useToast();
@@ -95,6 +97,26 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     }
   };
 
+  const handleTestKey = async () => {
+    if (!settings.openRouterApiKey || isValidatingKey) return;
+    setIsValidatingKey(true);
+    setKeyValidationStatus('none');
+    try {
+      const isValid = await validateOpenRouterKey(settings.openRouterApiKey);
+      setKeyValidationStatus(isValid ? 'valid' : 'invalid');
+      if (isValid) {
+        toastSuccess("OpenRouter API key is valid!");
+      } else {
+        toastError("Invalid OpenRouter API key.");
+      }
+    } catch (err) {
+      setKeyValidationStatus('invalid');
+      toastError("Failed to test API key");
+    } finally {
+      setIsValidatingKey(false);
+    }
+  };
+
   const handleSave = () => {
     saveSettings(settings);
     toastSuccess("Settings saved");
@@ -149,30 +171,53 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   onChange={e => handleChange('activeModel', e.target.value)}
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                 >
-                  <optgroup label="Latest (Free)">
+                  <optgroup label="Free Models">
                     <option value="gemini-flash-latest">Gemini Flash Latest</option>
-                    <option value="gemini-pro-latest">Gemini Pro Latest</option>
-                    <option value="gemini-flash-lite-latest">Gemini Flash-Lite Latest</option>
-                  </optgroup>
-                  <optgroup label="Previews (Free)">
+                    <option value="gemini-3.1-flash-lite">Gemini Flash-Lite Latest</option>
                     <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
                     <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
                   </optgroup>
-                  <optgroup label="Classic (Free)">
-                    <option value="gemini-1.5-flash">Gemini 1.5 Flash</option>
-                    <option value="gemini-1.5-pro">Gemini 1.5 Pro</option>
+                  <optgroup label="Premium Models (Requires Paid API Key)">
+                    <option value="gemini-pro-latest">Gemini Pro Latest</option>
+                    <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
                   </optgroup>
                 </select>
               </div>
             ) : (
               <>
                 <div className="space-y-2">
-                  <label className="text-sm text-gray-300">OpenRouter API Key</label>
+                  <div className="flex justify-between items-center">
+                    <label className="text-sm text-gray-300">OpenRouter API Key</label>
+                    <button
+                      onClick={handleTestKey}
+                      disabled={!settings.openRouterApiKey || isValidatingKey}
+                      className={`text-[10px] font-bold px-3 py-1 rounded-lg border transition-all flex items-center gap-1.5 ${
+                        keyValidationStatus === 'valid' 
+                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' 
+                          : keyValidationStatus === 'invalid'
+                          ? 'bg-red-500/10 text-red-400 border-red-500/30'
+                          : 'bg-indigo-500/10 text-indigo-400 border-indigo-500/30 hover:bg-indigo-500/20'
+                      } disabled:opacity-50`}
+                    >
+                      {isValidatingKey ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : keyValidationStatus === 'valid' ? (
+                        <Check className="w-3 h-3" />
+                      ) : keyValidationStatus === 'invalid' ? (
+                        <AlertCircle className="w-3 h-3" />
+                      ) : (
+                        <Sparkles className="w-3 h-3" />
+                      )}
+                      {isValidatingKey ? 'Testing...' : keyValidationStatus === 'valid' ? 'Valid' : keyValidationStatus === 'invalid' ? 'Invalid' : 'Test Key'}
+                    </button>
+                  </div>
                   <input 
                     type="password"
                     value={settings.openRouterApiKey || ''}
-                    onChange={e => handleChange('openRouterApiKey', e.target.value)}
+                    onChange={e => {
+                      handleChange('openRouterApiKey', e.target.value);
+                      if (keyValidationStatus !== 'none') setKeyValidationStatus('none');
+                    }}
                     placeholder="sk-or-v1-..."
                     className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                   />
@@ -307,12 +352,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   onChange={e => handleChange('activeTTSModel', e.target.value)}
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="gemini-flash-latest">Gemini Flash Latest (Fastest)</option>
-                  <option value="gemini-pro-latest">Gemini Pro Latest (High Quality)</option>
-                  <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                  <option value="gemini-flash-latest">Gemini Flash Latest</option>
+                  <option value="gemini-pro-latest">Gemini Pro Latest</option>
+                  <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 TTS Preview (Recommended)</option>
+                  <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Live Preview</option>
                 </select>
-                <p className="text-[10px] text-gray-500">Flash is faster and has higher limits. Pro offers better narration quality.</p>
+                <p className="text-[10px] text-gray-500">TTS preview models are specialized for audio generation.</p>
               </div>
             )}
 

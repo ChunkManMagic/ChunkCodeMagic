@@ -15,9 +15,45 @@ import { db, auth } from '../firebase';
 import { Scenario, Message, CodexEntry, InventoryItem } from '../lib/types';
 import { compressImage } from '../lib/utils';
 
+export interface FirestoreErrorInfo {
+  errorPath: string;
+  errorCode: string;
+  errorMessage: string;
+  attemptedOperation: 'read' | 'write' | 'delete';
+}
+
+export function handleFirestoreError(
+  error: any,
+  errorPath: string,
+  attemptedOperation: 'read' | 'write' | 'delete'
+): Error {
+  const errorCode = error?.code || 'unknown';
+  const errorMessage = error?.message || String(error);
+  
+  const diagnosticInfo: FirestoreErrorInfo = {
+    errorPath,
+    errorCode,
+    errorMessage,
+    attemptedOperation
+  };
+  
+  const formattedError = new Error(`Firestore Operation Failed: ${JSON.stringify(diagnosticInfo, null, 2)}`);
+  console.error("Firestore Diagnostic Collection Error:", formattedError);
+  return formattedError;
+}
+
 export function useFirestoreSync() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [activeWrites, setActiveWrites] = useState(0);
+
+  useEffect(() => {
+    setIsSyncing(activeWrites > 0);
+  }, [activeWrites]);
+
+  const startWrite = () => setActiveWrites(prev => prev + 1);
+  const endWrite = () => setActiveWrites(prev => Math.max(0, prev - 1));
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -56,12 +92,13 @@ export function useFirestoreSync() {
       scenarios.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
       callback(scenarios);
     }, (error) => {
-      console.error("Firestore Error (Sync Scenarios):", error);
+      handleFirestoreError(error, `users/${user.uid}/scenarios`, 'read');
     });
   }, [user]);
 
   const saveScenario = useCallback(async (scenario: Scenario): Promise<Scenario> => {
     if (!user) return scenario;
+    startWrite();
     try {
       const finalScenario = { ...scenario };
       if (finalScenario.avatarBase64 && finalScenario.avatarBase64.length > 500000) {
@@ -79,13 +116,15 @@ export function useFirestoreSync() {
       await setDoc(doc(db, 'users', user.uid, 'scenarios', finalScenario.id), finalScenario);
       return finalScenario;
     } catch (error) {
-      console.error("Firestore Error (Save Scenario):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenario.id}`, 'write');
+    } finally {
+      endWrite();
     }
   }, [user]);
 
   const deleteScenario = useCallback(async (scenarioId: string) => {
     if (!user) return;
+    startWrite();
     try {
       // We use multiple batches if needed to stay under the 500 limit
       let batch = writeBatch(db);
@@ -117,8 +156,9 @@ export function useFirestoreSync() {
       
       await commitBatch();
     } catch (error) {
-      console.error("Firestore Error (Delete Scenario):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}`, 'delete');
+    } finally {
+      endWrite();
     }
   }, [user]);
 
@@ -135,25 +175,28 @@ export function useFirestoreSync() {
       messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
       callback(messages);
     }, (error) => {
-      console.error("Firestore Error (Sync Messages):", error);
+      handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/messages`, 'read');
     });
   }, [user]);
 
   const saveMessage = useCallback(async (scenarioId: string, message: Message) => {
     if (!user) return;
+    startWrite();
     try {
       await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', message.id), {
         ...message,
         timestamp: message.timestamp || Date.now()
       });
     } catch (error) {
-      console.error("Firestore Error (Save Message):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/messages/${message.id}`, 'write');
+    } finally {
+      endWrite();
     }
   }, [user]);
 
   const saveMessagesBatch = useCallback(async (scenarioId: string, messages: Message[]) => {
     if (!user || messages.length === 0) return;
+    startWrite();
     try {
       let batch = writeBatch(db);
       let count = 0;
@@ -173,8 +216,9 @@ export function useFirestoreSync() {
       }
       if (count > 0) await batch.commit();
     } catch (error) {
-      console.error("Firestore Error (Save Messages Batch):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/messages`, 'write');
+    } finally {
+      endWrite();
     }
   }, [user]);
 
@@ -195,8 +239,7 @@ export function useFirestoreSync() {
       }
       if (count > 0) await batch.commit();
     } catch (error) {
-      console.error("Firestore Error (Delete Messages Batch):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/messages`, 'delete');
     }
   }, [user]);
 
@@ -205,8 +248,7 @@ export function useFirestoreSync() {
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', messageId));
     } catch (error) {
-      console.error("Firestore Error (Delete Message):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/messages/${messageId}`, 'delete');
     }
   }, [user]);
 
@@ -219,7 +261,7 @@ export function useFirestoreSync() {
       const entries = snapshot.docs.map(doc => doc.data() as CodexEntry);
       callback(entries);
     }, (error) => {
-      console.error("Firestore Error (Sync Codex):", error);
+      handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/codex`, 'read');
     });
   }, [user]);
 
@@ -232,8 +274,7 @@ export function useFirestoreSync() {
       }
       await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'codex', finalEntry.id), finalEntry);
     } catch (error) {
-      console.error("Firestore Error (Save Codex):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/codex/${entry.id}`, 'write');
     }
   }, [user]);
 
@@ -259,8 +300,7 @@ export function useFirestoreSync() {
       }
       if (count > 0) await batch.commit();
     } catch (error) {
-      console.error("Firestore Error (Save Codex Batch):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/codex`, 'write');
     }
   }, [user]);
 
@@ -273,7 +313,7 @@ export function useFirestoreSync() {
       const items = snapshot.docs.map(doc => doc.data() as InventoryItem);
       callback(items);
     }, (error) => {
-      console.error("Firestore Error (Sync Inventory):", error);
+      handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/inventory`, 'read');
     });
   }, [user]);
 
@@ -286,8 +326,7 @@ export function useFirestoreSync() {
       }
       await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', finalItem.id), finalItem);
     } catch (error) {
-      console.error("Firestore Error (Save Inventory):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/inventory/${item.id}`, 'write');
     }
   }, [user]);
 
@@ -313,8 +352,7 @@ export function useFirestoreSync() {
       }
       if (count > 0) await batch.commit();
     } catch (error) {
-      console.error("Firestore Error (Save Inventory Batch):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/inventory`, 'write');
     }
   }, [user]);
 
@@ -323,8 +361,7 @@ export function useFirestoreSync() {
     try {
       await deleteDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', itemId));
     } catch (error) {
-      console.error("Firestore Error (Delete Inventory):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/inventory/${itemId}`, 'delete');
     }
   }, [user]);
 
@@ -336,7 +373,7 @@ export function useFirestoreSync() {
         callback(doc.data().text);
       }
     }, (error) => {
-      console.error("Firestore Error (Sync Summary):", error);
+      handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/summary/current`, 'read');
     });
   }, [user]);
 
@@ -348,14 +385,14 @@ export function useFirestoreSync() {
         lastUpdated: Date.now()
       });
     } catch (error) {
-      console.error("Firestore Error (Save Summary):", error);
-      throw error;
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/summary/current`, 'write');
     }
   }, [user]);
 
   return {
     user,
     isAuthReady,
+    isSyncing,
     syncScenarios,
     saveScenario,
     deleteScenario,

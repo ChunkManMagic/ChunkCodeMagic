@@ -13,9 +13,9 @@ interface CodexSidebarProps {
   isAutoCodexEnabled: boolean;
   setIsAutoCodexEnabled: (enabled: boolean) => void;
   isAutoPopulatingCodex: boolean;
-  handleAutoPopulateCodex: (force?: boolean, history?: Message[]) => void;
+  handleAutoPopulateCodex: (force?: boolean, history?: { role: string; parts: { text: string }[] }[]) => void;
   isUpdatingProfile: boolean;
-  handleAutoUpdateProfile: (messages: Message[], force?: boolean, history?: Message[]) => void;
+  handleAutoUpdateProfile: (messages: Message[], force?: boolean, history?: { role: string; parts: { text: string }[] }[]) => void;
   isRefiningCodexEntry: boolean;
   handleRefineCodexEntry: () => void;
   isGeneratingCodexImage: string | null;

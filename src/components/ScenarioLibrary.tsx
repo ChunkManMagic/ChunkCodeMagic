@@ -17,6 +17,27 @@ interface ScenarioLibraryProps {
   onImport?: (scenarioData: any) => void;
 }
 
+const getVibeTags = (scenario: Scenario) => {
+  const tags: string[] = [];
+  if (scenario.profile.storyTone) tags.push(scenario.profile.storyTone);
+  
+  // Extract keywords from backstory/personality
+  const content = (scenario.profile.backstory + ' ' + scenario.profile.personality).toLowerCase();
+  const commonGenres = ['noir', 'cyberpunk', 'steampunk', 'fantasy', 'horror', 'sci-fi', 'romance', 'mystery', 'medieval', 'western', 'apocalyptic', 'space'];
+  
+  commonGenres.forEach(genre => {
+    if (content.includes(genre)) tags.push(genre.charAt(0).toUpperCase() + genre.slice(1));
+  });
+
+  // Mood Tags
+  const traits = scenario.profile.traits;
+  if (traits.danger && traits.danger > 70) tags.push('Hostile');
+  if (traits.mystery && traits.mystery > 70) tags.push('Cryptic');
+  if (traits.lethality && traits.lethality > 70) tags.push('Deadly');
+  
+  return [...new Set(tags)].slice(0, 3);
+};
+
 export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDelete, onNew, hasDraft, onRestoreDraft, onImport }: ScenarioLibraryProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<AppMode | 'ALL'>('ALL');
@@ -53,18 +74,20 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
   };
 
   const filteredScenarios = scenarios.filter(s => {
+    const vibeTags = getVibeTags(s).join(' ').toLowerCase();
     const matchesSearch = s.profile.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          s.profile.storyTone.toLowerCase().includes(searchQuery.toLowerCase());
+                          s.profile.storyTone.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                          vibeTags.includes(searchQuery.toLowerCase());
     const matchesFilter = filterMode === 'ALL' || s.profile.mode === filterMode;
     return matchesSearch && matchesFilter;
   });
 
   return (
-    <div className="w-full max-w-6xl mx-auto p-8">
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-6">
-        <div>
-          <h2 className="text-4xl font-bold text-white font-serif tracking-tight">Scenario Library</h2>
-          <p className="text-zinc-500 mt-2">Manage your characters and ongoing narratives.</p>
+    <div className="w-full max-w-7xl mx-auto p-4 sm:p-8">
+      <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 gap-6">
+        <div className="space-y-1">
+          <h2 className="text-4xl sm:text-5xl font-bold text-white font-serif tracking-tight">Timeline Archive</h2>
+          <p className="text-zinc-500 text-lg">Your multiverse of characters and unfolding narratives.</p>
         </div>
         <div className="flex flex-wrap items-center gap-4">
           <input 
@@ -196,18 +219,24 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                   referrerPolicy="no-referrer"
                 />
                 <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between">
-                  <div>
-                    <h3 className="text-xl font-bold text-white font-serif">{scenario.profile.name}</h3>
-                    <p className="text-[10px] uppercase tracking-widest text-emerald-400 font-bold">{scenario.profile.storyTone}</p>
+                  <div className="absolute bottom-4 left-4 right-4 flex items-end justify-between">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-2xl font-bold text-white font-serif truncate drop-shadow-lg">{scenario.profile.name}</h3>
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {getVibeTags(scenario).map(tag => (
+                          <span key={tag} className="text-[8px] font-bold uppercase tracking-wider bg-black/60 backdrop-blur-md text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="px-2 py-1 rounded-lg bg-black/40 backdrop-blur border border-white/10 flex items-center gap-1.5 shrink-0 ml-4">
+                      {scenario.profile.mode === AppMode.SCENARIO ? <Globe className="w-3 h-3 text-blue-400" /> :
+                       scenario.profile.mode === AppMode.GAME ? <Swords className="w-3 h-3 text-purple-400" /> :
+                       <Heart className="w-3 h-3 text-pink-400" />}
+                      <span className="text-[8px] font-bold text-white uppercase tracking-tighter">{scenario.profile.mode}</span>
+                    </div>
                   </div>
-                  <div className="px-2 py-1 rounded-lg bg-black/40 backdrop-blur border border-white/10 flex items-center gap-1.5">
-                    {scenario.profile.mode === AppMode.SCENARIO ? <Globe className="w-3 h-3 text-blue-400" /> :
-                     scenario.profile.mode === AppMode.GAME ? <Swords className="w-3 h-3 text-purple-400" /> :
-                     <Heart className="w-3 h-3 text-pink-400" />}
-                    <span className="text-[8px] font-bold text-white uppercase tracking-tighter">{scenario.profile.mode}</span>
-                  </div>
-                </div>
               </div>
               
               <div className="p-6 space-y-4">
