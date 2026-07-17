@@ -1347,6 +1347,10 @@ export async function suggestNextAction(
   guide?: string, 
   customInstructions?: string
 ): Promise<string> {
+  // Optimize token usage: Limit the history sent to suggestNextAction to the last 15 messages.
+  // There is no need to send thousands of tokens of entire old chat history for a simple action suggestion.
+  const limitedHistory = history.slice(-15);
+
   const codexContext = codexEntries.length > 0
     ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntries.slice(-15).map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
     : '';
@@ -1389,7 +1393,7 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
   const settings = getSettings();
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    return callOpenRouter(history, systemInstruction, `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.`, settings);
+    return callOpenRouter(limitedHistory, systemInstruction, `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.`, settings);
   }
 
   const ai = getGenAI();
@@ -1400,7 +1404,7 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
     chat = ai.chats.create({
       model: settings.activeModel,
       config: { systemInstruction },
-      history: buildHistory(history)
+      history: buildHistory(limitedHistory)
     });
     response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
   } catch (err: any) {
@@ -1416,7 +1420,7 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
       chat = ai.chats.create({
         model: 'gemini-flash-latest',
         config: { systemInstruction },
-        history: buildHistory(history)
+        history: buildHistory(limitedHistory)
       });
       response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
     } else {
@@ -1427,6 +1431,10 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
 }
 
 export async function refineInput(input: string, profile: CharacterProfile, history: any[], customInstructions?: string): Promise<string> {
+  // Optimize token usage: Limit the history sent to refineInput to the last 8 messages.
+  // Draft refinement only needs immediate recent context to maintain coherent style.
+  const limitedHistory = history.slice(-8);
+
   const styleInstruction = customInstructions
     ? `\nCustom Writing Style Instructions:\n${customInstructions}\n`
     : '';
@@ -1449,7 +1457,7 @@ RULES:
   const settings = getSettings();
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    return callOpenRouter(history, systemInstruction, `Refine this input: "${input}"`, settings);
+    return callOpenRouter(limitedHistory, systemInstruction, `Refine this input: "${input}"`, settings);
   }
 
   const ai = getGenAI();
@@ -1460,7 +1468,7 @@ RULES:
     chat = ai.chats.create({
       model: settings.activeModel,
       config: { systemInstruction },
-      history: buildHistory(history)
+      history: buildHistory(limitedHistory)
     });
     response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
   } catch (err: any) {
@@ -1476,7 +1484,7 @@ RULES:
       chat = ai.chats.create({
         model: 'gemini-flash-latest',
         config: { systemInstruction },
-        history: buildHistory(history)
+        history: buildHistory(limitedHistory)
       });
       response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
     } else {
