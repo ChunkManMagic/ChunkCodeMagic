@@ -881,7 +881,7 @@ export default function App() {
         {!currentScenarioId && !isCreating && !showDraft ? (
           <ErrorBoundary>
             <ScenarioLibrary 
-              scenarios={scenarios} 
+              scenarios={Array.from(new Map(scenarios.map(s => [s.id, s])).values())} 
               onSelect={handleSelectScenario} 
               onEdit={handleEditScenario}
               onDuplicate={handleDuplicateScenario}
@@ -913,6 +913,7 @@ export default function App() {
                 avatarBase64={currentScenario.avatarBase64}
                 onSave={handleSaveEdit}
                 onCancel={() => setIsEditing(false)}
+                scenarios={scenarios}
               />
             </ErrorBoundary>
           </div>

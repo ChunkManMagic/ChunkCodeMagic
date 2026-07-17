@@ -262,21 +262,21 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                       className="p-2 text-zinc-600 hover:text-red-400 transition-colors"
                       title="Delete Scenario"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Delete</span>
                     </button>
                     <button
                       onClick={() => onEdit(scenario)}
                       className="p-2 text-zinc-600 hover:text-emerald-400 transition-colors"
                       title="Edit Character"
                     >
-                      <Edit3 className="w-4 h-4" />
+                      <Edit3 className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Edit</span>
                     </button>
                     <button
                       onClick={() => onDuplicate(scenario)}
                       className="p-2 text-zinc-600 hover:text-blue-400 transition-colors"
                       title="Duplicate & Start New Narrative"
                     >
-                      <Copy className="w-4 h-4" />
+                      <Copy className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Clone</span>
                     </button>
                   </div>
                   <button

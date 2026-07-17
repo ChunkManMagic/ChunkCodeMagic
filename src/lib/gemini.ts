@@ -1,21 +1,271 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings, getSettings } from "./types";
 import { compressImage } from "./utils";
 
 export { AppMode };
 export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
 
+// Re-export Type for existing schema definitions in this file
+export const Type = {
+  STRING: "string",
+  OBJECT: "object",
+  ARRAY: "array",
+  INTEGER: "integer",
+  NUMBER: "number",
+  BOOLEAN: "boolean"
+};
+
 /**
- * WARNING: The API key is exposed in the client bundle when using VITE_ prefixed keys.
- * For production, use a backend proxy to keep keys secure.
+ * A custom client that mimics the ai.models.generateContent signature but routes requests 
+ * through our backend's /api/gemini/interact endpoint (which uses ai.interactions.create).
+ * This ensures we comply with the requirement to never call the Interactions API directly 
+ * from the client, while avoiding a full rewrite of all functions in this file.
  */
 export function getGenAI() {
-  const apiKey = process.env.GEMINI_API_KEY || (import.meta as any).env.VITE_GEMINI_API_KEY;
-  if (!apiKey) {
-    console.error("Gemini API key is missing!");
-    throw new Error("Gemini API key is missing. Please check your environment configuration.");
-  }
-  return new GoogleGenAI({ apiKey });
+  return {
+    models: {
+      generateContent: async ({ model, contents, config }: any) => {
+        const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
+        const isOmni = model.includes('omni') || model.includes('lyria');
+        
+        if (isAgent || isOmni) {
+          // Route to interactions API
+          const requestBody = {
+            agent: isAgent ? model : undefined,
+            model: !isAgent ? model : undefined,
+            environment: isAgent ? 'remote' : undefined,
+            input: contents,
+            system_instruction: config?.systemInstruction,
+            response_format: config?.responseMimeType === "application/json" 
+              ? (config?.responseSchema ? config.responseSchema : { type: "object" })
+              : undefined,
+            generation_config: {
+              temperature: config?.temperature,
+              top_p: config?.topP,
+              max_output_tokens: config?.maxOutputTokens,
+            },
+            response_modalities: config?.responseModalities,
+          };
+
+          const res = await fetch(typeof window !== 'undefined' ? '/api/gemini/interact' : 'http://localhost:3000/api/gemini/interact', {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody)
+          });
+          
+          if (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = await res.json();
+              if (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+
+          const interaction = await res.json();
+          let fullOutput = "";
+          const imageCandidates: any[] = [];
+          const audioCandidates: any[] = [];
+
+          for (const step of interaction.steps || []) {
+            if (step.type === 'model_output') {
+              for (const c of step.content || []) {
+                if (c.type === 'text' && c.text) fullOutput += c.text;
+                else if (c.type === 'image') imageCandidates.push(c);
+                else if (c.type === 'audio') audioCandidates.push(c);
+              }
+            }
+          }
+
+          return {
+            text: fullOutput,
+            candidates: [{
+              content: {
+                parts: [
+                  ...(fullOutput ? [{ text: fullOutput }] : []),
+                  ...imageCandidates.map(img => ({ inlineData: { data: img.data, mimeType: img.mime_type }})),
+                  ...audioCandidates.map(aud => ({ inlineData: { data: aud.data, mimeType: aud.mime_type }}))
+                ]
+              }
+            }]
+          };
+        } else {
+          // Route to standard generateContent
+          const requestBody = {
+            model,
+            contents,
+            config
+          };
+
+          const res = await fetch(typeof window !== 'undefined' ? '/api/gemini/generate' : 'http://localhost:3000/api/gemini/generate', {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody)
+          });
+          
+          if (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = await res.json();
+              if (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+
+          const rawResponse = await res.json();
+          if (!rawResponse.text && rawResponse.candidates && rawResponse.candidates[0]?.content?.parts?.[0]?.text) {
+             rawResponse.text = rawResponse.candidates[0].content.parts[0].text;
+          }
+          return rawResponse;
+        }
+      },
+      
+      generateContentStream: async function* ({ model, contents, config }: any) {
+        const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
+        const isOmni = model.includes('omni') || model.includes('lyria');
+        
+        if (isAgent || isOmni) {
+          // Route to interactions stream API
+          const requestBody = {
+            agent: isAgent ? model : undefined,
+            model: !isAgent ? model : undefined,
+            environment: isAgent ? 'remote' : undefined,
+            input: contents,
+            system_instruction: config?.systemInstruction,
+            response_format: config?.responseMimeType === "application/json" 
+              ? (config?.responseSchema ? config.responseSchema : { type: "object" })
+              : undefined,
+            generation_config: {
+              temperature: config?.temperature,
+              top_p: config?.topP,
+              max_output_tokens: config?.maxOutputTokens,
+            },
+            response_modalities: config?.responseModalities,
+          };
+
+          const res = await fetch("/api/gemini/interact/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody)
+          });
+
+          if (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = await res.json();
+              if (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+          
+          if (!res.body) throw new Error("No response body");
+          
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.error) {
+                    throw new Error(data.error);
+                  }
+                  if (data.event_type === "step.delta") {
+                     if (data.delta?.type === "text") {
+                       yield {
+                         text: data.delta.text,
+                         candidates: [{ content: { parts: [{ text: data.delta.text }] } }]
+                       };
+                     }
+                  }
+                } catch (e) {
+                  // Ignore parse errors for incomplete chunks
+                }
+              }
+            }
+          }
+        } else {
+          // Route to standard generateContentStream
+          const requestBody = {
+            model,
+            contents,
+            config
+          };
+
+          const res = await fetch("/api/gemini/generate/stream", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(requestBody)
+          });
+
+          if (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = await res.json();
+              if (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+          
+          if (!res.body) throw new Error("No response body");
+          
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                try {
+                  const data = JSON.parse(line.slice(6));
+                  if (data.error) {
+                    throw new Error(data.error);
+                  }
+                  // the standard streaming chunk format:
+                  if (!data.text && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                    data.text = data.candidates[0].content.parts[0].text;
+                  }
+                  yield data;
+                } catch (e) {
+                  // Ignore parse errors for incomplete chunks
+                }
+              }
+            }
+          }
+        }
+      }
+
+    },
+    chats: {
+      create: ({ model, config, history }: any) => {
+        return {
+          sendMessage: async ({ message }: any) => {
+            const contents = [...(history || []), { role: 'user', parts: [{ text: message }] }];
+            return await getGenAI().models.generateContent({ model, contents, config });
+          },
+          sendMessageStream: async ({ message }: any) => {
+            const contents = [...(history || []), { role: 'user', parts: [{ text: message }] }];
+            return await getGenAI().models.generateContentStream({ model, contents, config });
+          }
+        };
+      }
+    }
+  };
 }
 
 export function generateId(): string {
@@ -108,6 +358,10 @@ Name: ${profile.name}
 Personality: ${profile.personality}
 Backstory: ${profile.backstory}
 Appearance: ${profile.appearance}
+Clothing: ${profile.clothing || 'Not specified'}
+Accessories: ${profile.accessories || 'Not specified'}
+Hair Style / Color: ${profile.hairStyle || 'Not specified'}${profile.hairColor ? ` (${profile.hairColor})` : ''}
+Eye Color: ${profile.eyeColor || 'Not specified'}
 Story Tone: ${profile.storyTone}
 Relationship with player: ${profile.relationship}
 ${profile.currentMood ? `Current Mood: ${profile.currentMood}` : ''}
@@ -151,6 +405,14 @@ IMPORTANT: You MUST start every single response with your character's current mo
 
 WORLD:
 Name / Setting: ${profile.name}
+Narration Style: ${profile.personality || 'Neutral / descriptive'}
+World Lore & History: ${profile.backstory || 'Not specified'}
+Vivid Setting & Environment: ${profile.appearance || 'Not specified'}
+Environment Type: ${profile.clothing || 'Not specified'}
+Lighting / Weather Conditions: ${profile.accessories || 'Not specified'}
+Primary Color Palette: ${profile.hairStyle || 'Not specified'}
+Secondary Color Palette: ${profile.hairColor || 'Not specified'}
+Key Landmarks / Points of Interest: ${profile.eyeColor || 'Not specified'}
 Atmosphere: ${profile.worldAtmosphere || 'Not specified'}
 Key Locations: ${profile.keyLocations || 'Not specified'}
 Time Period: ${profile.timePeriod || 'Not specified'}
@@ -196,6 +458,15 @@ If the player provides a [Director's Note: ...], use it to redirect the narrativ
   return `You are the **Dungeon Master** running a tabletop RPG session. Your name is ${profile.name}. You control ALL NPCs, describe all environments, adjudicate rules, and simulate dice outcomes. The player is their character; you are everything else.
 
 CAMPAIGN SETUP:
+Campaign Name: ${profile.name}
+DM Style: ${profile.personality || 'Balanced'}
+Campaign Lore & History: ${profile.backstory || 'Not specified'}
+Vivid World Description: ${profile.appearance || 'Not specified'}
+Setting / Environment Type: ${profile.clothing || 'Not specified'}
+Key Elements / Props: ${profile.accessories || 'Not specified'}
+Atmosphere: ${profile.hairStyle || 'Not specified'}
+Color Theme & Palette: ${profile.hairColor || 'Not specified'}
+Art / Visual Style: ${profile.eyeColor || 'Not specified'}
 Game System: ${profile.gameSystem || 'Flexible / Narrative'}
 Quest Objective: ${profile.questObjective || 'Not specified'}
 Current Campaign Arc: ${profile.currentCampaignArc || 'Opening chapter'}
@@ -203,7 +474,6 @@ Party: ${profile.partyComposition || 'Solo adventurer'}
 Starting Equipment: ${profile.startingEquipment || 'Standard adventuring gear'}
 Difficulty: ${profile.difficultyLevel || 'Balanced'}
 Rules Complexity: ${profile.rulesComplexity || 'Moderate'}
-DM Style: ${profile.personality}
 Tone: ${profile.storyTone}
 
 DM BEHAVIOR DIALS:
@@ -236,33 +506,89 @@ function buildHistory(messages: any[]) {
 }
 
 function parseJsonWithRecovery(responseText: string): any {
+  let cleanedText = responseText.trim();
+  
+  // 1. Recover from markdown wrappers
+  if (cleanedText.includes("```")) {
+    const match = cleanedText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (match && match[1]) {
+      cleanedText = match[1].trim();
+    } else {
+      cleanedText = cleanedText
+        .replace(/```(?:json)?/gi, "")
+        .replace(/```/g, "")
+        .trim();
+    }
+  }
+
+  // Double-check if we can parse directly
   try {
-    return JSON.parse(responseText);
-  } catch (e) {
-    console.error("JSON Parse Error. Attempting recovery. Raw text length:", responseText.length);
+    return JSON.parse(cleanedText);
+  } catch (e: any) {
+    console.error("JSON Parse Error. Attempting recovery. Raw length:", responseText.length, "Cleaned length:", cleanedText.length, "Error:", e.message);
     try {
-      // Robust recovery for truncated JSON
-      let fixedText = responseText.trim();
-      
-      // If it ends with an unterminated string, close it
-      if (fixedText.endsWith('"') && !fixedText.endsWith('\\"')) {
-        // Already closed, just need to close the object
-      } else if (fixedText.includes('"')) {
-        // Likely cut off inside a string
+      let fixedText = cleanedText;
+
+      // Handle trailing comma before any modifications
+      if (fixedText.endsWith(',')) {
+        fixedText = fixedText.slice(0, -1).trim();
+      }
+
+      // Re-scan stack of open brackets/braces from left to right, ignoring characters inside strings
+      const stack: ("brace" | "bracket")[] = [];
+      let inString = false;
+      let escaped = false;
+      for (let i = 0; i < fixedText.length; i++) {
+        const char = fixedText[i];
+        if (escaped) {
+          escaped = false;
+          continue;
+        }
+        if (char === '\\') {
+          escaped = true;
+          continue;
+        }
+        if (char === '"') {
+          inString = !inString;
+          continue;
+        }
+        if (!inString) {
+          if (char === '{') {
+            stack.push("brace");
+          } else if (char === '[') {
+            stack.push("bracket");
+          } else if (char === '}') {
+            if (stack[stack.length - 1] === "brace") {
+              stack.pop();
+            }
+          } else if (char === ']') {
+            if (stack[stack.length - 1] === "bracket") {
+              stack.pop();
+            }
+          }
+        }
+      }
+
+      if (inString && escaped) {
+        fixedText = fixedText.slice(0, -1);
+      }
+      if (inString) {
         fixedText += '"';
       }
-      
-      // Close any open braces
-      const openBraces = (fixedText.match(/{/g) || []).length;
-      const closeBraces = (fixedText.match(/}/g) || []).length;
-      for (let i = 0; i < openBraces - closeBraces; i++) {
-        fixedText += '}';
+      // Pop everything remaining from stack in reverse order and close it
+      while (stack.length > 0) {
+        const top = stack.pop();
+        if (top === "brace") {
+          fixedText += "}";
+        } else if (top === "bracket") {
+          fixedText += "]";
+        }
       }
-      
+
       return JSON.parse(fixedText);
-    } catch (e2) {
-      console.error("Recovery failed.", e2);
-      throw new Error("Failed to parse JSON. The response may have been truncated.");
+    } catch (e2: any) {
+      console.error("Recovery failed. Error:", e2?.message);
+      throw new Error(`Failed to parse JSON. Error: ${e.message}. Recovery Error: ${e2.message}`);
     }
   }
 }
@@ -305,16 +631,29 @@ async function callOpenRouter(history: any[], systemInstruction: string, userInp
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    console.error("OpenRouter Error Data:", errorData);
-    const msg = errorData.error?.message || response.statusText;
+    const errorText = await response.text();
+    let errorData = {};
+    try {
+      errorData = JSON.parse(errorText);
+    } catch {
+      // Ignore parse error if it's an HTML page
+      console.error("OpenRouter returned non-JSON error:", errorText.substring(0,200));
+    }
+    const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
     if (response.status === 401) {
       throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
     }
     throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
   }
 
-  const data = await response.json();
+  const rawText = await response.text();
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch (e) {
+    console.error("OpenRouter returned invalid JSON. Raw response:", rawText.substring(0,200));
+    throw new Error(`OpenRouter returned an invalid response (not JSON). ` + rawText.substring(0, 100));
+  }
   return data.choices?.[0]?.message?.content || "";
 }
 
@@ -348,9 +687,14 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
   });
 
   if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    console.error("OpenRouter Stream Error Data:", errorData);
-    const msg = errorData.error?.message || response.statusText;
+    const errorText = await response.text();
+    let errorData = {};
+    try {
+      errorData = JSON.parse(errorText);
+    } catch {
+      console.error("OpenRouter Stream returned non-JSON error:", errorText.substring(0,200));
+    }
+    const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
     if (response.status === 401) {
       throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
     }
@@ -433,31 +777,34 @@ async function generateStructuredData(prompt: string, systemPrompt: string, sche
     response = await withRetry(() => ai.models.generateContent({
       model: settings.activeModel,
       contents: prompt,
-      config: schema ? {
+      config: {
+        systemInstruction: systemPrompt,
         responseMimeType: "application/json",
-        responseSchema: schema
-      } : {
-        responseMimeType: "application/json"
+        ...(schema ? { responseSchema: schema } : {})
       }
     }));
   } catch (err: any) {
-    const isPermissionError = 
+    const isFallbackableError = 
       err?.message?.includes('Permission Denied') || 
       err?.status === 403 || 
       err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
       String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('RESOURCE_EXHAUSTED') ||
+      String(err).includes('429') ||
       String(err).includes('403');
 
-    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
-      console.warn(`Structured Data: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+    const fallbackModel = 'gemini-3.5-flash';
+    if (isFallbackableError && settings.activeModel !== fallbackModel) {
+      console.warn(`Structured Data: Fallback to ${fallbackModel} due to error with ${settings.activeModel}:`, err.message);
       response = await withRetry(() => ai.models.generateContent({
-        model: 'gemini-flash-latest',
+        model: fallbackModel,
         contents: prompt,
-        config: schema ? {
+        config: {
+          systemInstruction: systemPrompt,
           responseMimeType: "application/json",
-          responseSchema: schema
-        } : {
-          responseMimeType: "application/json"
+          ...(schema ? { responseSchema: schema } : {})
         }
       }));
     } else {
@@ -498,14 +845,14 @@ Return ONLY a JSON array of strings.`;
 
 export async function generateAdditionalCharacter(idea: string, mode: AppMode | string): Promise<{ name: string; description: string; personality: string; appearance: string }> {
   const prompt = `Generate a detailed NPC or additional character based on this idea: "${idea}" for a ${mode} setting.`;
-  const systemPrompt = "You are a character creation assistant. Return ONLY a valid JSON object with: name, description, personality, appearance.";
+  const systemPrompt = "You are a creative character creation assistant. Return ONLY a valid JSON object with: name, description, personality, appearance. IMPORTANT: For description, personality, and appearance, provide rich, detailed, multi-sentence paragraphs (at least 3-4 sentences). Do not use single-word or generic answers.";
   const schema = {
     type: Type.OBJECT,
     properties: {
-      name: { type: Type.STRING },
-      description: { type: Type.STRING },
-      personality: { type: Type.STRING },
-      appearance: { type: Type.STRING },
+      name: { type: Type.STRING, description: "A creative and fitting name." },
+      description: { type: Type.STRING, description: "Detailed, multi-sentence paragraph describing the character." },
+      personality: { type: Type.STRING, description: "Detailed, multi-sentence paragraph describing personality." },
+      appearance: { type: Type.STRING, description: "Detailed, multi-sentence paragraph detailing physical appearance." },
     },
     required: ["name", "description", "personality", "appearance"]
   };
@@ -553,8 +900,9 @@ ${modeGuidance}
 
 Instructions:
 1. You MUST fill in EVERY field in the schema. Do not leave any field empty or as a placeholder.
-2. Ensure the content is creative, immersive, and fits the ${mode} mode perfectly.
-3. Also generate a detailed player character profile (playerProfile) that would be a compelling fit for this story/session. Fill in all fields for the player character too.
+2. Ensure the content is HIGHLY creative, deeply immersive, and fits the ${mode} mode perfectly.
+3. For all descriptive text fields (e.g., backstory, appearance, personality, worldAtmosphere, keyLocations, etc.), you MUST write detailed, multi-sentence paragraphs (at least 3-5 sentences). DO NOT use single-word or generic answers. Be highly descriptive, rich in narrative detail, and creative.
+4. Also generate a detailed player character profile (playerProfile) that would be a compelling fit for this story/session. Fill in all fields for the player character too with rich descriptions.
 
 CRITICAL INSTRUCTIONS FOR FIELDS:
 - worldAtmosphere: Describe the WORLD'S mood, environment, and general feel (e.g., "A dark, rainy cyberpunk city with neon lights and constant surveillance"). Do NOT describe a person.
@@ -565,7 +913,7 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
   let responseText = "{}";
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    const systemPrompt = `You are a character creation assistant for an interactive fiction app. Return ONLY a valid JSON object with no markdown, no backticks, no explanation. 
+    const systemPrompt = `You are a creative character and world creation assistant for an interactive fiction app. Return ONLY a valid JSON object with no markdown, no backticks, no explanation. IMPORTANT: For all descriptive fields, provide rich, detailed, multi-sentence paragraphs. Do not use generic single-word answers. 
     
     CRITICAL INSTRUCTIONS FOR FIELDS:
     - worldAtmosphere: Describe the WORLD'S mood, environment, and general feel (e.g., "A dark, rainy cyberpunk city with neon lights and constant surveillance"). Do NOT describe a person.
@@ -583,48 +931,48 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          name: { type: Type.STRING },
-          personality: { type: Type.STRING },
-          backstory: { type: Type.STRING },
-          appearance: { type: Type.STRING },
-          clothing: { type: Type.STRING },
-          accessories: { type: Type.STRING },
-          hairStyle: { type: Type.STRING },
-          hairColor: { type: Type.STRING },
-          eyeColor: { type: Type.STRING },
-          storyTone: { type: Type.STRING },
-          relationship: { type: Type.STRING },
-          characterFlaws: { type: Type.STRING },
-          secretMotive: { type: Type.STRING },
-          speechPattern: { type: Type.STRING },
-          likesAndDislikes: { type: Type.STRING },
-          coreBeliefs: { type: Type.STRING },
-          quirks: { type: Type.STRING },
-          worldAtmosphere: { type: Type.STRING },
-          keyLocations: { type: Type.STRING },
-          scenarioStakes: { type: Type.STRING },
-          scenarioConflict: { type: Type.STRING },
-          timePeriod: { type: Type.STRING },
-          factions: { type: Type.STRING },
-          magicOrTechnologyLevel: { type: Type.STRING },
-          incitingIncident: { type: Type.STRING },
-          gameSystem: { type: Type.STRING },
-          questObjective: { type: Type.STRING },
-          dungeonMasterStyle: { type: Type.STRING },
-          rulesComplexity: { type: Type.STRING },
-          difficultyLevel: { type: Type.STRING },
-          partyComposition: { type: Type.STRING },
-          startingEquipment: { type: Type.STRING },
-          currentCampaignArc: { type: Type.STRING },
-          currentMood: { type: Type.STRING },
+          name: { type: Type.STRING, description: "A creative and fitting name." },
+          personality: { type: Type.STRING, description: "Detailed, multi-sentence paragraph describing personality." },
+          backstory: { type: Type.STRING, description: "Detailed, rich multi-sentence paragraph detailing backstory." },
+          appearance: { type: Type.STRING, description: "Detailed, multi-sentence paragraph detailing physical appearance." },
+          clothing: { type: Type.STRING, description: "Detailed description of clothing/environment." },
+          accessories: { type: Type.STRING, description: "Detailed description of accessories/weather/lighting." },
+          hairStyle: { type: Type.STRING, description: "Detailed description of hair style/atmosphere." },
+          hairColor: { type: Type.STRING, description: "Detailed description of color palette." },
+          eyeColor: { type: Type.STRING, description: "Detailed description of eyes or landmarks." },
+          storyTone: { type: Type.STRING, description: "Detailed description of the story tone." },
+          relationship: { type: Type.STRING, description: "Detailed description of relationships." },
+          characterFlaws: { type: Type.STRING, description: "Detailed description of character flaws." },
+          secretMotive: { type: Type.STRING, description: "Detailed description of secret motives." },
+          speechPattern: { type: Type.STRING, description: "Detailed description of speech patterns." },
+          likesAndDislikes: { type: Type.STRING, description: "Detailed description of likes and dislikes." },
+          coreBeliefs: { type: Type.STRING, description: "Detailed description of core beliefs." },
+          quirks: { type: Type.STRING, description: "Detailed description of quirks." },
+          worldAtmosphere: { type: Type.STRING, description: "Detailed, multi-sentence paragraph describing world atmosphere." },
+          keyLocations: { type: Type.STRING, description: "Detailed, multi-sentence paragraph describing key locations." },
+          scenarioStakes: { type: Type.STRING, description: "Detailed description of stakes." },
+          scenarioConflict: { type: Type.STRING, description: "Detailed description of conflict." },
+          timePeriod: { type: Type.STRING, description: "Detailed description of time period." },
+          factions: { type: Type.STRING, description: "Detailed description of factions." },
+          magicOrTechnologyLevel: { type: Type.STRING, description: "Detailed description of magic/tech level." },
+          incitingIncident: { type: Type.STRING, description: "Detailed description of inciting incident." },
+          gameSystem: { type: Type.STRING, description: "Detailed description of game system." },
+          questObjective: { type: Type.STRING, description: "Detailed description of quest objective." },
+          dungeonMasterStyle: { type: Type.STRING, description: "Detailed description of DM style." },
+          rulesComplexity: { type: Type.STRING, description: "Detailed description of rules complexity." },
+          difficultyLevel: { type: Type.STRING, description: "Detailed description of difficulty." },
+          partyComposition: { type: Type.STRING, description: "Detailed description of party composition." },
+          startingEquipment: { type: Type.STRING, description: "Detailed description of starting equipment." },
+          currentCampaignArc: { type: Type.STRING, description: "Detailed description of current campaign arc." },
+          currentMood: { type: Type.STRING, description: "Detailed description of mood." },
           playerProfile: {
             type: Type.OBJECT,
             properties: {
               name: { type: Type.STRING },
-              description: { type: Type.STRING },
-              personality: { type: Type.STRING },
-              backstory: { type: Type.STRING },
-              appearance: { type: Type.STRING },
+              description: { type: Type.STRING, description: "Detailed, multi-sentence paragraph." },
+              personality: { type: Type.STRING, description: "Detailed, multi-sentence paragraph." },
+              backstory: { type: Type.STRING, description: "Detailed, multi-sentence paragraph." },
+              appearance: { type: Type.STRING, description: "Detailed, multi-sentence paragraph." },
               clothing: { type: Type.STRING },
               accessories: { type: Type.STRING },
               hairStyle: { type: Type.STRING },
@@ -652,17 +1000,21 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
         config: schemaConfig
       }));
     } catch (err: any) {
-      const isPermissionError = 
-        err?.message?.includes('Permission Denied') || 
-        err?.status === 403 || 
-        err?.code === 403 ||
-        String(err).includes('PERMISSION_DENIED') ||
-        String(err).includes('403');
+      const isFallbackableError = 
+      err?.message?.includes('Permission Denied') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
+      String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('RESOURCE_EXHAUSTED') ||
+      String(err).includes('429') ||
+      String(err).includes('403');
 
-      if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
-        console.warn(`Profile Generation: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+      if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
+        console.warn(`Profile Generation: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
         response = await withRetry(() => ai.models.generateContent({
-          model: 'gemini-flash-latest',
+          model: 'gemini-3.5-flash',
           contents,
           config: schemaConfig
         }));
@@ -738,146 +1090,19 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
 }
 
 export async function generateAvatar(profile: CharacterProfile): Promise<string> {
-  console.log("generateAvatar: Calling Gemini API...");
-  const ai = getGenAI();
-  let prompt = '';
-
-  if (profile.mode === AppMode.SCENARIO) {
-    prompt = `A highly detailed, photorealistic 8k concept art of a scenario setting.
-Setting Description: ${profile.appearance}
-Environment Type: ${profile.clothing || profile.worldAtmosphere || 'appropriate for the setting'}
-Lighting/Weather: ${profile.accessories || 'natural'}
-Color Palette: ${profile.hairStyle || 'natural'} ${profile.hairColor || ''}
-Key Landmark: ${profile.eyeColor || profile.keyLocations || 'none'}
-Style: Cinematic lighting, professional photography, sharp focus, intricate textures, epic scale.
-The environment should be the central focus.`;
-  } else if (profile.mode === AppMode.GAME) {
-    prompt = `A highly detailed, photorealistic 8k concept art of a tabletop RPG campaign setting.
-Setting Description: ${profile.appearance}
-Key Elements: ${profile.clothing || profile.gameSystem || 'appropriate for the setting'}
-Atmosphere: ${profile.accessories || profile.worldAtmosphere || 'natural'}
-Color Theme: ${profile.hairStyle || 'natural'} ${profile.hairColor || ''}
-Art Style: ${profile.eyeColor || 'none'}
-Style: Cinematic lighting, professional photography, sharp focus, intricate textures, epic scale.
-The environment should be the central focus.`;
-  } else {
-    prompt = `A highly detailed, photorealistic 8k portrait of a character.
-Appearance: ${profile.appearance}
-Clothing: ${profile.clothing || 'appropriate for the character'}
-Accessories: ${profile.accessories || 'none'}
-Hair: ${profile.hairStyle || 'natural'} in ${profile.hairColor || 'natural color'}
-Eyes: ${profile.eyeColor || 'natural color'}
-Style: Cinematic lighting, professional photography, sharp focus, intricate textures, realistic skin and fabric rendering. 
-The character should be the central focus, looking towards the camera.`;
-  }
-
-  let response;
-  try {
-    response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "1:1"
-        }
-      }
-    }));
-    
-    console.log("generateAvatar: API call successful.");
-  } catch (err: any) {
-    console.warn("generateAvatar: Image generation failed or not permitted, using fallback.", err?.message);
-  }
-
-  if (response) {
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        const base64 = `data:image/png;base64,${part.inlineData.data}`;
-        return await compressImage(base64, 512, 0.7);
-      }
-    }
-  }
-  // Fallback to a stylised placeholder if image generation is not supported or fails
+  console.log("generateAvatar: Image generation is temporarily disabled.");
   const seed = Math.floor(Math.random() * 1000);
   return `https://picsum.photos/seed/${seed}/512/512`;
 }
 
 export async function generateCodexImage(entry: CodexEntry, profile: CharacterProfile): Promise<string> {
-  const ai = getGenAI();
-  const prompt = `A highly detailed, cinematic 8k illustration of the following:
-Title: ${entry.title}
-Category: ${entry.category}
-Description: ${entry.content}
-World Atmosphere: ${profile.worldAtmosphere || 'atmospheric'}
-Tone: ${profile.storyTone}
-Style: Digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures. 
-The subject should be the central focus, capturing the essence of the description.`;
-
-  let response;
-  try {
-    response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "1:1"
-        }
-      }
-    }));
-  } catch (err: any) {
-    console.warn("generateCodexImage: Image generation failed, using fallback.", err?.message);
-  }
-  
-  if (response) {
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        const base64 = `data:image/png;base64,${part.inlineData.data}`;
-        return await compressImage(base64, 512, 0.7);
-      }
-    }
-  }
+  console.log("generateCodexImage: Image generation is temporarily disabled.");
   const seed = Math.floor(Math.random() * 1000);
   return `https://picsum.photos/seed/${seed}/512/512`;
 }
 
 export async function generateItemImage(item: InventoryItem, profile: CharacterProfile): Promise<string> {
-  const ai = getGenAI();
-  const prompt = `A highly detailed, cinematic 8k illustration of a game item:
-Item Name: ${item.name}
-Type: ${item.type}
-Description: ${item.description}
-World Atmosphere: ${profile.worldAtmosphere || 'atmospheric'}
-Tone: ${profile.storyTone}
-Style: RPG item icon, digital art, detailed, atmospheric, professional concept art, sharp focus, intricate textures, centered on a neutral background.`;
-
-  let response;
-  try {
-    response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "1:1"
-        }
-      }
-    }));
-  } catch (err: any) {
-    console.warn("generateItemImage: Image generation failed, using fallback.", err?.message);
-  }
-  
-  if (response) {
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        const base64 = `data:image/png;base64,${part.inlineData.data}`;
-        return await compressImage(base64, 512, 0.7);
-      }
-    }
-  }
+  console.log("generateItemImage: Image generation is temporarily disabled.");
   const seed = Math.floor(Math.random() * 1000);
   return `https://picsum.photos/seed/${seed}/512/512`;
 }
@@ -946,7 +1171,7 @@ Only include items that were explicitly mentioned as gained, lost, or used in th
   }));
 
   try {
-    return JSON.parse(response.text || '{"added":[], "removed":[], "updated":[]}');
+    return parseJsonWithRecovery(response.text || '{"added":[], "removed":[], "updated":[]}');
   } catch (e) {
     return { added: [], removed: [], updated: [] };
   }
@@ -1156,14 +1381,7 @@ Return the complete, updated profile as a JSON object with the exact same struct
 }
 
 export async function applyGlobalEdit(profile: CharacterProfile, prompt: string): Promise<CharacterProfile> {
-  const ai = getGenAI();
-  const response = await withRetry(() => ai.models.generateContent({
-    model: getSettings().activeModel,
-    contents: `You are an expert creative writer and game designer. The user wants to modify the following ${profile.mode} profile based on a specific request.
-
-User's Request: "${prompt}"
-
-Current Profile: ${JSON.stringify(profile)}
+  const systemPrompt = `You are an expert creative writer and game designer. The user wants to modify the following ${profile.mode} profile based on their request.
 
 Instructions:
 1. Analyze the user's request and determine which fields in the profile need to be updated to fulfill it.
@@ -1171,14 +1389,55 @@ Instructions:
 3. Ensure the changes fit naturally into the existing context.
 4. Return the complete, updated profile as a JSON object with the exact same structure.
 
-Return ONLY valid JSON.`,
-    config: {
-      maxOutputTokens: 8192,
-      responseMimeType: "application/json",
-      responseSchema: {
+Return ONLY a valid JSON object matching the requested schema.`;
+
+  const contents = `User's Request: "${prompt}"
+
+Current Profile JSON:
+${JSON.stringify(profile)}`;
+
+  const schema = {
+    type: Type.OBJECT,
+    properties: {
+      name: { type: Type.STRING },
+      personality: { type: Type.STRING },
+      backstory: { type: Type.STRING },
+      appearance: { type: Type.STRING },
+      clothing: { type: Type.STRING },
+      accessories: { type: Type.STRING },
+      hairStyle: { type: Type.STRING },
+      hairColor: { type: Type.STRING },
+      eyeColor: { type: Type.STRING },
+      storyTone: { type: Type.STRING },
+      relationship: { type: Type.STRING },
+      characterFlaws: { type: Type.STRING },
+      secretMotive: { type: Type.STRING },
+      speechPattern: { type: Type.STRING },
+      likesAndDislikes: { type: Type.STRING },
+      coreBeliefs: { type: Type.STRING },
+      quirks: { type: Type.STRING },
+      worldAtmosphere: { type: Type.STRING },
+      keyLocations: { type: Type.STRING },
+      scenarioStakes: { type: Type.STRING },
+      scenarioConflict: { type: Type.STRING },
+      timePeriod: { type: Type.STRING },
+      factions: { type: Type.STRING },
+      magicOrTechnologyLevel: { type: Type.STRING },
+      incitingIncident: { type: Type.STRING },
+      gameSystem: { type: Type.STRING },
+      questObjective: { type: Type.STRING },
+      dungeonMasterStyle: { type: Type.STRING },
+      rulesComplexity: { type: Type.STRING },
+      difficultyLevel: { type: Type.STRING },
+      partyComposition: { type: Type.STRING },
+      startingEquipment: { type: Type.STRING },
+      currentCampaignArc: { type: Type.STRING },
+      currentMood: { type: Type.STRING },
+      playerProfile: {
         type: Type.OBJECT,
         properties: {
           name: { type: Type.STRING },
+          description: { type: Type.STRING },
           personality: { type: Type.STRING },
           backstory: { type: Type.STRING },
           appearance: { type: Type.STRING },
@@ -1187,55 +1446,15 @@ Return ONLY valid JSON.`,
           hairStyle: { type: Type.STRING },
           hairColor: { type: Type.STRING },
           eyeColor: { type: Type.STRING },
-          storyTone: { type: Type.STRING },
-          relationship: { type: Type.STRING },
-          characterFlaws: { type: Type.STRING },
-          secretMotive: { type: Type.STRING },
-          speechPattern: { type: Type.STRING },
-          likesAndDislikes: { type: Type.STRING },
-          coreBeliefs: { type: Type.STRING },
-          quirks: { type: Type.STRING },
-          worldAtmosphere: { type: Type.STRING },
-          keyLocations: { type: Type.STRING },
-          scenarioStakes: { type: Type.STRING },
-          scenarioConflict: { type: Type.STRING },
-          timePeriod: { type: Type.STRING },
-          factions: { type: Type.STRING },
-          magicOrTechnologyLevel: { type: Type.STRING },
-          incitingIncident: { type: Type.STRING },
-          gameSystem: { type: Type.STRING },
-          questObjective: { type: Type.STRING },
-          dungeonMasterStyle: { type: Type.STRING },
-          rulesComplexity: { type: Type.STRING },
-          difficultyLevel: { type: Type.STRING },
-          partyComposition: { type: Type.STRING },
-          startingEquipment: { type: Type.STRING },
-          currentCampaignArc: { type: Type.STRING },
-          currentMood: { type: Type.STRING },
-          playerProfile: {
-            type: Type.OBJECT,
-            properties: {
-              name: { type: Type.STRING },
-              description: { type: Type.STRING },
-              personality: { type: Type.STRING },
-              backstory: { type: Type.STRING },
-              appearance: { type: Type.STRING },
-              clothing: { type: Type.STRING },
-              accessories: { type: Type.STRING },
-              hairStyle: { type: Type.STRING },
-              hairColor: { type: Type.STRING },
-              eyeColor: { type: Type.STRING },
-            },
-            required: ["name", "description"]
-          }
         },
-        required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
+        required: ["name", "description"]
       }
-    }
-  }));
+    },
+    required: ["name", "personality", "backstory", "appearance", "storyTone", "relationship", "playerProfile"]
+  };
 
   try {
-    const data = parseJsonWithRecovery(response.text || "{}");
+    const data = await generateStructuredData(contents, systemPrompt, schema);
     return {
       ...profile,
       ...data,
@@ -1244,7 +1463,7 @@ Return ONLY valid JSON.`,
       playerProfile: { ...profile.playerProfile, ...(data.playerProfile || {}) }
     };
   } catch (e) {
-    console.error("applyGlobalEdit: JSON Parse Error", e);
+    console.error("applyGlobalEdit: Error applying global edit", e);
     throw new Error("Failed to apply edits.");
   }
 }
@@ -1273,17 +1492,21 @@ Updated Summary:`;
       contents: prompt
     }));
   } catch (err: any) {
-    const isPermissionError = 
+    const isFallbackableError = 
       err?.message?.includes('Permission Denied') || 
       err?.status === 403 || 
       err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
       String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('RESOURCE_EXHAUSTED') ||
+      String(err).includes('429') ||
       String(err).includes('403');
 
-    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
-      console.warn(`summarizeHistory: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
+      console.warn(`summarizeHistory: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
       response = await withRetry(() => ai.models.generateContent({
-        model: 'gemini-flash-latest',
+        model: 'gemini-3.5-flash',
         contents: prompt
       }));
     } else {
@@ -1304,31 +1527,33 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
 
   const ai = getGenAI();
   
-  let chat;
   let responseStream;
   try {
-    chat = ai.chats.create({
+    const contents = [...buildHistory(history), { role: "user", parts: [{ text: userInput }] }];
+    responseStream = await ai.models.generateContentStream({
       model: settings.activeModel,
-      config: { systemInstruction },
-      history: buildHistory(history)
+      contents,
+      config: { systemInstruction }
     });
-    responseStream = await chat.sendMessageStream({ message: userInput });
   } catch (err: any) {
-    const isPermissionError = 
+    const isFallbackableError = 
       err?.message?.includes('Permission Denied') || 
       err?.status === 403 || 
       err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
       String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('RESOURCE_EXHAUSTED') ||
+      String(err).includes('429') ||
       String(err).includes('403');
 
-    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
-      console.warn(`generateTextReplyStream: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
-      chat = ai.chats.create({
-        model: 'gemini-flash-latest',
-        config: { systemInstruction },
-        history: buildHistory(history)
+    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
+      console.warn(`generateTextReplyStream: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
+      responseStream = await ai.models.generateContentStream({
+        model: 'gemini-3.5-flash',
+        contents: [...buildHistory(history), { role: "user", parts: [{ text: userInput }] }],
+        config: { systemInstruction }
       });
-      responseStream = await chat.sendMessageStream({ message: userInput });
     } else {
       throw err;
     }
@@ -1347,10 +1572,6 @@ export async function suggestNextAction(
   guide?: string, 
   customInstructions?: string
 ): Promise<string> {
-  // Optimize token usage: Limit the history sent to suggestNextAction to the last 15 messages.
-  // There is no need to send thousands of tokens of entire old chat history for a simple action suggestion.
-  const limitedHistory = history.slice(-15);
-
   const codexContext = codexEntries.length > 0
     ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntries.slice(-15).map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
     : '';
@@ -1393,7 +1614,7 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
   const settings = getSettings();
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    return callOpenRouter(limitedHistory, systemInstruction, `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.`, settings);
+    return callOpenRouter(history, systemInstruction, `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.`, settings);
   }
 
   const ai = getGenAI();
@@ -1404,23 +1625,27 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
     chat = ai.chats.create({
       model: settings.activeModel,
       config: { systemInstruction },
-      history: buildHistory(limitedHistory)
+      history: buildHistory(history)
     });
     response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
   } catch (err: any) {
-    const isPermissionError = 
+    const isFallbackableError = 
       err?.message?.includes('Permission Denied') || 
       err?.status === 403 || 
       err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
       String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('RESOURCE_EXHAUSTED') ||
+      String(err).includes('429') ||
       String(err).includes('403');
 
-    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
-      console.warn(`suggestNextAction: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
+      console.warn(`suggestNextAction: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
       chat = ai.chats.create({
-        model: 'gemini-flash-latest',
+        model: 'gemini-3.5-flash',
         config: { systemInstruction },
-        history: buildHistory(limitedHistory)
+        history: buildHistory(history)
       });
       response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
     } else {
@@ -1431,10 +1656,6 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
 }
 
 export async function refineInput(input: string, profile: CharacterProfile, history: any[], customInstructions?: string): Promise<string> {
-  // Optimize token usage: Limit the history sent to refineInput to the last 8 messages.
-  // Draft refinement only needs immediate recent context to maintain coherent style.
-  const limitedHistory = history.slice(-8);
-
   const styleInstruction = customInstructions
     ? `\nCustom Writing Style Instructions:\n${customInstructions}\n`
     : '';
@@ -1457,7 +1678,7 @@ RULES:
   const settings = getSettings();
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    return callOpenRouter(limitedHistory, systemInstruction, `Refine this input: "${input}"`, settings);
+    return callOpenRouter(history, systemInstruction, `Refine this input: "${input}"`, settings);
   }
 
   const ai = getGenAI();
@@ -1468,23 +1689,27 @@ RULES:
     chat = ai.chats.create({
       model: settings.activeModel,
       config: { systemInstruction },
-      history: buildHistory(limitedHistory)
+      history: buildHistory(history)
     });
     response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
   } catch (err: any) {
-    const isPermissionError = 
+    const isFallbackableError = 
       err?.message?.includes('Permission Denied') || 
       err?.status === 403 || 
       err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
       String(err).includes('PERMISSION_DENIED') ||
+      String(err).includes('RESOURCE_EXHAUSTED') ||
+      String(err).includes('429') ||
       String(err).includes('403');
 
-    if (isPermissionError && settings.activeModel !== 'gemini-flash-latest') {
-      console.warn(`refineInput: Fallback to gemini-flash-latest due to error with ${settings.activeModel}:`, err.message);
+    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
+      console.warn(`refineInput: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
       chat = ai.chats.create({
-        model: 'gemini-flash-latest',
+        model: 'gemini-3.5-flash',
         config: { systemInstruction },
-        history: buildHistory(limitedHistory)
+        history: buildHistory(history)
       });
       response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
     } else {
@@ -1517,11 +1742,11 @@ Text: ${text}`;
   };
 
   const settings = getSettings();
-  const activeTTSModel = settings.activeTTSModel || "gemini-flash-latest";
+  const activeTTSModel = settings.activeTTSModel || "gemini-3.5-flash";
 
   const modelsToTry = [
     activeTTSModel,
-    activeTTSModel === "gemini-pro-latest" ? "gemini-flash-latest" : "gemini-pro-latest"
+    activeTTSModel === "gemini-3.1-pro-preview" ? "gemini-3.5-flash" : "gemini-3.1-pro-preview"
   ];
 
   let lastError: any = null;
@@ -1594,7 +1819,7 @@ Return a JSON array of new codex entries. Each must have:
     }
   }));
   
-  return JSON.parse(response.text || "[]");
+  return parseJsonWithRecovery(response.text || "[]");
 }
 
 export async function refineCodexEntry(entry: Partial<CodexEntry>, profile: CharacterProfile): Promise<Partial<CodexEntry>> {
@@ -1621,7 +1846,7 @@ Return the refined entry as JSON with the same fields (title, content, category)
   }));
   
   try {
-    return JSON.parse(response.text || JSON.stringify(entry));
+    return parseJsonWithRecovery(response.text || JSON.stringify(entry));
   } catch (e) {
     return entry;
   }
@@ -1672,7 +1897,7 @@ Fields you can update: personality, backstory, appearance, relationship, worldAt
     }
   }));
   
-  return JSON.parse(response.text || "{}");
+  return parseJsonWithRecovery(response.text || "{}");
 }
 
 export async function detectMood(history: any[]): Promise<string> {
@@ -1692,78 +1917,7 @@ export async function detectMood(history: any[]): Promise<string> {
 }
 
 export async function generateContextualAvatar(profile: CharacterProfile, history: any[]): Promise<string> {
-  const ai = getGenAI();
-  
-  // First, analyze the context to determine the current emotion, background, and any changes
-  const contextResponse = await withRetry(() => ai.models.generateContent({
-    model: getSettings().activeModel,
-    contents: `Analyze the recent roleplay history and determine the character's current state.
-Character Name: ${profile.name}
-Character Appearance: ${profile.appearance}
-Recent History: ${JSON.stringify(history.slice(-10))}
-
-Identify:
-1. Current Emotion/Expression.
-2. Current Location/Background.
-3. Any temporary changes (wounds, new accessories, different clothing).
-
-Return a JSON object with:
-- "emotion": string
-- "background": string
-- "changes": string (any temporary additions or changes)`,
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          emotion: { type: Type.STRING },
-          background: { type: Type.STRING },
-          changes: { type: Type.STRING }
-        },
-        required: ["emotion", "background", "changes"]
-      }
-    }
-  }));
-
-  const context = JSON.parse(contextResponse.text || '{"emotion":"neutral", "background":"neutral", "changes":""}');
-
-  const prompt = `A highly detailed, photorealistic 8k portrait of ${profile.name}.
-Base Appearance: ${profile.appearance}
-Current Emotion/Expression: ${context.emotion}
-Current Background: ${context.background}
-Temporary Changes/Details: ${context.changes}
-Clothing: ${profile.clothing || 'appropriate for the character'}
-Accessories: ${profile.accessories || 'none'}
-Hair: ${profile.hairStyle || 'natural'} in ${profile.hairColor || 'natural color'}
-Eyes: ${profile.eyeColor || 'natural color'}
-Style: Cinematic lighting, professional photography, sharp focus, intricate textures, realistic skin and fabric rendering. 
-The character should be the central focus, looking towards the camera.`;
-
-  let response;
-  try {
-    response = await withRetry(() => ai.models.generateContent({
-      model: 'gemini-3.1-flash-image-preview',
-      contents: {
-        parts: [{ text: prompt }]
-      },
-      config: {
-        imageConfig: {
-          aspectRatio: "1:1"
-        }
-      }
-    }));
-  } catch (err: any) {
-    console.warn("generateDynamicAvatar: Image generation failed, using fallback.", err?.message);
-  }
-  
-  if (response) {
-    for (const part of response.candidates?.[0]?.content?.parts || []) {
-      if (part.inlineData) {
-        const base64 = `data:image/png;base64,${part.inlineData.data}`;
-        return await compressImage(base64, 512, 0.7);
-      }
-    }
-  }
+  console.log("generateContextualAvatar: Image generation is temporarily disabled.");
   const seed = Math.floor(Math.random() * 1000);
   return `https://picsum.photos/seed/${seed}/512/512`;
 }

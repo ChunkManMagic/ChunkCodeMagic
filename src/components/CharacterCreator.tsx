@@ -491,6 +491,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
           setDraftProfile(null);
           setDraftAvatar(null);
         }}
+        scenarios={scenarios}
       />
     );
   }
@@ -1268,14 +1269,37 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           {appMode === AppMode.SCENARIO ? "Scenario Tone" : appMode === AppMode.GAME ? "Campaign Tone" : "Story Tone"}
                         </label>
                         <select 
-                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                          value={detailedProfile.storyTone}
-                          onChange={e => handleToneChange(e.target.value)}
+                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm mb-2"
+                          value={['Dramatic', 'Gritty', 'Whimsical', 'Horror', 'Romantic', 'Cyberpunk', 'Noir', 'Adventure'].includes(detailedProfile.storyTone) ? detailedProfile.storyTone : 'Custom'}
+                          onChange={e => {
+                            const val = e.target.value;
+                            if (val === 'Custom') {
+                              setDetailedProfile({...detailedProfile, storyTone: 'Mysterious / Intriguing'});
+                            } else {
+                              handleToneChange(val);
+                            }
+                          }}
                         >
                           {['Dramatic', 'Gritty', 'Whimsical', 'Horror', 'Romantic', 'Cyberpunk', 'Noir', 'Adventure'].map(t => (
                             <option key={t} value={t} className="bg-zinc-900">{t}</option>
                           ))}
+                          <option value="Custom" className="bg-zinc-900">Custom...</option>
                         </select>
+                        {!['Dramatic', 'Gritty', 'Whimsical', 'Horror', 'Romantic', 'Cyberpunk', 'Noir', 'Adventure'].includes(detailedProfile.storyTone) && (
+                          <motion.div 
+                            initial={{ opacity: 0, y: -5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            className="space-y-1"
+                          >
+                            <input 
+                              type="text"
+                              className="w-full px-4 py-2 bg-black/40 border border-white/10 rounded-xl text-white text-xs placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
+                              placeholder="Type custom tone (e.g., Cozy Comedy, Mythic Thriller)..."
+                              value={detailedProfile.storyTone}
+                              onChange={e => setDetailedProfile({...detailedProfile, storyTone: e.target.value})}
+                            />
+                          </motion.div>
+                        )}
                       </div>
                       <div>
                         <div className="flex justify-between items-center mb-2">
