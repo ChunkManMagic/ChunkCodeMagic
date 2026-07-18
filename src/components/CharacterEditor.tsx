@@ -26,7 +26,50 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
   const [isGlobalEditing, setIsGlobalEditing] = useState(false);
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
+  const [showLibraryModal, setShowLibraryModal] = useState(false);
+  const [libraryImportTarget, setLibraryImportTarget] = useState<'main' | 'player' | null>(null);
   const { toastSuccess, toastError } = useToast();
+
+  const handleLibrarySelect = (selected: any) => {
+    if (libraryImportTarget === 'main') {
+      setProfile(prev => ({
+        ...prev,
+        name: selected.name || prev.name,
+        personality: selected.personality || prev.personality,
+        backstory: selected.description || selected.backstory || prev.backstory,
+        appearance: selected.appearance || prev.appearance,
+        clothing: selected.clothing || prev.clothing,
+        accessories: selected.accessories || prev.accessories,
+        hairStyle: selected.hairStyle || prev.hairStyle,
+        hairColor: selected.hairColor || prev.hairColor,
+        eyeColor: selected.eyeColor || prev.eyeColor,
+      }));
+      if (selected.avatarBase64) {
+        setAvatar(selected.avatarBase64);
+      }
+      toastSuccess(`Imported "${selected.name}" as the main character!`);
+    } else if (libraryImportTarget === 'player') {
+      setProfile(prev => ({
+        ...prev,
+        playerProfile: {
+          ...(prev.playerProfile || {}),
+          name: selected.name || prev.playerProfile?.name || '',
+          personality: selected.personality || prev.playerProfile?.personality || '',
+          description: selected.description || prev.playerProfile?.description || '',
+          backstory: selected.backstory || selected.description || prev.playerProfile?.backstory || '',
+          appearance: selected.appearance || prev.playerProfile?.appearance || '',
+          clothing: selected.clothing || prev.playerProfile?.clothing || '',
+          accessories: selected.accessories || prev.playerProfile?.accessories || '',
+          hairStyle: selected.hairStyle || prev.playerProfile?.hairStyle || '',
+          hairColor: selected.hairColor || prev.playerProfile?.hairColor || '',
+          eyeColor: selected.eyeColor || prev.playerProfile?.eyeColor || '',
+        }
+      }));
+      toastSuccess(`Imported "${selected.name}" as your player profile!`);
+    }
+    setShowLibraryModal(false);
+    setLibraryImportTarget(null);
+  };
 
   const handleGlobalEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -832,6 +875,16 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
               setShowAddCharacter(false);
             }}
             appMode={profile.mode}
+          />
+
+          <CharacterLibraryModal
+            isOpen={showLibraryModal}
+            onClose={() => {
+              setShowLibraryModal(false);
+              setLibraryImportTarget(null);
+            }}
+            scenarios={scenarios}
+            onSelect={handleLibrarySelect}
           />
         </div>
       </div>
