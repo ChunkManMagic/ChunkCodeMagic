@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import React, { useState, memo } from 'react';
+import { motion } from 'motion/react';
 import { Book, RefreshCw, Repeat, Sparkles, Loader2, Wand2, X as CloseIcon, Plus, Trash2 } from 'lucide-react';
 import { CodexEntry, Message } from '../../lib/types';
 
@@ -25,7 +25,7 @@ interface CodexSidebarProps {
   setConfirmModal: (modal: any) => void;
 }
 
-export function CodexSidebar({
+export const CodexSidebar = memo(function CodexSidebar({
   codexEntries,
   setCodexEntries,
   messages,
@@ -66,7 +66,7 @@ export function CodexSidebar({
       initial={{ x: '100%' }}
       animate={{ x: 0 }}
       exit={{ x: '100%' }}
-      transition={{ type: 'spring', damping: 25, stiffness: 200 }}
+      transition={{ type: 'spring', damping: 25, stiffness: 200 } as any}
       className="absolute right-0 top-0 bottom-0 w-80 glass-panel border-l border-white/10 z-40 flex flex-col shadow-2xl"
     >
       <div className="p-6 border-b border-white/5 flex items-center justify-between">
@@ -243,4 +243,4 @@ export function CodexSidebar({
       </div>
     </motion.div>
   );
-}
+});
