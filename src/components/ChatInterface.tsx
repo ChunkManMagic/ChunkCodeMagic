@@ -49,23 +49,16 @@ interface ChatInterfaceProps {
 
 export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onUpdateAvatar, onBranchScenario }: ChatInterfaceProps) {
   function renderWithDiceRolls(text: string): React.ReactNode {
-    if (!text.includes('[ROLL:') && !text.includes('[Rolled d')) return null; // signal to use ReactMarkdown normally
-    const parts = text.split(/(\[ROLL: d\d+\]|\[Rolled d\d+:\s*\d+\])/gi);
+    if (!text.includes('[ROLL:')) return null; // signal to use ReactMarkdown normally
+    const parts = text.split(/(\[ROLL: d\d+\])/g);
     return (
       <span>
         {parts.map((part, i) => {
-          const rollMatch = part.match(/\[ROLL:\s*(d\d+)\]/i);
-          const resultMatch = part.match(/\[Rolled\s*(d\d+):\s*(\d+)\]/i);
-          if (rollMatch) {
+          const match = part.match(/\[ROLL: (d\d+)\]/);
+          if (match) {
             return (
-              <span key={i} className="inline-flex items-center gap-1.5 mx-1 px-2.5 py-1 rounded-lg bg-purple-500/25 border border-purple-500/40 text-purple-300 text-xs font-bold shadow-[0_0_10px_rgba(139,92,246,0.2)] animate-pulse">
-                🎲 Roll {rollMatch[1].toUpperCase()}
-              </span>
-            );
-          } else if (resultMatch) {
-            return (
-              <span key={i} className="inline-flex items-center gap-1.5 mx-1 px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-orange-500/20 border border-amber-500/30 text-amber-300 text-xs font-black shadow-[0_0_12px_rgba(245,158,11,0.2)]">
-                🎲 {resultMatch[1].toUpperCase()}: <span className="text-white font-mono text-xs bg-black/40 px-1.5 py-0.5 rounded">{resultMatch[2]}</span>
+              <span key={i} className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold">
+                🎲 Roll {match[1]}
               </span>
             );
           }
@@ -1228,7 +1221,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                     )}
                     {msg.timestamp && <span className="text-[10px] text-zinc-600 font-mono px-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
                   </div>
-                  <div className={`max-w-[85%] rounded-[2rem] px-6 py-5 shadow-2xl transition-all duration-300 ${msg.role === 'user' ? 'bg-gradient-to-br from-emerald-600 to-teal-800 text-white rounded-tr-none shadow-[0_8px_25px_rgba(16,185,129,0.15)] border border-emerald-500/20' : 'glass-panel text-zinc-200 rounded-tl-none border border-white/5 hover:border-emerald-500/20 shadow-[0_12px_40px_rgba(0,0,0,0.3)]'}`}>
+                  <div className={`max-w-[85%] rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
                     {editingMessageId === msg.id ? (
                       <div className="space-y-3 min-w-[280px]">
                         <textarea value={editInput} onChange={(e) => setEditInput(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none" rows={4} autoFocus />
@@ -1243,7 +1236,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                         return (
                           <div className="flex flex-col gap-3">
                             {mainText && (
-                              profile.mode === AppMode.GAME && (mainText.includes('[ROLL:') || mainText.includes('[Rolled d') || mainText.includes('[Rolled d'))
+                              profile.mode === AppMode.GAME && mainText.includes('[ROLL:')
                                 ? <div className="text-[15px] leading-relaxed">{renderWithDiceRolls(mainText)}</div>
                                 : <div className={`prose prose-invert max-w-none text-[15px] leading-relaxed ${msg.role === 'model' ? 'narrative-text' : ''}`}>
                                     <ReactMarkdown>{mainText}</ReactMarkdown>

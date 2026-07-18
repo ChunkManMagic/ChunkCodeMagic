@@ -157,7 +157,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
       )}
 
       {filteredScenarios.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-24 glass-panel rounded-[2rem] border-2 border-dashed border-zinc-800/60 shadow-[inset_0_0_30px_rgba(255,255,255,0.01)]">
+        <div className="flex flex-col items-center justify-center py-24 glass-panel rounded-3xl border-dashed border-zinc-800">
           <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center mb-6">
             <User className="w-10 h-10 text-zinc-700" />
           </div>
@@ -209,8 +209,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
               key={scenario.id}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
-              whileHover={{ y: -6, transition: { duration: 0.2 } }}
-              className="group glass-panel rounded-[2rem] overflow-hidden border border-white/5 hover:border-emerald-500/30 hover:shadow-[0_12px_45px_rgba(16,185,129,0.15)] transition-all duration-300"
+              className="group glass-panel rounded-3xl overflow-hidden border border-white/5 hover:border-emerald-500/30 transition-all"
             >
               <div className="relative h-48 overflow-hidden">
                 <img 
