@@ -276,7 +276,7 @@ export function generateId(): string {
   }
 }
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1500): Promise<T> {
   try {
     return await fn();
   } catch (error: any) {
@@ -295,15 +295,57 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 2, delay = 2000): Pr
       throw new Error("Gemini is not available in your current location.");
     }
 
-    if (retries > 0 && (status === 429 || status === 500 || errorMessage.includes('429') || errorMessage.includes('500') || errorMessage.includes('quota') || errorMessage.includes('limit') || errorMessage.includes('exhausted'))) {
-      const waitTime = delay + Math.random() * 3000;
+    const isTransient = 
+      status === 429 || 
+      status === 500 || 
+      status === 503 ||
+      errorMessage.includes('429') || 
+      errorMessage.includes('500') || 
+      errorMessage.includes('503') || 
+      errorMessage.includes('UNAVAILABLE') || 
+      errorMessage.includes('quota') || 
+      errorMessage.includes('limit') || 
+      errorMessage.includes('exhausted') ||
+      errorMessage.includes('high demand') ||
+      errorMessage.includes('temporary') ||
+      errorMessage.includes('overloaded') ||
+      errorMessage.includes('Service Unavailable');
+
+    if (retries > 0 && isTransient) {
+      const waitTime = delay + Math.random() * 2000;
       console.warn(`Transient error hit (status ${status}), retrying in ${Math.round(waitTime)}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
-      return withRetry(fn, retries - 1, delay * 3);
+      return withRetry(fn, retries - 1, delay * 2.5);
     }
     
     throw error;
   }
+}
+
+function isFallbackable(err: any): boolean {
+  const errMsg = String(err?.message || err || '');
+  const status = err?.status || err?.code;
+  return (
+    status === 403 ||
+    status === 429 ||
+    status === 500 ||
+    status === 503 ||
+    errMsg.includes('Permission Denied') ||
+    errMsg.includes('PERMISSION_DENIED') ||
+    errMsg.includes('RESOURCE_EXHAUSTED') ||
+    errMsg.includes('UNAVAILABLE') ||
+    errMsg.includes('403') ||
+    errMsg.includes('429') ||
+    errMsg.includes('500') ||
+    errMsg.includes('503') ||
+    errMsg.includes('high demand') ||
+    errMsg.includes('temporary') ||
+    errMsg.includes('quota') ||
+    errMsg.includes('limit') ||
+    errMsg.includes('exhausted') ||
+    errMsg.includes('overloaded') ||
+    errMsg.includes('Service Unavailable')
+  );
 }
 
 function buildPlayerBlock(profile: CharacterProfile): string {
@@ -1492,16 +1534,7 @@ Updated Summary:`;
       contents: prompt
     }));
   } catch (err: any) {
-    const isFallbackableError = 
-      err?.message?.includes('Permission Denied') || 
-      err?.status === 403 || 
-      err?.code === 403 ||
-      err?.status === 429 ||
-      err?.code === 429 ||
-      String(err).includes('PERMISSION_DENIED') ||
-      String(err).includes('RESOURCE_EXHAUSTED') ||
-      String(err).includes('429') ||
-      String(err).includes('403');
+    const isFallbackableError = isFallbackable(err);
 
     if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
       console.warn(`summarizeHistory: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
@@ -1536,16 +1569,7 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
       config: { systemInstruction }
     });
   } catch (err: any) {
-    const isFallbackableError = 
-      err?.message?.includes('Permission Denied') || 
-      err?.status === 403 || 
-      err?.code === 403 ||
-      err?.status === 429 ||
-      err?.code === 429 ||
-      String(err).includes('PERMISSION_DENIED') ||
-      String(err).includes('RESOURCE_EXHAUSTED') ||
-      String(err).includes('429') ||
-      String(err).includes('403');
+    const isFallbackableError = isFallbackable(err);
 
     if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
       console.warn(`generateTextReplyStream: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
@@ -1629,16 +1653,7 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
     });
     response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
   } catch (err: any) {
-    const isFallbackableError = 
-      err?.message?.includes('Permission Denied') || 
-      err?.status === 403 || 
-      err?.code === 403 ||
-      err?.status === 429 ||
-      err?.code === 429 ||
-      String(err).includes('PERMISSION_DENIED') ||
-      String(err).includes('RESOURCE_EXHAUSTED') ||
-      String(err).includes('429') ||
-      String(err).includes('403');
+    const isFallbackableError = isFallbackable(err);
 
     if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
       console.warn(`suggestNextAction: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
@@ -1693,16 +1708,7 @@ RULES:
     });
     response = await withRetry(() => chat.sendMessage({ message: `Refine this input: "${input}"` }));
   } catch (err: any) {
-    const isFallbackableError = 
-      err?.message?.includes('Permission Denied') || 
-      err?.status === 403 || 
-      err?.code === 403 ||
-      err?.status === 429 ||
-      err?.code === 429 ||
-      String(err).includes('PERMISSION_DENIED') ||
-      String(err).includes('RESOURCE_EXHAUSTED') ||
-      String(err).includes('429') ||
-      String(err).includes('403');
+    const isFallbackableError = isFallbackable(err);
 
     if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
       console.warn(`refineInput: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);

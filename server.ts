@@ -3,6 +3,45 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
+function getFallbackModel(currentModel: string): string | null {
+  if (currentModel === 'gemini-3.1-pro-preview' || currentModel === 'gemini-2.5-pro') {
+    return 'gemini-3.5-flash';
+  }
+  if (currentModel === 'gemini-3.5-flash' || currentModel === 'gemini-2.5-flash') {
+    return 'gemini-3.1-flash-lite';
+  }
+  if (currentModel === 'gemini-3.1-flash-lite') {
+    return 'gemini-2.5-flash-lite';
+  }
+  // Avoid going below 2.5
+  if (currentModel !== 'gemini-3.5-flash' && !currentModel.startsWith('antigravity') && !currentModel.startsWith('deep-research')) {
+    return 'gemini-3.5-flash';
+  }
+  return null;
+}
+
+function isTransientError(err: any): boolean {
+  const errMsg = String(err?.message || err || '');
+  const status = err?.status || err?.code;
+  return (
+    status === 429 ||
+    status === 503 ||
+    status === 500 ||
+    errMsg.includes('429') ||
+    errMsg.includes('503') ||
+    errMsg.includes('500') ||
+    errMsg.includes('UNAVAILABLE') ||
+    errMsg.includes('RESOURCE_EXHAUSTED') ||
+    errMsg.includes('quota') ||
+    errMsg.includes('limit') ||
+    errMsg.includes('exhausted') ||
+    errMsg.includes('high demand') ||
+    errMsg.includes('temporary') ||
+    errMsg.includes('overloaded') ||
+    errMsg.includes('Service Unavailable')
+  );
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
@@ -17,22 +56,51 @@ async function startServer() {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const { model, contents, config } = req.body;
-      
-      const response = await ai.models.generateContent({
-        model,
-        contents,
-        config
-      });
+      const { contents, config } = req.body;
+      let model = req.body.model;
+
+      let attempt = 0;
+      const maxAttempts = 3;
+      let response: any = null;
+      let delay = 2000;
+
+      while (attempt < maxAttempts) {
+        try {
+          response = await ai.models.generateContent({
+            model,
+            contents,
+            config
+          });
+          break; // Success!
+        } catch (err: any) {
+          attempt++;
+          const isTransient = isTransientError(err);
+          console.error(`Gemini generate error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
+          
+          if (attempt >= maxAttempts || !isTransient) {
+            // Try fallback model if we have one and it's a transient/overload error
+            if (isTransient) {
+              const fallback = getFallbackModel(model);
+              if (fallback) {
+                console.warn(`Falling back from ${model} to ${fallback} due to demand/quota issues.`);
+                model = fallback;
+                attempt = 0; // Reset attempts for the fallback model
+                continue;
+              }
+            }
+            throw err;
+          }
+          
+          const waitTime = delay + Math.random() * 2000;
+          console.warn(`Retrying in ${Math.round(waitTime)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          delay *= 2; // Exponential backoff
+        }
+      }
       
       res.json(response);
     } catch (err: any) {
-      if (err?.status === 429 || String(err).includes('429')) {
-        console.warn("Gemini API rate limit (429) hit.");
-      } else {
-        console.error("Gemini generate error:", err);
-      }
-      res.status(500).json({ error: { message: err.message } });
+      res.status(500).json({ error: { message: err.message || String(err) } });
     }
   });
 
@@ -45,13 +113,46 @@ async function startServer() {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const { model, contents, config } = req.body;
-      
-      const stream = await ai.models.generateContentStream({
-        model,
-        contents,
-        config
-      });
+      const { contents, config } = req.body;
+      let model = req.body.model;
+
+      let attempt = 0;
+      const maxAttempts = 3;
+      let stream: any = null;
+      let delay = 1500;
+
+      while (attempt < maxAttempts) {
+        try {
+          stream = await ai.models.generateContentStream({
+            model,
+            contents,
+            config
+          });
+          break; // Success starting the stream!
+        } catch (err: any) {
+          attempt++;
+          const isTransient = isTransientError(err);
+          console.error(`Gemini generate stream error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
+          
+          if (attempt >= maxAttempts || !isTransient) {
+            if (isTransient) {
+              const fallback = getFallbackModel(model);
+              if (fallback) {
+                console.warn(`Falling back stream from ${model} to ${fallback} due to demand/quota issues.`);
+                model = fallback;
+                attempt = 0; // Reset attempts for fallback model
+                continue;
+              }
+            }
+            throw err;
+          }
+
+          const waitTime = delay + Math.random() * 1500;
+          console.warn(`Retrying stream start in ${Math.round(waitTime)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          delay *= 2;
+        }
+      }
       
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -63,8 +164,8 @@ async function startServer() {
       res.write(`data: [DONE]\n\n`);
       res.end();
     } catch (err: any) {
-      console.error("Gemini generate stream error:", err);
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      console.error("Gemini generate stream final failure:", err);
+      res.write(`data: ${JSON.stringify({ error: err.message || String(err) })}\n\n`);
       res.end();
     }
   });
@@ -78,27 +179,55 @@ async function startServer() {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const { model, input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id } = req.body;
-      
-      const interaction = await ai.interactions.create({
-        model,
-        input,
-        system_instruction,
-        response_format,
-        generation_config,
-        response_modalities,
-        tools,
-        previous_interaction_id
-      });
+      const { input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id } = req.body;
+      let model = req.body.model;
+
+      let attempt = 0;
+      const maxAttempts = 3;
+      let interaction: any = null;
+      let delay = 2000;
+
+      while (attempt < maxAttempts) {
+        try {
+          interaction = await ai.interactions.create({
+            model,
+            input,
+            system_instruction,
+            response_format,
+            generation_config,
+            response_modalities,
+            tools,
+            previous_interaction_id
+          });
+          break;
+        } catch (err: any) {
+          attempt++;
+          const isTransient = isTransientError(err);
+          console.error(`Gemini interact error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
+          
+          if (attempt >= maxAttempts || !isTransient) {
+            if (isTransient) {
+              const fallback = getFallbackModel(model);
+              if (fallback) {
+                console.warn(`Falling back interact from ${model} to ${fallback} due to demand/quota issues.`);
+                model = fallback;
+                attempt = 0;
+                continue;
+              }
+            }
+            throw err;
+          }
+
+          const waitTime = delay + Math.random() * 2000;
+          console.warn(`Retrying interact in ${Math.round(waitTime)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          delay *= 2;
+        }
+      }
       
       res.json(interaction);
     } catch (err: any) {
-      if (err?.status === 429 || String(err).includes('429')) {
-        console.warn("Gemini API rate limit (429) hit.");
-      } else {
-        console.error("Gemini interact error:", err);
-      }
-      res.status(500).json({ error: { message: err.message } });
+      res.status(500).json({ error: { message: err.message || String(err) } });
     }
   });
 
@@ -111,19 +240,52 @@ async function startServer() {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const { model, input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id } = req.body;
-      
-      const stream = await ai.interactions.create({
-        model,
-        input,
-        system_instruction,
-        response_format,
-        generation_config,
-        response_modalities,
-        tools,
-        previous_interaction_id,
-        stream: true
-      });
+      const { input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id } = req.body;
+      let model = req.body.model;
+
+      let attempt = 0;
+      const maxAttempts = 3;
+      let stream: any = null;
+      let delay = 1500;
+
+      while (attempt < maxAttempts) {
+        try {
+          stream = await ai.interactions.create({
+            model,
+            input,
+            system_instruction,
+            response_format,
+            generation_config,
+            response_modalities,
+            tools,
+            previous_interaction_id,
+            stream: true
+          });
+          break;
+        } catch (err: any) {
+          attempt++;
+          const isTransient = isTransientError(err);
+          console.error(`Gemini interact stream error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
+          
+          if (attempt >= maxAttempts || !isTransient) {
+            if (isTransient) {
+              const fallback = getFallbackModel(model);
+              if (fallback) {
+                console.warn(`Falling back interact stream from ${model} to ${fallback} due to demand/quota issues.`);
+                model = fallback;
+                attempt = 0;
+                continue;
+              }
+            }
+            throw err;
+          }
+
+          const waitTime = delay + Math.random() * 1500;
+          console.warn(`Retrying interact stream start in ${Math.round(waitTime)}ms...`);
+          await new Promise(resolve => setTimeout(resolve, waitTime));
+          delay *= 2;
+        }
+      }
       
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -135,12 +297,8 @@ async function startServer() {
       res.write(`data: [DONE]\n\n`);
       res.end();
     } catch (err: any) {
-      if (err?.status === 429 || String(err).includes('429')) {
-        console.warn("Gemini API rate limit (429) hit.");
-      } else {
-        console.error("Gemini stream error:", err);
-      }
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      console.error("Gemini interact stream final failure:", err);
+      res.write(`data: ${JSON.stringify({ error: err.message || String(err) })}\n\n`);
       res.end();
     }
   });
