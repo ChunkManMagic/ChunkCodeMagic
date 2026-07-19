@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
@@ -167,13 +167,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [refineGuidance, setRefineGuidance] = useState('');
   const [showModeDetails, setShowModeDetails] = useState(false);
 
-  // Memoize token estimation to prevent expensive computations on every keystroke
-  const estimatedTokens = useMemo(() => {
+  const estimateTokens = () => {
     const profileText = `${profile.name} ${profile.personality} ${profile.backstory} ${profile.appearance} ${profile.worldAtmosphere || ''} ${profile.keyLocations || ''} ${profile.incitingIncident || ''} ${profile.relationship} ${profile.storyTone}`;
     const textToCount = profileText + ' ' + messages.map(m => m.text).join(' ');
     const wordCount = textToCount.trim().split(/\s+/).length;
     return Math.ceil(wordCount * 1.3);
-  }, [profile, messages]);
+  };
 
   const handleExportScenario = () => {
     const exportData = {
@@ -863,7 +862,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           <div className="hidden sm:flex items-center gap-3 mr-2">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/30 border border-white/5" title="Estimated Context Tokens">
               <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Tokens</span>
-              <span className="text-xs font-mono text-zinc-300">{estimatedTokens.toLocaleString()}</span>
+              <span className="text-xs font-mono text-zinc-300">{estimateTokens().toLocaleString()}</span>
             </div>
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/30 border border-white/5" title="Cloud Sync Status">
               {isSaving ? (
@@ -1148,7 +1147,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 scroll-smooth custom-scrollbar">
+          <div className="flex-1 overflow-y-auto pt-8 pb-4 px-4 sm:pt-12 sm:pb-8 sm:px-8 space-y-8 scroll-smooth custom-scrollbar">
             {!isLoaded ? (
               <div className="h-full flex flex-col items-center justify-center text-zinc-600 gap-4">
                 <Loader2 className="w-8 h-8 animate-spin opacity-50 text-emerald-500" />
@@ -1207,22 +1206,26 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
             ) : (
               messages.map((msg) => (
                 <motion.div key={msg.id} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className={`flex group relative ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`absolute -top-6 opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 z-10 ${msg.role === 'user' ? 'right-0' : 'left-0'}`}>
-                    <button onClick={() => handleRewind(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Rewind to here"><RotateCcw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Rewind</span></button>
-                    <button onClick={() => startEditing(msg)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Edit</span></button>
+                  {/* Desktop Actions (Hover-only on MD and up) */}
+                  <div className={`hidden md:flex absolute -top-6 opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 z-10 ${msg.role === 'user' ? 'right-0' : 'left-0'}`}>
+                    <button onClick={() => handleRewind(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-red-400 transition-colors" title="Rewind to here"><RotateCcw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Rewind</span></button>
+                    <button onClick={() => startEditing(msg)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Edit</span></button>
                     {msg.role === 'model' && (
                       <>
                         <button onClick={() => {
                           const { mainText } = parseMessageContent(msg.text, msg.role);
                           handleReadAloud(mainText);
-                        }} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-blue-400 transition-colors" title="Read aloud"><Volume2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Read</span></button>
-                        <button onClick={() => setRegeneratingMessageId(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-emerald-400 transition-colors" title="Regenerate message"><RefreshCw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Regen</span></button>
-                        <button onClick={() => handleBranch(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-purple-400 transition-colors" title="Branch scenario from here"><GitBranch className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Branch</span></button>
+                        }} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-blue-400 transition-colors" title="Read aloud"><Volume2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Read</span></button>
+                        <button onClick={() => setRegeneratingMessageId(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-emerald-400 transition-colors" title="Regenerate message"><RefreshCw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Regen</span></button>
+                        <button onClick={() => handleBranch(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-purple-400 transition-colors" title="Branch scenario from here"><GitBranch className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Branch</span></button>
                       </>
                     )}
-                    {msg.timestamp && <span className="text-[10px] text-zinc-600 font-mono px-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+                    {msg.timestamp && <span className="text-[10px] text-zinc-400 font-mono px-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
                   </div>
-                  <div className={`max-w-[85%] rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
+
+                  {/* Message Bubble + Mobile Actions column */}
+                  <div className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                    <div className={`w-full rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
                     {editingMessageId === msg.id ? (
                       <div className="space-y-3 min-w-[280px]">
                         <textarea value={editInput} onChange={(e) => setEditInput(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none" rows={4} autoFocus />
@@ -1340,7 +1343,40 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                       })()
                     )}
                   </div>
-                </motion.div>
+
+                  {/* Mobile/Touch Actions (Visible only on mobile/touch screens, non-hover) */}
+                  <div className="flex flex-wrap md:hidden mt-2 items-center gap-1.5 px-1 opacity-80 z-10">
+                    <button onClick={() => handleRewind(msg.id)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-red-400 transition-colors flex items-center gap-1 shadow-md" title="Rewind to here">
+                      <RotateCcw className="w-3 h-3" />
+                      <span className="text-[8px] font-bold uppercase tracking-wider">Rewind</span>
+                    </button>
+                    <button onClick={() => startEditing(msg)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-emerald-400 transition-colors flex items-center gap-1 shadow-md" title="Edit message">
+                      <Edit2 className="w-3 h-3" />
+                      <span className="text-[8px] font-bold uppercase tracking-wider">Edit</span>
+                    </button>
+                    {msg.role === 'model' && (
+                      <>
+                        <button onClick={() => {
+                          const { mainText } = parseMessageContent(msg.text, msg.role);
+                          handleReadAloud(mainText);
+                        }} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-blue-400 transition-colors flex items-center gap-1 shadow-md" title="Read aloud">
+                          <Volume2 className="w-3 h-3" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider">Read</span>
+                        </button>
+                        <button onClick={() => setRegeneratingMessageId(msg.id)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-emerald-400 transition-colors flex items-center gap-1 shadow-md" title="Regenerate message">
+                          <RefreshCw className="w-3 h-3" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider">Regen</span>
+                        </button>
+                        <button onClick={() => handleBranch(msg.id)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-purple-400 transition-colors flex items-center gap-1 shadow-md" title="Branch scenario from here">
+                          <GitBranch className="w-3 h-3" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider">Branch</span>
+                        </button>
+                      </>
+                    )}
+                    {msg.timestamp && <span className="text-[8px] text-zinc-500 font-mono ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+                  </div>
+                </div>
+              </motion.div>
               ))
             )}
             {isTyping && (

@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo } from 'react';
+import { useState, useRef } from 'react';
 import { motion } from 'motion/react';
 import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy, Search, Filter, Upload } from 'lucide-react';
 import { AppMode } from '../lib/gemini';
@@ -44,15 +44,6 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toastError, toastSuccess } = useToast();
 
-  // Precompute and cache vibe tags for scenarios to prevent redundant calculations during search and filtering
-  const scenarioTagsMap = useMemo(() => {
-    const map = new Map<string, string[]>();
-    scenarios.forEach(s => {
-      map.set(s.id, getVibeTags(s));
-    });
-    return map;
-  }, [scenarios]);
-
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -83,8 +74,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
   };
 
   const filteredScenarios = scenarios.filter(s => {
-    const tags = scenarioTagsMap.get(s.id) || [];
-    const vibeTags = tags.join(' ').toLowerCase();
+    const vibeTags = getVibeTags(s).join(' ').toLowerCase();
     const matchesSearch = s.profile.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           s.profile.storyTone.toLowerCase().includes(searchQuery.toLowerCase()) ||
                           vibeTags.includes(searchQuery.toLowerCase());
@@ -233,7 +223,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                     <div className="flex-1 min-w-0">
                       <h3 className="text-2xl font-bold text-white font-serif truncate drop-shadow-lg">{scenario.profile.name}</h3>
                       <div className="flex flex-wrap gap-1.5 mt-2">
-                        {(scenarioTagsMap.get(scenario.id) || []).map(tag => (
+                        {getVibeTags(scenario).map(tag => (
                           <span key={tag} className="text-[8px] font-bold uppercase tracking-wider bg-black/60 backdrop-blur-md text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20">
                             #{tag}
                           </span>
