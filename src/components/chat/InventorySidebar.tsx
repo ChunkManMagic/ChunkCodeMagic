@@ -1,4 +1,4 @@
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { Package, Repeat, Sparkles, Loader2, X as CloseIcon, RefreshCw, ImageIcon, Trash2, Plus } from 'lucide-react';
 import { Message, InventoryItem } from '../../lib/types';
 
