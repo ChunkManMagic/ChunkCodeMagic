@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion } from 'motion/react';
 import { Book, RefreshCw, Repeat, Sparkles, Loader2, Wand2, X as CloseIcon, Plus, Trash2 } from 'lucide-react';
 import { CodexEntry, Message } from '../../lib/types';
 
