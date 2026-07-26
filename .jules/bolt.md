@@ -17,3 +17,7 @@ This journal tracks critical performance optimizations, learnings, and architect
 ## 2025-07-22 - [Optimized Storage Cleanup of Stale Scenario Data]
 **Learning:** Frequent UI list state modifications (such as scenario additions, updates, or message synchronizations) that trigger automatic hooks (like IndexedDB stale data cleanup) will cause severe CPU and main thread lag if they repeatedly scan all database keys and do $O(N)$ linear scans in render/effect loops.
 **Action:** Use `useRef` to track dynamic query arguments (like the `scenarios` list) inside effects to isolate dynamic updates, and introduce a session/ready ref (`hasCleanedRef`) to execute database sweeps exactly once per session. Pre-compute Map and Set lookup structures to transform inner $O(N)$ array searches into fast $O(1)$ lookups.
+
+## 2026-07-26 - [Debounced Browser Storage Writes During Message Streaming]
+**Learning:** Real-time updates like streaming AI response chunks trigger frequent state changes. Writing to IndexedDB and synchronously to `localStorage` on every character/chunk update creates heavy main thread overhead, micro-stutters, and high disk I/O.
+**Action:** Debounce storage saves to a 1000ms delay. Store the latest state in a `useRef` tracker and flush the pending save immediately on component unmount or context change (e.g., `scenarioId` changes) to avoid any data loss.
