@@ -172,6 +172,28 @@ export function useChatState(scenarioId: string) {
     };
   }, [scenarioId, flushPendingSave]);
 
+  // Flush any pending saves immediately on unmount or scenario change to ensure absolutely no data loss
+  useEffect(() => {
+    return () => {
+      if (pendingSaveRef.current) {
+        const { scenarioId: sId, messages: msgs, storySummary: summary } = pendingSaveRef.current;
+
+        set(STORAGE_KEYS.SCENARIO_MESSAGES(sId), msgs).catch(e => {
+          console.error("Failed to flush messages to IndexedDB on cleanup", e);
+        });
+
+        try {
+          const recentMessages = msgs.slice(-50);
+          localStorage.setItem(STORAGE_KEYS.SCENARIO_MESSAGES(sId), JSON.stringify(recentMessages));
+        } catch (e) {}
+
+        set(STORAGE_KEYS.SCENARIO_SUMMARY(sId), summary).catch(e => {
+          console.error("Failed to flush summary to IndexedDB on cleanup", e);
+        });
+      }
+    };
+  }, [scenarioId]);
+
   // Helper to add a message (handles cloud save)
   const addMessage = async (message: Message) => {
     setMessages(prev => [...prev, message]);
