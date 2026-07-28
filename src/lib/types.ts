@@ -176,10 +176,10 @@ export const CURRENT_SCHEMA_VERSION = 1;
 
 export const defaultSettings: AppSettings = {
   activeTextProvider: 'Google',
-  activeModel: 'gemini-flash-latest',
+  activeModel: 'gemini-3.5-flash',
   openRouterModel: 'meta-llama/llama-3-8b-instruct:free',
   voiceEngine: 'Cinematic',
-  activeTTSModel: 'gemini-flash-latest',
+  activeTTSModel: 'gemini-3.1-flash-tts-preview',
   premiumCustomVoices: true,
   premiumContextAnimations: true,
   premiumAutoAvatar: true,
@@ -191,17 +191,26 @@ export function getSettings(): AppSettings {
     const stored = localStorage.getItem('personaforge_settings');
     if (stored) {
       const parsed = JSON.parse(stored);
-      // Migrate deprecated models
-      if (parsed.activeModel === 'gemini-1.5-flash' || parsed.activeModel === 'gemini-2.0-flash-exp') {
-        parsed.activeModel = 'gemini-flash-latest';
-      } else if (parsed.activeModel === 'gemini-1.5-pro') {
-        parsed.activeModel = 'gemini-pro-latest';
+      // Migrate deprecated and legacy models to modern Google models
+      if (
+        !parsed.activeModel ||
+        parsed.activeModel === 'gemini-3.5-flash' || 
+        parsed.activeModel === 'gemini-1.5-flash' || 
+        parsed.activeModel === 'gemini-2.0-flash-exp'
+      ) {
+        parsed.activeModel = 'gemini-3.5-flash';
+      } else if (parsed.activeModel === 'gemini-pro-latest' || parsed.activeModel === 'gemini-1.5-pro') {
+        parsed.activeModel = 'gemini-3.1-pro-preview';
       }
       
-      if (parsed.activeTTSModel === 'gemini-1.5-flash') {
-        parsed.activeTTSModel = 'gemini-flash-latest';
-      } else if (parsed.activeTTSModel === 'gemini-1.5-pro') {
-        parsed.activeTTSModel = 'gemini-pro-latest';
+      if (
+        !parsed.activeTTSModel ||
+        parsed.activeTTSModel === 'gemini-3.5-flash' ||
+        parsed.activeTTSModel === 'gemini-1.5-flash'
+      ) {
+        parsed.activeTTSModel = 'gemini-3.1-flash-tts-preview';
+      } else if (parsed.activeTTSModel === 'gemini-1.5-pro' || parsed.activeTTSModel === 'gemini-pro-latest') {
+        parsed.activeTTSModel = 'gemini-3.1-pro-preview';
       }
       return { ...defaultSettings, ...parsed };
     }

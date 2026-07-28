@@ -172,14 +172,24 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                 >
                   <optgroup label="Free Models">
-                    <option value="gemini-flash-latest">Gemini Flash Latest</option>
-                    <option value="gemini-3.1-flash-lite">Gemini Flash-Lite Latest</option>
+                    <option value="gemini-3.5-flash">Gemini 3.5 Flash (Recommended)</option>
+                    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
                     <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                    <option value="gemini-3.1-flash-lite-preview">Gemini 3.1 Flash Lite Preview</option>
+                    <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                    <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-lite</option>
                   </optgroup>
                   <optgroup label="Premium Models (Requires Paid API Key)">
-                    <option value="gemini-pro-latest">Gemini Pro Latest</option>
                     <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                    <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                  </optgroup>
+                  <optgroup label="Agents (Interactions API)">
+                    <option value="antigravity-preview-05-2026">Antigravity Preview</option>
+                    <option value="deep-research-preview-04-2026">Deep Research Preview</option>
+                    <option value="deep-research-max-preview-04-2026">Deep Research Max Preview</option>
+                  </optgroup>
+                  <optgroup label="Gemma Models">
+                    <option value="gemma-4-31b-it">Gemma 4 31B IT</option>
+                    <option value="gemma-4-26b-a4b-it">Gemma 4 26B MoE IT</option>
                   </optgroup>
                 </select>
               </div>
@@ -352,10 +362,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   onChange={e => handleChange('activeTTSModel', e.target.value)}
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                 >
-                  <option value="gemini-flash-latest">Gemini Flash Latest</option>
-                  <option value="gemini-pro-latest">Gemini Pro Latest</option>
                   <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 TTS Preview (Recommended)</option>
-                  <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Live Preview</option>
+                  <option value="lyria-3-clip-preview">Lyria 3 Clip Preview</option>
+                  <option value="lyria-3-pro-preview">Lyria 3 Pro Preview</option>
+                  <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                  <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
                 </select>
                 <p className="text-[10px] text-gray-500">TTS preview models are specialized for audio generation.</p>
               </div>

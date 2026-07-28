@@ -3,5 +3,8 @@
   "description": "Create fully fleshed-out characters from simple ideas and converse with them via text or live voice chat, featuring AI-generated avatars and voice narration.",
   "requestFramePermissions": [
     "microphone"
+  ],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
   ]
 }

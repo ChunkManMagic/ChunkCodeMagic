@@ -87,10 +87,12 @@ export function useFirestoreSync() {
     );
 
     return onSnapshot(q, (snapshot) => {
-      const scenarios = snapshot.docs.map(doc => doc.data() as Scenario);
+      const scenarios = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Scenario));
+      // Deduplicate by ID
+      const uniqueScenarios = Array.from(new Map(scenarios.map(s => [s.id, s])).values());
       // Sort client-side to include scenarios without lastUpdated
-      scenarios.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
-      callback(scenarios);
+      uniqueScenarios.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0));
+      callback(uniqueScenarios);
     }, (error) => {
       handleFirestoreError(error, `users/${user.uid}/scenarios`, 'read');
     });

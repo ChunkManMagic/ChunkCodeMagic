@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy, Search, Filter, Upload } from 'lucide-react';
 import { AppMode } from '../lib/gemini';
@@ -73,14 +73,31 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
     }
   };
 
-  const filteredScenarios = scenarios.filter(s => {
-    const vibeTags = getVibeTags(s).join(' ').toLowerCase();
-    const matchesSearch = s.profile.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                          s.profile.storyTone.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          vibeTags.includes(searchQuery.toLowerCase());
-    const matchesFilter = filterMode === 'ALL' || s.profile.mode === filterMode;
-    return matchesSearch && matchesFilter;
-  });
+  // Pre-compute vibe tags to prevent repeated calculations during rendering and filtering
+  const scenariosWithTags = useMemo(() => {
+    return scenarios.map(s => {
+      const tags = getVibeTags(s);
+      return {
+        scenario: s,
+        vibeTags: tags,
+        vibeTagsLower: tags.join(' ').toLowerCase()
+      };
+    });
+  }, [scenarios]);
+
+  // Memoize and sort filtered scenarios to prevent re-filtering/re-sorting on every render
+  const filteredScenariosWithTags = useMemo(() => {
+    const searchLower = searchQuery.toLowerCase();
+    return scenariosWithTags
+      .filter(({ scenario: s, vibeTagsLower }) => {
+        const matchesSearch = s.profile.name.toLowerCase().includes(searchLower) ||
+                              s.profile.storyTone.toLowerCase().includes(searchLower) ||
+                              vibeTagsLower.includes(searchLower);
+        const matchesFilter = filterMode === 'ALL' || s.profile.mode === filterMode;
+        return matchesSearch && matchesFilter;
+      })
+      .sort((a, b) => (b.scenario.lastUpdated || 0) - (a.scenario.lastUpdated || 0));
+  }, [scenariosWithTags, searchQuery, filterMode]);
 
   return (
     <div className="w-full max-w-7xl mx-auto p-4 sm:p-8">
@@ -156,7 +173,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
         </div>
       )}
 
-      {filteredScenarios.length === 0 ? (
+      {filteredScenariosWithTags.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 glass-panel rounded-3xl border-dashed border-zinc-800">
           <div className="w-20 h-20 bg-zinc-900 rounded-full flex items-center justify-center mb-6">
             <User className="w-10 h-10 text-zinc-700" />
@@ -204,7 +221,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredScenarios.sort((a, b) => (b.lastUpdated || 0) - (a.lastUpdated || 0)).map((scenario) => (
+          {filteredScenariosWithTags.map(({ scenario, vibeTags }) => (
             <motion.div
               key={scenario.id}
               initial={{ opacity: 0, y: 20 }}
@@ -223,7 +240,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                     <div className="flex-1 min-w-0">
                       <h3 className="text-2xl font-bold text-white font-serif truncate drop-shadow-lg">{scenario.profile.name}</h3>
                       <div className="flex flex-wrap gap-1.5 mt-2">
-                        {getVibeTags(scenario).map(tag => (
+                        {vibeTags.map(tag => (
                           <span key={tag} className="text-[8px] font-bold uppercase tracking-wider bg-black/60 backdrop-blur-md text-emerald-400 px-2 py-0.5 rounded-full border border-emerald-500/20">
                             #{tag}
                           </span>
@@ -262,21 +279,21 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                       className="p-2 text-zinc-600 hover:text-red-400 transition-colors"
                       title="Delete Scenario"
                     >
-                      <Trash2 className="w-4 h-4" />
+                      <Trash2 className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Delete</span>
                     </button>
                     <button
                       onClick={() => onEdit(scenario)}
                       className="p-2 text-zinc-600 hover:text-emerald-400 transition-colors"
                       title="Edit Character"
                     >
-                      <Edit3 className="w-4 h-4" />
+                      <Edit3 className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Edit</span>
                     </button>
                     <button
                       onClick={() => onDuplicate(scenario)}
                       className="p-2 text-zinc-600 hover:text-blue-400 transition-colors"
                       title="Duplicate & Start New Narrative"
                     >
-                      <Copy className="w-4 h-4" />
+                      <Copy className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Clone</span>
                     </button>
                   </div>
                   <button

@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { motion } from 'motion/react';
 import { useToast } from '../hooks/useToast';
 import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech, refineProfile, applyGlobalEdit } from '../lib/gemini';
-import { Loader2, RotateCcw, Wand2, Globe, Heart, Swords, Settings2, Volume2, Plus, Trash2, Sparkles } from 'lucide-react';
+import { Loader2, RotateCcw, BookOpen, Wand2, Globe, Heart, Swords, Settings2, Volume2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { RefineButton } from './RefineButton';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
+import { CharacterLibraryModal } from './CharacterLibraryModal';
 
 interface CharacterEditorProps {
   profile: CharacterProfile;
@@ -11,9 +13,10 @@ interface CharacterEditorProps {
   isInitialReview?: boolean;
   onSave: (profile: CharacterProfile, avatarBase64: string) => void;
   onCancel: () => void;
+  scenarios?: any[];
 }
 
-export function CharacterEditor({ profile: initialProfile, avatarBase64: initialAvatar, isInitialReview, onSave, onCancel }: CharacterEditorProps) {
+export function CharacterEditor({ profile: initialProfile, avatarBase64: initialAvatar, isInitialReview, onSave, onCancel, scenarios = [] }: CharacterEditorProps) {
   const [profile, setProfile] = useState<CharacterProfile>(initialProfile);
   const [avatar, setAvatar] = useState<string>(initialAvatar);
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -444,10 +447,19 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
               <div>
                 <div className="flex justify-between items-center mb-2">
                   <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{getNameLabel(profile.mode)}</label>
-                  <RefineButton 
-                    onRefine={(guidance) => handleRefineField('name', guidance)}
-                    isRefining={isRefiningField === 'name'}
-                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => { setLibraryImportTarget('main'); setShowLibraryModal(true); }}
+                      className="flex items-center gap-1.5 px-3 py-1 bg-white/5 hover:bg-blue-500/20 text-zinc-400 hover:text-blue-400 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors border border-white/10"
+                    >
+                      <BookOpen className="w-3 h-3" />
+                      Import Library
+                    </button>
+                    <RefineButton 
+                      onRefine={(guidance) => handleRefineField('name', guidance)}
+                      isRefining={isRefiningField === 'name'}
+                    />
+                  </div>
                 </div>
                 <input
                   type="text"
@@ -495,14 +507,37 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                     {profile.mode === AppMode.SCENARIO ? "Scenario Tone" : profile.mode === AppMode.GAME ? "Campaign Tone" : "Story Tone"}
                   </label>
                   <select 
-                    className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm"
-                    value={profile.storyTone}
-                    onChange={e => setProfile({...profile, storyTone: e.target.value})}
+                    className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm mb-2"
+                    value={['Dramatic', 'Gritty', 'Whimsical', 'Horror', 'Romantic', 'Cyberpunk', 'Noir', 'Adventure'].includes(profile.storyTone) ? profile.storyTone : 'Custom'}
+                    onChange={e => {
+                      const val = e.target.value;
+                      if (val === 'Custom') {
+                        setProfile({...profile, storyTone: 'Mysterious / Intriguing'});
+                      } else {
+                        setProfile({...profile, storyTone: val});
+                      }
+                    }}
                   >
                     {['Dramatic', 'Gritty', 'Whimsical', 'Horror', 'Romantic', 'Cyberpunk', 'Noir', 'Adventure'].map(t => (
                       <option key={t} value={t} className="bg-zinc-900">{t}</option>
                     ))}
+                    <option value="Custom" className="bg-zinc-900">Custom...</option>
                   </select>
+                  {!['Dramatic', 'Gritty', 'Whimsical', 'Horror', 'Romantic', 'Cyberpunk', 'Noir', 'Adventure'].includes(profile.storyTone) && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="space-y-1"
+                    >
+                      <input 
+                        type="text"
+                        className="w-full px-4 py-2 bg-black/40 border border-white/10 rounded-xl text-white text-xs placeholder-zinc-600 focus:outline-none focus:border-emerald-500"
+                        placeholder="Type custom tone (e.g., Cozy Comedy, Mythic Thriller)..."
+                        value={profile.storyTone}
+                        onChange={e => setProfile({...profile, storyTone: e.target.value})}
+                      />
+                    </motion.div>
+                  )}
                 </div>
 
                 <div>
@@ -715,11 +750,20 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                 <div>
                   <div className="flex justify-between items-center mb-2">
                     <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">Your Name</label>
-                    <RefineButton 
-                      onRefine={(guidance) => handleRefineField('player_name', guidance)}
-                      isRefining={isRefiningField === 'player_name'}
-                      label="REFINE"
-                    />
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => { setLibraryImportTarget('player'); setShowLibraryModal(true); }}
+                        className="flex items-center gap-1.5 px-3 py-1 bg-white/5 hover:bg-emerald-500/20 text-zinc-400 hover:text-emerald-400 text-[10px] font-bold uppercase tracking-widest rounded-full transition-colors border border-white/10"
+                      >
+                        <BookOpen className="w-3 h-3" />
+                        Import Library
+                      </button>
+                      <RefineButton 
+                        onRefine={(guidance) => handleRefineField('player_name', guidance)}
+                        isRefining={isRefiningField === 'player_name'}
+                        label="REFINE"
+                      />
+                    </div>
                   </div>
                   <input
                     type="text"

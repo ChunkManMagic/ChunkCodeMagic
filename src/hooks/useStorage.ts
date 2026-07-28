@@ -1,4 +1,4 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { get, set, del, keys } from 'idb-keyval';
 import { Scenario } from '../lib/types';
 
@@ -33,14 +33,29 @@ export function useStorage() {
 }
 
 export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, maxAgeDays = 90) {
+  // Use a ref to always have the latest scenarios without triggering the useEffect
+  const scenariosRef = useRef(scenarios);
   useEffect(() => {
-    if (!isReady) return;
+    scenariosRef.current = scenarios;
+  }, [scenarios]);
+
+  const hasCleanedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isReady || hasCleanedRef.current) return;
+    hasCleanedRef.current = true;
+
     const cleanup = async () => {
       try {
         const allKeys = await keys();
+        const currentScenarios = scenariosRef.current;
 
         const now = Date.now();
         const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
+
+        // O(1) set lookup instead of O(N) linear scan in a loop
+        const validScenarioIds = new Set(currentScenarios.map(s => s.id));
+        const scenarioAgeMap = new Map(currentScenarios.map(s => [s.id, now - (s.lastUpdated || 0)]));
 
         for (const key of allKeys) {
           if (typeof key === 'string' && key.startsWith('personaforge_')) {
@@ -48,8 +63,10 @@ export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, max
             if (parts.length >= 3) {
               const scenarioId = parts[2];
               
-              const scenario = scenarios.find(s => s.id === scenarioId);
-              if (!scenario || (now - scenario.lastUpdated > maxAgeMs)) {
+              const hasScenario = validScenarioIds.has(scenarioId);
+              const age = scenarioAgeMap.get(scenarioId) ?? Infinity;
+
+              if (!hasScenario || age > maxAgeMs) {
                 await del(key);
               }
             }
@@ -61,5 +78,5 @@ export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, max
     };
     
     cleanup();
-  }, [scenarios, maxAgeDays, isReady]);
+  }, [isReady, maxAgeDays]);
 }
