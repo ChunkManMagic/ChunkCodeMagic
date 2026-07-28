@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, memo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
@@ -349,12 +349,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [refineGuidance, setRefineGuidance] = useState('');
   const [showModeDetails, setShowModeDetails] = useState(false);
 
-  const estimateTokens = () => {
+  // Memoize token estimation to prevent expensive string concatenation and split on every keystroke render
+  const estimateTokens = useMemo(() => {
     const profileText = `${profile.name} ${profile.personality} ${profile.backstory} ${profile.appearance} ${profile.worldAtmosphere || ''} ${profile.keyLocations || ''} ${profile.incitingIncident || ''} ${profile.relationship} ${profile.storyTone}`;
     const textToCount = profileText + ' ' + messages.map(m => m.text).join(' ');
     const wordCount = textToCount.trim().split(/\s+/).length;
     return Math.ceil(wordCount * 1.3);
-  };
+  }, [profile, messages]);
 
   const handleExportScenario = () => {
     const exportData = {
@@ -1044,7 +1045,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           <div className="hidden sm:flex items-center gap-3 mr-2">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/30 border border-white/5" title="Estimated Context Tokens">
               <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Tokens</span>
-              <span className="text-xs font-mono text-zinc-300">{estimateTokens().toLocaleString()}</span>
+              <span className="text-xs font-mono text-zinc-300">{estimateTokens.toLocaleString()}</span>
             </div>
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/30 border border-white/5" title="Cloud Sync Status">
               {isSaving ? (
@@ -1329,7 +1330,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           </div>
 
           {/* Messages */}
-          <div className="flex-1 overflow-y-auto p-4 sm:p-8 space-y-8 scroll-smooth custom-scrollbar">
+          <div className="flex-1 overflow-y-auto pt-8 pb-4 px-4 sm:pt-12 sm:pb-8 sm:px-8 space-y-8 scroll-smooth custom-scrollbar">
             {!isLoaded ? (
               <div className="h-full flex flex-col items-center justify-center text-zinc-600 gap-4">
                 <Loader2 className="w-8 h-8 animate-spin opacity-50 text-emerald-500" />
@@ -1409,6 +1410,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
                   setRerollGuidance={setRerollGuidance}
                   handleRegenerate={handleRegenerate}
                 />
+
               ))
             )}
             {isTyping && (
