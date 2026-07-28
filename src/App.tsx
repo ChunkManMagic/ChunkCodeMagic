@@ -292,10 +292,16 @@ export default function App() {
     }
   }, [currentScenarioId]);
 
+  // Deduplicate and memoize scenarios list to prevent reference invalidation and unnecessary tag re-computations on every render
+  const uniqueScenarios = useMemo(() => {
+    const sMap = new Map(scenarios.map(s => [s.id, s]));
+    return Array.from(sMap.values());
+  }, [scenarios]);
+
   // Optimize scenario lookup
   const scenarioMap = useMemo(() => {
-    return new Map(scenarios.map(s => [s.id, s]));
-  }, [scenarios]);
+    return new Map(uniqueScenarios.map(s => [s.id, s]));
+  }, [uniqueScenarios]);
 
   const currentScenario = currentScenarioId ? scenarioMap.get(currentScenarioId) : null;
 
@@ -881,7 +887,7 @@ export default function App() {
         {!currentScenarioId && !isCreating && !showDraft ? (
           <ErrorBoundary>
             <ScenarioLibrary 
-              scenarios={Array.from(new Map(scenarios.map(s => [s.id, s])).values())} 
+              scenarios={uniqueScenarios}
               onSelect={handleSelectScenario} 
               onEdit={handleEditScenario}
               onDuplicate={handleDuplicateScenario}
@@ -896,7 +902,7 @@ export default function App() {
           <div className="flex-1 flex items-center justify-center py-10">
             <ErrorBoundary>
               <CharacterCreator 
-                scenarios={scenarios}
+                scenarios={uniqueScenarios}
                 onCharacterCreated={handleCharacterCreated} 
                 onCancel={() => {
                   setIsCreating(false);
@@ -913,7 +919,7 @@ export default function App() {
                 avatarBase64={currentScenario.avatarBase64}
                 onSave={handleSaveEdit}
                 onCancel={() => setIsEditing(false)}
-                scenarios={scenarios}
+                scenarios={uniqueScenarios}
               />
             </ErrorBoundary>
           </div>
