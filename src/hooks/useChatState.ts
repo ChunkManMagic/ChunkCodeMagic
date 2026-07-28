@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { get, set } from 'idb-keyval';
 import { Message } from '../lib/types';
 import { STORAGE_KEYS } from '../constants';
@@ -116,71 +116,61 @@ export function useChatState(scenarioId: string) {
     }
   }, [isAuthReady, user, scenarioId, syncMessages, syncSummary, saveMessage, saveMessagesBatch, saveSummary]);
 
-  // Ref to track the most up-to-date data for unmount/cleanup flushes
-  const pendingSaveRef = useRef<{ scenarioId: string; messages: Message[]; storySummary: string } | null>(null);
+  // Refs to track pending storage updates and handle debouncing during message streaming
+  const pendingSaveRef = useRef<{
+    messages: Message[];
+    storySummary: string;
+    scenarioId: string;
+  } | null>(null);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Keep the pending save data updated
+  // Flush pending changes to IndexedDB/localStorage immediately to prevent data loss
+  const flushPendingSave = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    if (pendingSaveRef.current) {
+      const { messages: msgsToSave, storySummary: summaryToSave, scenarioId: idToSave } = pendingSaveRef.current;
+      pendingSaveRef.current = null;
+
+      // Local save to IndexedDB
+      set(STORAGE_KEYS.SCENARIO_MESSAGES(idToSave), msgsToSave).catch(e => {
+        console.error("Failed to save messages to IndexedDB", e);
+      });
+      
+      // Local save to localStorage (fallback for last 50 messages)
+      try {
+        const recentMessages = msgsToSave.slice(-50);
+        localStorage.setItem(STORAGE_KEYS.SCENARIO_MESSAGES(idToSave), JSON.stringify(recentMessages));
+      } catch (e) {}
+
+      // Save summary to IndexedDB
+      set(STORAGE_KEYS.SCENARIO_SUMMARY(idToSave), summaryToSave).catch(e => {
+        console.error("Failed to save summary to IndexedDB", e);
+      });
+    }
+  }, []);
+
+  // Save to local (debounced to avoid blocking main thread on stream updates)
   useEffect(() => {
     if (isLoaded) {
-      pendingSaveRef.current = { scenarioId, messages, storySummary };
+      pendingSaveRef.current = { messages, storySummary, scenarioId };
+      if (timerRef.current) {
+        clearTimeout(timerRef.current);
+      }
+      timerRef.current = setTimeout(() => {
+        flushPendingSave();
+      }, 1000);
     }
-  }, [scenarioId, messages, storySummary, isLoaded]);
+  }, [messages, storySummary, scenarioId, isLoaded, flushPendingSave]);
 
-  // Save to local storage with debouncing (1000ms delay) to prevent excessive disk / IO writes during message streaming
-  useEffect(() => {
-    if (!isLoaded) return;
-
-    const handler = setTimeout(() => {
-      if (pendingSaveRef.current) {
-        const { scenarioId: sId, messages: msgs, storySummary: summary } = pendingSaveRef.current;
-
-        // Local save to IndexedDB
-        set(STORAGE_KEYS.SCENARIO_MESSAGES(sId), msgs).catch(e => {
-          console.error("Failed to save messages to IndexedDB", e);
-        });
-
-        try {
-          // Backup recent messages to localStorage
-          const recentMessages = msgs.slice(-50);
-          localStorage.setItem(STORAGE_KEYS.SCENARIO_MESSAGES(sId), JSON.stringify(recentMessages));
-        } catch (e) {}
-
-        // Save story summary to IndexedDB
-        set(STORAGE_KEYS.SCENARIO_SUMMARY(sId), summary).catch(e => {
-          console.error("Failed to save summary to IndexedDB", e);
-        });
-
-        // Clear the pending save since it has been successfully committed to storage
-        pendingSaveRef.current = null;
-      }
-    }, 1000);
-
-    return () => {
-      clearTimeout(handler);
-    };
-  }, [messages, storySummary, scenarioId, isLoaded]);
-
-  // Flush any pending saves immediately on unmount or scenario change to ensure absolutely no data loss
+  // Flush immediately on unmount or when scenarioId changes (context change)
   useEffect(() => {
     return () => {
-      if (pendingSaveRef.current) {
-        const { scenarioId: sId, messages: msgs, storySummary: summary } = pendingSaveRef.current;
-
-        set(STORAGE_KEYS.SCENARIO_MESSAGES(sId), msgs).catch(e => {
-          console.error("Failed to flush messages to IndexedDB on cleanup", e);
-        });
-
-        try {
-          const recentMessages = msgs.slice(-50);
-          localStorage.setItem(STORAGE_KEYS.SCENARIO_MESSAGES(sId), JSON.stringify(recentMessages));
-        } catch (e) {}
-
-        set(STORAGE_KEYS.SCENARIO_SUMMARY(sId), summary).catch(e => {
-          console.error("Failed to flush summary to IndexedDB on cleanup", e);
-        });
-      }
+      flushPendingSave();
     };
-  }, [scenarioId]);
+  }, [scenarioId, flushPendingSave]);
 
   // Helper to add a message (handles cloud save)
   const addMessage = async (message: Message) => {
