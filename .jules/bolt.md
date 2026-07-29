@@ -2,6 +2,10 @@
 
 This journal tracks critical performance optimizations, learnings, and architectural details to keep the PersonaForge application running at maximum efficiency.
 
+## 2025-03-01 - React Component Re-render Storms in ChatInterface
+**Learning:** During real-time AI message streaming, `ChatInterface` re-renders on almost every token. Heavy sidebar components (`CodexSidebar` and `InventorySidebar`) that render complex lists with dynamic imagery and text formatting are fully re-rendered on every state update, wasting CPU cycles and degrading UI responsiveness.
+**Action:** Memoize sidebars using `React.memo` and optimize message parsing/rendering to avoid redundant CPU-intensive tasks on each stream update.
+
 ## 2025-07-20 - [Memoized Token Estimation in ChatInterface]
 **Learning:** In highly interactive React components (like `ChatInterface` where typing updates state on every keystroke), expensive non-render operations—such as token estimation via deep string concatenation and string splitting on long message histories—must be memoized. Running these O(N) tasks on every render creates high CPU overhead and typing lag.
 **Action:** Use `useMemo` with dependency arrays `[profile, messages]` to ensure token calculation only triggers when actual scenario data changes.
