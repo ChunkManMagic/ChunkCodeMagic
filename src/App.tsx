@@ -1,16 +1,18 @@
-import { useState, useEffect, useMemo, useCallback, Component, ErrorInfo, ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, Component, ErrorInfo, ReactNode, lazy, Suspense } from 'react';
 import { get, set, del } from 'idb-keyval';
 import { motion, AnimatePresence } from 'motion/react';
-import { CharacterCreator } from './components/CharacterCreator';
-import { ChatInterface } from './components/ChatInterface';
-import { CharacterEditor } from './components/CharacterEditor';
-import { ScenarioLibrary } from './components/ScenarioLibrary';
 import { CharacterProfile, generateId } from './lib/gemini';
 import { Scenario, getSettings, Message, CodexEntry } from './lib/types';
-import { Library, AlertCircle, CheckCircle2, Settings, LogIn, User as UserIcon } from 'lucide-react';
+import { Library, AlertCircle, CheckCircle2, Settings, LogIn, User as UserIcon, Loader2 } from 'lucide-react';
 import { STORAGE_KEYS } from './constants';
-import { SettingsModal } from './components/SettingsModal';
 import { useStaleDataCleanup } from './hooks/useStorage';
+
+// Lazy load major sub-views to optimize initial bundle size and speed up page load
+const CharacterCreator = lazy(() => import('./components/CharacterCreator').then(m => ({ default: m.CharacterCreator })));
+const ChatInterface = lazy(() => import('./components/ChatInterface').then(m => ({ default: m.ChatInterface })));
+const CharacterEditor = lazy(() => import('./components/CharacterEditor').then(m => ({ default: m.CharacterEditor })));
+const ScenarioLibrary = lazy(() => import('./components/ScenarioLibrary').then(m => ({ default: m.ScenarioLibrary })));
+const SettingsModal = lazy(() => import('./components/SettingsModal').then(m => ({ default: m.SettingsModal })));
 import { ToastContainer } from './components/ToastContainer';
 import { OfflineBanner } from './components/OfflineBanner';
 import { useToast } from './hooks/useToast';
@@ -873,7 +875,18 @@ export default function App() {
         onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }))}
       />
 
-      {showSettings && <SettingsModal onClose={handleSettingsClose} />}
+      {showSettings && (
+        <Suspense fallback={
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+            <div className="bg-zinc-900 border border-white/10 rounded-2xl w-full max-w-md shadow-2xl p-8 flex flex-col items-center justify-center gap-4">
+              <Loader2 className="w-8 h-8 animate-spin text-indigo-500" />
+              <p className="text-zinc-400 text-sm font-serif italic tracking-wider">Loading Settings...</p>
+            </div>
+          </div>
+        }>
+          <SettingsModal onClose={handleSettingsClose} />
+        </Suspense>
+      )}
 
       {conflict && (
         <SyncConflictModal 
@@ -884,61 +897,68 @@ export default function App() {
       )}
 
       <main className="flex-1 flex flex-col max-w-7xl mx-auto w-full relative z-10">
-        {!currentScenarioId && !isCreating && !showDraft ? (
-          <ErrorBoundary>
-            <ScenarioLibrary 
-              scenarios={uniqueScenarios}
-              onSelect={handleSelectScenario} 
-              onEdit={handleEditScenario}
-              onDuplicate={handleDuplicateScenario}
-              onDelete={handleDeleteScenario} 
-              onNew={handleCreateNew} 
-              hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
-              onRestoreDraft={() => setShowDraft(true)}
-              onImport={handleImportScenario}
-            />
-          </ErrorBoundary>
-        ) : (isCreating || showDraft) && !currentScenarioId ? (
-          <div className="flex-1 flex items-center justify-center py-10">
+        <Suspense fallback={
+          <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 gap-4 min-h-[400px]">
+            <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+            <p className="text-sm font-serif italic tracking-wide">Loading engine sub-view...</p>
+          </div>
+        }>
+          {!currentScenarioId && !isCreating && !showDraft ? (
             <ErrorBoundary>
-              <CharacterCreator 
+              <ScenarioLibrary 
                 scenarios={uniqueScenarios}
-                onCharacterCreated={handleCharacterCreated} 
-                onCancel={() => {
-                  setIsCreating(false);
-                  setShowDraft(false);
-                }}
+                onSelect={handleSelectScenario} 
+                onEdit={handleEditScenario}
+                onDuplicate={handleDuplicateScenario}
+                onDelete={handleDeleteScenario} 
+                onNew={handleCreateNew} 
+                hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
+                onRestoreDraft={() => setShowDraft(true)}
+                onImport={handleImportScenario}
               />
             </ErrorBoundary>
-          </div>
-        ) : isEditing && currentScenario ? (
-          <div className="flex-1 flex items-center justify-center py-10">
-            <ErrorBoundary>
-              <CharacterEditor
-                profile={currentScenario.profile}
-                avatarBase64={currentScenario.avatarBase64}
-                onSave={handleSaveEdit}
-                onCancel={() => setIsEditing(false)}
-                scenarios={uniqueScenarios}
-              />
-            </ErrorBoundary>
-          </div>
-        ) : currentScenario ? (
-          <div className="flex-1 min-h-0">
-            <ErrorBoundary>
-              <ChatInterface 
-                profile={currentScenario.profile} 
-                avatarBase64={currentScenario.avatarBase64} 
-                scenarioId={currentScenario.id}
-                onEditCharacter={() => setIsEditing(true)} 
-                onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
-                onUpdateProfile={handleUpdateProfile}
-                onUpdateAvatar={handleUpdateAvatar}
-                onBranchScenario={handleBranchScenario}
-              />
-            </ErrorBoundary>
-          </div>
-        ) : null}
+          ) : (isCreating || showDraft) && !currentScenarioId ? (
+            <div className="flex-1 flex items-center justify-center py-10">
+              <ErrorBoundary>
+                <CharacterCreator 
+                  scenarios={uniqueScenarios}
+                  onCharacterCreated={handleCharacterCreated} 
+                  onCancel={() => {
+                    setIsCreating(false);
+                    setShowDraft(false);
+                  }}
+                />
+              </ErrorBoundary>
+            </div>
+          ) : isEditing && currentScenario ? (
+            <div className="flex-1 flex items-center justify-center py-10">
+              <ErrorBoundary>
+                <CharacterEditor
+                  profile={currentScenario.profile}
+                  avatarBase64={currentScenario.avatarBase64}
+                  onSave={handleSaveEdit}
+                  onCancel={() => setIsEditing(false)}
+                  scenarios={uniqueScenarios}
+                />
+              </ErrorBoundary>
+            </div>
+          ) : currentScenario ? (
+            <div className="flex-1 min-h-0">
+              <ErrorBoundary>
+                <ChatInterface 
+                  profile={currentScenario.profile} 
+                  avatarBase64={currentScenario.avatarBase64} 
+                  scenarioId={currentScenario.id}
+                  onEditCharacter={() => setIsEditing(true)} 
+                  onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
+                  onUpdateProfile={handleUpdateProfile}
+                  onUpdateAvatar={handleUpdateAvatar}
+                  onBranchScenario={handleBranchScenario}
+                />
+              </ErrorBoundary>
+            </div>
+          ) : null}
+        </Suspense>
       </main>
 
       {branchData && (
