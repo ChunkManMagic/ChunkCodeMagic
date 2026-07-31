@@ -294,10 +294,16 @@ export default function App() {
     }
   }, [currentScenarioId]);
 
+  // Deduplicate and memoize scenarios list to prevent reference invalidation and unnecessary tag re-computations on every render
+  const uniqueScenarios = useMemo(() => {
+    const sMap = new Map(scenarios.map(s => [s.id, s]));
+    return Array.from(sMap.values());
+  }, [scenarios]);
+
   // Optimize scenario lookup
   const scenarioMap = useMemo(() => {
-    return new Map(scenarios.map(s => [s.id, s]));
-  }, [scenarios]);
+    return new Map(uniqueScenarios.map(s => [s.id, s]));
+  }, [uniqueScenarios]);
 
   const currentScenario = currentScenarioId ? scenarioMap.get(currentScenarioId) : null;
 
@@ -899,13 +905,13 @@ export default function App() {
         }>
           {!currentScenarioId && !isCreating && !showDraft ? (
             <ErrorBoundary>
-              <ScenarioLibrary
-                scenarios={scenarios}
-                onSelect={handleSelectScenario}
+              <ScenarioLibrary 
+                scenarios={uniqueScenarios}
+                onSelect={handleSelectScenario} 
                 onEdit={handleEditScenario}
                 onDuplicate={handleDuplicateScenario}
-                onDelete={handleDeleteScenario}
-                onNew={handleCreateNew}
+                onDelete={handleDeleteScenario} 
+                onNew={handleCreateNew} 
                 hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
                 onRestoreDraft={() => setShowDraft(true)}
                 onImport={handleImportScenario}
@@ -914,9 +920,9 @@ export default function App() {
           ) : (isCreating || showDraft) && !currentScenarioId ? (
             <div className="flex-1 flex items-center justify-center py-10">
               <ErrorBoundary>
-                <CharacterCreator
-                  scenarios={scenarios}
-                  onCharacterCreated={handleCharacterCreated}
+                <CharacterCreator 
+                  scenarios={uniqueScenarios}
+                  onCharacterCreated={handleCharacterCreated} 
                   onCancel={() => {
                     setIsCreating(false);
                     setShowDraft(false);
@@ -932,17 +938,18 @@ export default function App() {
                   avatarBase64={currentScenario.avatarBase64}
                   onSave={handleSaveEdit}
                   onCancel={() => setIsEditing(false)}
+                  scenarios={uniqueScenarios}
                 />
               </ErrorBoundary>
             </div>
           ) : currentScenario ? (
             <div className="flex-1 min-h-0">
               <ErrorBoundary>
-                <ChatInterface
-                  profile={currentScenario.profile}
-                  avatarBase64={currentScenario.avatarBase64}
+                <ChatInterface 
+                  profile={currentScenario.profile} 
+                  avatarBase64={currentScenario.avatarBase64} 
                   scenarioId={currentScenario.id}
-                  onEditCharacter={() => setIsEditing(true)}
+                  onEditCharacter={() => setIsEditing(true)} 
                   onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
                   onUpdateProfile={handleUpdateProfile}
                   onUpdateAvatar={handleUpdateAvatar}

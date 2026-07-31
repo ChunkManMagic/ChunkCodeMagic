@@ -33,3 +33,7 @@ This journal tracks critical performance optimizations, learnings, and architect
 ## 2026-07-26 - [Debounced Browser Storage Writes During Message Streaming]
 **Learning:** Real-time updates like streaming AI response chunks trigger frequent state changes. Writing to IndexedDB and synchronously to `localStorage` on every character/chunk update creates heavy main thread overhead, micro-stutters, and high disk I/O.
 **Action:** Debounce storage saves to a 1000ms delay. Store the latest state in a `useRef` tracker and flush the pending save immediately on component unmount or context change (e.g., `scenarioId` changes) to avoid any data loss.
+
+## 2026-07-28 - [Memoized Deduplicated Scenarios in App]
+**Learning:** Inline deduplication and mapping of state arrays in JSX—such as `Array.from(new Map(scenarios.map(...)).values())`—breaks referential stability across every render. This completely invalidates any downstream memoization (e.g. `useMemo` depending on the `scenarios` prop in child components), causing expensive calculations like tag extraction, sorting, and filtering to execute repeatedly on every keystroke/state update.
+**Action:** Pre-compute and memoize the unique deduplicated array reference in the parent state component, and pass the stable reference to all children.
