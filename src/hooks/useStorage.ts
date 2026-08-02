@@ -54,7 +54,7 @@ export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, max
         const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
 
         // O(1) set lookup instead of O(N) linear scan in a loop
-        const validScenarioIds = new Set(currentScenarios.map(s => s.id));
+        const scenarioAgeMap = new Map(currentScenarios.map(s => [s.id, now - (s.lastUpdated || 0)]));
         const scenarioAgeMap = new Map(currentScenarios.map(s => [s.id, now - (s.lastUpdated || 0)]));
 
         for (const key of allKeys) {
