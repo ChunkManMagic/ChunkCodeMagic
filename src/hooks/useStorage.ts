@@ -35,6 +35,7 @@ export function useStorage() {
 export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, maxAgeDays = 90) {
   // Use a ref to always have the latest scenarios without triggering the useEffect
   const scenariosRef = useRef(scenarios);
+
   useEffect(() => {
     scenariosRef.current = scenarios;
   }, [scenarios]);
@@ -49,12 +50,11 @@ export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, max
       try {
         const allKeys = await keys();
         const currentScenarios = scenariosRef.current;
-
         const now = Date.now();
         const maxAgeMs = maxAgeDays * 24 * 60 * 60 * 1000;
 
         // O(1) set lookup instead of O(N) linear scan in a loop
-        const scenarioAgeMap = new Map(currentScenarios.map(s => [s.id, now - (s.lastUpdated || 0)]));
+        const validScenarioIds = new Set(currentScenarios.map(s => s.id));
         const scenarioAgeMap = new Map(currentScenarios.map(s => [s.id, now - (s.lastUpdated || 0)]));
 
         for (const key of allKeys) {
@@ -65,7 +65,6 @@ export function useStaleDataCleanup(scenarios: Scenario[], isReady: boolean, max
               
               const hasScenario = validScenarioIds.has(scenarioId);
               const age = scenarioAgeMap.get(scenarioId) ?? Infinity;
-
               if (!hasScenario || age > maxAgeMs) {
                 await del(key);
               }
