@@ -46,23 +46,22 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
   useEffect(() => {
     if (isAuthReady && user && scenarioId) {
       const unsub = syncInventory(scenarioId, async (syncedItems) => {
-        if (syncedItems.length > 0) {
-          setInventory(syncedItems);
-        } else {
-          // Migrate local to cloud
-          try {
-            const migratedFlag = localStorage.getItem(`migrated_inv_${scenarioId}_${user.uid}`);
-            if (!migratedFlag) {
-              const savedInventory = await loadData<InventoryItem[]>(STORAGE_KEYS.SCENARIO_INVENTORY(scenarioId));
-              const itemsToMigrate = savedInventory || profileInventoryRef.current || [];
-              if (itemsToMigrate.length > 0) {
-                console.log("Migrating local inventory to Firestore...");
-                await saveInventoryItemsBatch(scenarioId, itemsToMigrate);
-              }
-              localStorage.setItem(`migrated_inv_${scenarioId}_${user.uid}`, 'true');
+        setInventory(syncedItems);
+
+        // Migrate local to cloud
+        try {
+          const migratedFlag = localStorage.getItem(`migrated_inv_${scenarioId}_${user.uid}`);
+          if (!migratedFlag) {
+            localStorage.setItem(`migrated_inv_${scenarioId}_${user.uid}`, 'true');
+            const savedInventory = await loadData<InventoryItem[]>(STORAGE_KEYS.SCENARIO_INVENTORY(scenarioId));
+            const itemsToMigrate = savedInventory || profileInventoryRef.current || [];
+            if (itemsToMigrate.length > 0) {
+              console.log("Migrating local inventory to Firestore...");
+              await saveInventoryItemsBatch(scenarioId, itemsToMigrate);
             }
-          } catch (e) {}
-        }
+          }
+        } catch (e) {}
+
         setIsLoaded(true);
       });
       return () => unsub();

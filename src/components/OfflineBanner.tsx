@@ -1,4 +1,3 @@
-import React from 'react';
 import { WifiOff, RefreshCw } from 'lucide-react';
 import { useOffline } from '../hooks/useOffline';
 import { motion, AnimatePresence } from 'motion/react';
@@ -7,15 +6,7 @@ interface OfflineBannerProps {
   isSyncing?: boolean;
 }
 
-/**
- * ⚡ Bolt Performance Optimization:
- * Memoize OfflineBanner component to prevent unnecessary re-renders.
- * Since this component is placed at the root level of App.tsx, any high-frequency state updates
- * in App (e.g. typing, modal toggling, scenario switching) triggers a re-render of OfflineBanner.
- * Memoizing it ensures that React skips JSX parsing, rendering overhead of Lucide icons, and
- * Framer Motion transition computations unless `isSyncing` or `isOffline` actually changes.
- */
-export const OfflineBanner = React.memo(function OfflineBanner({ isSyncing }: OfflineBannerProps) {
+export function OfflineBanner({ isSyncing }: OfflineBannerProps) {
   const isOffline = useOffline();
 
   return (
@@ -53,4 +44,4 @@ export const OfflineBanner = React.memo(function OfflineBanner({ isSyncing }: Of
       </AnimatePresence>
     </div>
   );
-});
+}

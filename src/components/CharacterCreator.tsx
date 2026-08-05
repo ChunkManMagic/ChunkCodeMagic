@@ -273,7 +273,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     loadDraft();
   }, []);
 
-  // Auto-save basic draft with a debounce delay to prevent thread-blocking localStorage writes on every keystroke
+  // Auto-save basic draft
   useEffect(() => {
     // Skip the very first render if we are just initializing with defaults
     // to avoid overwriting a potentially valid draft that is still loading
@@ -282,24 +282,20 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
       return;
     }
 
-    const timer = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEYS.DRAFT_MODE, appMode);
-        localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, idea);
-        localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, step);
-        localStorage.setItem(STORAGE_KEYS.DRAFT_SETUP_TYPE, setupType);
-        localStorage.setItem(STORAGE_KEYS.DRAFT_DATA, JSON.stringify(detailedProfile));
-
-        // Create a secondary "Rescue" backup every time we save
-        localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
-          appMode, idea, step, setupType, detailedProfile, timestamp: Date.now()
-        }));
-      } catch (e) {
-        console.warn("Failed to save draft to localStorage (quota exceeded?)", e);
-      }
-    }, 1000); // 1-second debounce delay to bundle multiple rapid keystrokes
-
-    return () => clearTimeout(timer);
+    try {
+      localStorage.setItem(STORAGE_KEYS.DRAFT_MODE, appMode);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, idea);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, step);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_SETUP_TYPE, setupType);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_DATA, JSON.stringify(detailedProfile));
+      
+      // Create a secondary "Rescue" backup every time we save
+      localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
+        appMode, idea, step, setupType, detailedProfile, timestamp: Date.now()
+      }));
+    } catch (e) {
+      console.warn("Failed to save draft to localStorage (quota exceeded?)", e);
+    }
   }, [appMode, idea, step, setupType, detailedProfile]);
 
   const handleRescue = () => {

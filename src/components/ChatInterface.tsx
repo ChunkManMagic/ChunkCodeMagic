@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo, memo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
@@ -14,6 +14,7 @@ import { CodexSidebar } from './chat/CodexSidebar';
 import { refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { getSettings, Message, CharacterProfile, CodexEntry } from '../lib/types';
+import { processUserInput } from '../lib/sanitize';
 
 const parseMessageContent = (text: string, role: string) => {
   if (role === 'model') {
@@ -36,208 +37,6 @@ const parseMessageContent = (text: string, role: string) => {
   return { mainText: text, oocText: null };
 };
 
-function renderWithDiceRolls(text: string): React.ReactNode {
-  if (!text.includes('[ROLL:')) return null; // signal to use ReactMarkdown normally
-  const parts = text.split(/(\[ROLL: d\d+\])/g);
-  return (
-    <span>
-      {parts.map((part, i) => {
-        const match = part.match(/\[ROLL: (d\d+)\]/);
-        if (match) {
-          return (
-            <span key={i} className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold">
-              🎲 Roll {match[1]}
-            </span>
-          );
-        }
-        return <span key={i}>{part}</span>;
-      })}
-    </span>
-  );
-}
-
-interface MessageItemProps {
-  msg: Message;
-  profile: CharacterProfile;
-  editingMessageId: string | null;
-  editInput: string;
-  setEditInput: (val: string) => void;
-  startEditing: (msg: Message) => void;
-  cancelEditing: () => void;
-  saveEdit: (id: string) => void;
-  handleRewind: (id: string) => void;
-  handleReadAloud: (text: string) => void;
-  setRegeneratingMessageId: (id: string | null) => void;
-  handleBranch: (id: string) => void;
-  handleSwitchVersion: (id: string, index: number) => void;
-  handleDeleteVersion: (id: string, index: number) => void;
-  handleBranchVersion: (id: string, index: number) => void;
-  regeneratingMessageId: string | null;
-  rerollGuidance: string;
-  setRerollGuidance: (val: string) => void;
-  handleRegenerate: (id: string, guidance: string) => void;
-}
-
-const MessageItem = memo(function MessageItem({
-  msg,
-  profile,
-  editingMessageId,
-  editInput,
-  setEditInput,
-  startEditing,
-  cancelEditing,
-  saveEdit,
-  handleRewind,
-  handleReadAloud,
-  setRegeneratingMessageId,
-  handleBranch,
-  handleSwitchVersion,
-  handleDeleteVersion,
-  handleBranchVersion,
-  regeneratingMessageId,
-  rerollGuidance,
-  setRerollGuidance,
-  handleRegenerate,
-}: MessageItemProps) {
-  return (
-    <motion.div initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className={`flex group relative ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-      <div className={`absolute -top-6 opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 z-10 ${msg.role === 'user' ? 'right-0' : 'left-0'}`}>
-        <button onClick={() => handleRewind(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-red-400 transition-colors" title="Rewind to here"><RotateCcw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Rewind</span></button>
-        <button onClick={() => startEditing(msg)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Edit</span></button>
-        {msg.role === 'model' && (
-          <>
-            <button onClick={() => {
-              const { mainText } = parseMessageContent(msg.text, msg.role);
-              handleReadAloud(mainText);
-            }} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-blue-400 transition-colors" title="Read aloud"><Volume2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Read</span></button>
-            <button onClick={() => setRegeneratingMessageId(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-emerald-400 transition-colors" title="Regenerate message"><RefreshCw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Regen</span></button>
-            <button onClick={() => handleBranch(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-500 hover:text-purple-400 transition-colors" title="Branch scenario from here"><GitBranch className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Branch</span></button>
-          </>
-        )}
-        {msg.timestamp && <span className="text-[10px] text-zinc-600 font-mono px-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
-      </div>
-      <div className={`max-w-[85%] rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
-        {editingMessageId === msg.id ? (
-          <div className="space-y-3 min-w-[280px]">
-            <textarea value={editInput} onChange={(e) => setEditInput(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none" rows={4} autoFocus />
-            <div className="flex justify-end gap-3">
-              <button onClick={cancelEditing} className="text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest">Cancel</button>
-              <button onClick={() => saveEdit(msg.id)} className="text-xs font-bold text-emerald-400 hover:text-emerald-300 uppercase tracking-widest">Save</button>
-            </div>
-          </div>
-        ) : (
-          (() => {
-            const { mainText, oocText } = parseMessageContent(msg.text, msg.role);
-            return (
-              <div className="flex flex-col gap-3">
-                {mainText && (
-                  profile.mode === AppMode.GAME && mainText.includes('[ROLL:')
-                    ? <div className="text-[15px] leading-relaxed">{renderWithDiceRolls(mainText)}</div>
-                    : <div className={`prose prose-invert max-w-none text-[15px] leading-relaxed ${msg.role === 'model' ? 'narrative-text' : ''}`}>
-                        <ReactMarkdown>{mainText}</ReactMarkdown>
-                      </div>
-                )}
-
-                {/* Version Switcher */}
-                {msg.role === 'model' && msg.versions && msg.versions.length > 1 && (
-                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
-                    <div className="flex items-center gap-3">
-                      <div className="flex items-center gap-1.5 bg-black/40 rounded-lg p-1 border border-white/10 shadow-inner">
-                        <button
-                          onClick={() => handleSwitchVersion(msg.id, (msg.activeVersionIndex || 0) - 1)}
-                          disabled={(msg.activeVersionIndex || 0) <= 0}
-                          className="p-1 text-zinc-500 hover:text-emerald-400 disabled:opacity-30 disabled:hover:text-zinc-500 transition-colors"
-                        >
-                          <ArrowLeft className="w-3.5 h-3.5" />
-                        </button>
-                        <span className="text-[10px] font-mono font-bold text-zinc-400 min-w-[3rem] text-center tracking-widest">
-                          {(msg.activeVersionIndex || 0) + 1} / {msg.versions.length}
-                        </span>
-                        <button
-                          onClick={() => handleSwitchVersion(msg.id, (msg.activeVersionIndex || 0) + 1)}
-                          disabled={(msg.activeVersionIndex || 0) >= msg.versions.length - 1}
-                          className="p-1 text-zinc-500 hover:text-emerald-400 disabled:opacity-30 disabled:hover:text-zinc-500 transition-colors"
-                        >
-                          <ArrowRight className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleBranchVersion(msg.id, msg.activeVersionIndex || 0)}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 rounded-lg border border-purple-500/20 transition-all group"
-                          title="Branch this version to new Scenario"
-                        >
-                          <GitBranch className="w-3 h-3 group-hover:scale-110 transition-transform" />
-                          <span className="text-[10px] font-bold uppercase tracking-widest">Branch</span>
-                        </button>
-                        <button
-                          onClick={() => handleDeleteVersion(msg.id, msg.activeVersionIndex || 0)}
-                          className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400/70 hover:text-red-400 rounded-lg border border-red-500/10 transition-all"
-                          title="Delete version"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-                    <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-[0.2em] italic opacity-60">
-                      Alternate Drafts
-                    </div>
-                  </div>
-                )}
-
-                {oocText && (
-                  <div className={`text-sm p-3 rounded-xl border ${msg.role === 'user' ? 'bg-emerald-700/30 border-emerald-500/30 text-emerald-100' : 'bg-zinc-800/50 border-zinc-700/50 text-zinc-300'}`}>
-                    <div className="text-xs font-bold uppercase tracking-wider mb-1 opacity-70">
-                      {msg.role === 'user' ? "Director's Note" : "OOC Reply"}
-                    </div>
-                    <div className="prose prose-invert max-w-none text-sm">
-                      <ReactMarkdown>{oocText}</ReactMarkdown>
-                    </div>
-                  </div>
-                )}
-                {msg.role === 'model' && (
-                  <div className="text-[9px] text-zinc-500 uppercase tracking-widest text-right mt-1 opacity-50">
-                    Generated by {getSettings().activeTextProvider}
-                  </div>
-                )}
-                {regeneratingMessageId === msg.id && (
-                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 pt-3 border-t border-white/10">
-                    <div className="flex flex-col gap-2">
-                      <input
-                        type="text"
-                        value={rerollGuidance}
-                        onChange={(e) => setRerollGuidance(e.target.value)}
-                        placeholder='Optional: Guide the rewrite (e.g., "Make it more aggressive", "Focus on the environment").'
-                        className="w-full bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder:text-zinc-600"
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            handleRegenerate(msg.id, rerollGuidance);
-                          } else if (e.key === 'Escape') {
-                            setRegeneratingMessageId(null);
-                            setRerollGuidance('');
-                          }
-                        }}
-                      />
-                      <div className="flex justify-end gap-2 mt-1">
-                        <button onClick={() => { setRegeneratingMessageId(null); setRerollGuidance(''); }} className="px-3 py-1.5 text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest rounded-lg hover:bg-white/5 transition-colors">Cancel</button>
-                        <button onClick={() => handleRegenerate(msg.id, rerollGuidance)} className="px-3 py-1.5 text-xs font-bold text-emerald-400 hover:text-emerald-300 uppercase tracking-widest bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors flex items-center gap-1.5">
-                          <RefreshCw className="w-3 h-3" />
-                          Confirm Reroll
-                        </button>
-                      </div>
-                    </div>
-                  </motion.div>
-                )}
-              </div>
-            );
-          })()
-        )}
-      </div>
-    </motion.div>
-  );
-});
-
 interface ChatInterfaceProps {
   profile: CharacterProfile;
   avatarBase64: string;
@@ -250,6 +49,26 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onUpdateAvatar, onBranchScenario }: ChatInterfaceProps) {
+  function renderWithDiceRolls(text: string): React.ReactNode {
+    if (!text.includes('[ROLL:')) return null; // signal to use ReactMarkdown normally
+    const parts = text.split(/(\[ROLL: d\d+\])/g);
+    return (
+      <span>
+        {parts.map((part, i) => {
+          const match = part.match(/\[ROLL: (d\d+)\]/);
+          if (match) {
+            return (
+              <span key={i} className="inline-flex items-center gap-1 mx-1 px-2 py-0.5 rounded-lg bg-purple-500/20 border border-purple-500/40 text-purple-300 text-xs font-bold">
+                🎲 Roll {match[1]}
+              </span>
+            );
+          }
+          return <span key={i}>{part}</span>;
+        })}
+      </span>
+    );
+  }
+
   const { messages, setMessages, addMessage, updateMessage, updateMessages, rewindToMessage, resetMessages, storySummary, updateSummary, isLoaded, isSaving } = useChatState(scenarioId);
   const [showCodex, setShowCodex] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
@@ -820,15 +639,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   };
 
   const handleSendText = useCallback(async (overrideText?: string) => {
-    let textToSend = overrideText || input;
+    let rawText = overrideText || input;
     if (directorNote.trim()) {
-      if (textToSend.trim()) {
-        textToSend += `\n\n[Director's Note: ${directorNote.trim()}]`;
+      if (rawText.trim()) {
+        rawText += `\n\n[Director's Note: ${directorNote.trim()}]`;
       } else {
-        textToSend = `[Director's Note: ${directorNote.trim()}]`;
+        rawText = `[Director's Note: ${directorNote.trim()}]`;
       }
     }
     
+    const textToSend = processUserInput(rawText);
     if (!textToSend.trim() || isTyping) return;
     const userMsgId = generateId();
     const userMsg: Message = { id: userMsgId, role: 'user', text: textToSend };
@@ -1388,29 +1208,178 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               </div>
             ) : (
               messages.map((msg) => (
-                <MessageItem
-                  key={msg.id}
-                  msg={msg}
-                  profile={profile}
-                  editingMessageId={editingMessageId}
-                  editInput={editInput}
-                  setEditInput={setEditInput}
-                  startEditing={startEditing}
-                  cancelEditing={cancelEditing}
-                  saveEdit={saveEdit}
-                  handleRewind={handleRewind}
-                  handleReadAloud={handleReadAloud}
-                  setRegeneratingMessageId={setRegeneratingMessageId}
-                  handleBranch={handleBranch}
-                  handleSwitchVersion={handleSwitchVersion}
-                  handleDeleteVersion={handleDeleteVersion}
-                  handleBranchVersion={handleBranchVersion}
-                  regeneratingMessageId={regeneratingMessageId}
-                  rerollGuidance={rerollGuidance}
-                  setRerollGuidance={setRerollGuidance}
-                  handleRegenerate={handleRegenerate}
-                />
+                <motion.div key={msg.id} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} className={`flex group relative ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  {/* Desktop Actions (Hover-only on MD and up) */}
+                  <div className={`hidden md:flex absolute -top-6 opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 z-10 ${msg.role === 'user' ? 'right-0' : 'left-0'}`}>
+                    <button onClick={() => handleRewind(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-red-400 transition-colors" title="Rewind to here"><RotateCcw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Rewind</span></button>
+                    <button onClick={() => startEditing(msg)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Edit</span></button>
+                    {msg.role === 'model' && (
+                      <>
+                        <button onClick={() => {
+                          const { mainText } = parseMessageContent(msg.text, msg.role);
+                          handleReadAloud(mainText);
+                        }} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-blue-400 transition-colors" title="Read aloud"><Volume2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Read</span></button>
+                        <button onClick={() => setRegeneratingMessageId(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-emerald-400 transition-colors" title="Regenerate message"><RefreshCw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Regen</span></button>
+                        <button onClick={() => handleBranch(msg.id)} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-purple-400 transition-colors" title="Branch scenario from here"><GitBranch className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Branch</span></button>
+                      </>
+                    )}
+                    {msg.timestamp && <span className="text-[10px] text-zinc-400 font-mono px-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+                  </div>
 
+                  {/* Message Bubble + Mobile Actions column */}
+                  <div className={`flex flex-col max-w-[85%] ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                    <div className={`w-full rounded-[1.5rem] px-6 py-4 shadow-xl ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-tr-none' : 'glass-panel text-zinc-200 rounded-tl-none'}`}>
+                    {editingMessageId === msg.id ? (
+                      <div className="space-y-3 min-w-[280px]">
+                        <textarea value={editInput} onChange={(e) => setEditInput(e.target.value)} className="w-full bg-black/40 border border-white/10 rounded-xl p-3 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 resize-none" rows={4} autoFocus />
+                        <div className="flex justify-end gap-3">
+                          <button onClick={cancelEditing} className="text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest">Cancel</button>
+                          <button onClick={() => saveEdit(msg.id)} className="text-xs font-bold text-emerald-400 hover:text-emerald-300 uppercase tracking-widest">Save</button>
+                        </div>
+                      </div>
+                    ) : (
+                      (() => {
+                        const { mainText, oocText } = parseMessageContent(msg.text, msg.role);
+                        return (
+                          <div className="flex flex-col gap-3">
+                            {mainText && (
+                              profile.mode === AppMode.GAME && mainText.includes('[ROLL:')
+                                ? <div className="text-[15px] leading-relaxed">{renderWithDiceRolls(mainText)}</div>
+                                : <div className={`prose prose-invert max-w-none text-[15px] leading-relaxed ${msg.role === 'model' ? 'narrative-text' : ''}`}>
+                                    <ReactMarkdown>{mainText}</ReactMarkdown>
+                                  </div>
+                            )}
+                            
+                            {/* Version Switcher */}
+                            {msg.role === 'model' && msg.versions && msg.versions.length > 1 && (
+                              <div className="flex items-center justify-between mt-4 pt-3 border-t border-white/5">
+                                <div className="flex items-center gap-3">
+                                  <div className="flex items-center gap-1.5 bg-black/40 rounded-lg p-1 border border-white/10 shadow-inner">
+                                    <button 
+                                      onClick={() => handleSwitchVersion(msg.id, (msg.activeVersionIndex || 0) - 1)}
+                                      disabled={(msg.activeVersionIndex || 0) <= 0}
+                                      className="p-1 text-zinc-500 hover:text-emerald-400 disabled:opacity-30 disabled:hover:text-zinc-500 transition-colors"
+                                    >
+                                      <ArrowLeft className="w-3.5 h-3.5" />
+                                    </button>
+                                    <span className="text-[10px] font-mono font-bold text-zinc-400 min-w-[3rem] text-center tracking-widest">
+                                      {(msg.activeVersionIndex || 0) + 1} / {msg.versions.length}
+                                    </span>
+                                    <button 
+                                      onClick={() => handleSwitchVersion(msg.id, (msg.activeVersionIndex || 0) + 1)}
+                                      disabled={(msg.activeVersionIndex || 0) >= msg.versions.length - 1}
+                                      className="p-1 text-zinc-500 hover:text-emerald-400 disabled:opacity-30 disabled:hover:text-zinc-500 transition-colors"
+                                    >
+                                      <ArrowRight className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <button 
+                                      onClick={() => handleBranchVersion(msg.id, msg.activeVersionIndex || 0)}
+                                      className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-400 rounded-lg border border-purple-500/20 transition-all group"
+                                      title="Branch this version to new Scenario"
+                                    >
+                                      <GitBranch className="w-3 h-3 group-hover:scale-110 transition-transform" />
+                                      <span className="text-[10px] font-bold uppercase tracking-widest">Branch</span>
+                                    </button>
+                                    <button 
+                                      onClick={() => handleDeleteVersion(msg.id, msg.activeVersionIndex || 0)}
+                                      className="p-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400/70 hover:text-red-400 rounded-lg border border-red-500/10 transition-all"
+                                      title="Delete version"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </div>
+                                <div className="text-[9px] text-zinc-600 font-bold uppercase tracking-[0.2em] italic opacity-60">
+                                  Alternate Drafts
+                                </div>
+                              </div>
+                            )}
+
+                            {oocText && (
+                              <div className={`text-sm p-3 rounded-xl border ${msg.role === 'user' ? 'bg-emerald-700/30 border-emerald-500/30 text-emerald-100' : 'bg-zinc-800/50 border-zinc-700/50 text-zinc-300'}`}>
+                                <div className="text-xs font-bold uppercase tracking-wider mb-1 opacity-70">
+                                  {msg.role === 'user' ? "Director's Note" : "OOC Reply"}
+                                </div>
+                                <div className="prose prose-invert max-w-none text-sm">
+                                  <ReactMarkdown>{oocText}</ReactMarkdown>
+                                </div>
+                              </div>
+                            )}
+                            {msg.role === 'model' && (
+                              <div className="text-[9px] text-zinc-500 uppercase tracking-widest text-right mt-1 opacity-50">
+                                Generated by {getSettings().activeTextProvider}
+                              </div>
+                            )}
+                            {regeneratingMessageId === msg.id && (
+                              <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="mt-3 pt-3 border-t border-white/10">
+                                <div className="flex flex-col gap-2">
+                                  <input
+                                    type="text"
+                                    value={rerollGuidance}
+                                    onChange={(e) => setRerollGuidance(e.target.value)}
+                                    placeholder='Optional: Guide the rewrite (e.g., "Make it more aggressive", "Focus on the environment").'
+                                    className="w-full bg-black/40 border border-white/10 rounded-lg p-2.5 text-sm text-white focus:outline-none focus:ring-1 focus:ring-emerald-500 placeholder:text-zinc-600"
+                                    autoFocus
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        handleRegenerate(msg.id, rerollGuidance);
+                                      } else if (e.key === 'Escape') {
+                                        setRegeneratingMessageId(null);
+                                        setRerollGuidance('');
+                                      }
+                                    }}
+                                  />
+                                  <div className="flex justify-end gap-2 mt-1">
+                                    <button onClick={() => { setRegeneratingMessageId(null); setRerollGuidance(''); }} className="px-3 py-1.5 text-xs font-bold text-zinc-500 hover:text-white uppercase tracking-widest rounded-lg hover:bg-white/5 transition-colors">Cancel</button>
+                                    <button onClick={() => handleRegenerate(msg.id, rerollGuidance)} className="px-3 py-1.5 text-xs font-bold text-emerald-400 hover:text-emerald-300 uppercase tracking-widest bg-emerald-500/10 hover:bg-emerald-500/20 rounded-lg transition-colors flex items-center gap-1.5">
+                                      <RefreshCw className="w-3 h-3" />
+                                      Confirm Reroll
+                                    </button>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </div>
+                        );
+                      })()
+                    )}
+                  </div>
+
+                  {/* Mobile/Touch Actions (Visible only on mobile/touch screens, non-hover) */}
+                  <div className="flex flex-wrap md:hidden mt-2 items-center gap-1.5 px-1 opacity-80 z-10">
+                    <button onClick={() => handleRewind(msg.id)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-red-400 transition-colors flex items-center gap-1 shadow-md" title="Rewind to here">
+                      <RotateCcw className="w-3 h-3" />
+                      <span className="text-[8px] font-bold uppercase tracking-wider">Rewind</span>
+                    </button>
+                    <button onClick={() => startEditing(msg)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-emerald-400 transition-colors flex items-center gap-1 shadow-md" title="Edit message">
+                      <Edit2 className="w-3 h-3" />
+                      <span className="text-[8px] font-bold uppercase tracking-wider">Edit</span>
+                    </button>
+                    {msg.role === 'model' && (
+                      <>
+                        <button onClick={() => {
+                          const { mainText } = parseMessageContent(msg.text, msg.role);
+                          handleReadAloud(mainText);
+                        }} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-blue-400 transition-colors flex items-center gap-1 shadow-md" title="Read aloud">
+                          <Volume2 className="w-3 h-3" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider">Read</span>
+                        </button>
+                        <button onClick={() => setRegeneratingMessageId(msg.id)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-emerald-400 transition-colors flex items-center gap-1 shadow-md" title="Regenerate message">
+                          <RefreshCw className="w-3 h-3" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider">Regen</span>
+                        </button>
+                        <button onClick={() => handleBranch(msg.id)} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-purple-400 transition-colors flex items-center gap-1 shadow-md" title="Branch scenario from here">
+                          <GitBranch className="w-3 h-3" />
+                          <span className="text-[8px] font-bold uppercase tracking-wider">Branch</span>
+                        </button>
+                      </>
+                    )}
+                    {msg.timestamp && <span className="text-[8px] text-zinc-500 font-mono ml-1">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>}
+                  </div>
+                </div>
+              </motion.div>
               ))
             )}
             {isTyping && (

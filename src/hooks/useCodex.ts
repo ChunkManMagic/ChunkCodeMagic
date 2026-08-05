@@ -38,22 +38,21 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
   useEffect(() => {
     if (isAuthReady && user && scenarioId) {
       const unsubscribe = syncCodex(scenarioId, async (syncedEntries) => {
-        if (syncedEntries.length > 0) {
-          setCodexEntries(syncedEntries);
-        } else {
-          // Migrate local codex
-          try {
-            const migratedFlag = localStorage.getItem(`migrated_codex_${scenarioId}_${user.uid}`);
-            if (!migratedFlag) {
-              const savedCodex = await loadData<CodexEntry[]>(STORAGE_KEYS.SCENARIO_CODEX(scenarioId));
-              if (savedCodex && savedCodex.length > 0) {
-                console.log("Migrating local codex to Firestore...");
-                await saveCodexEntriesBatch(scenarioId, savedCodex);
-              }
-              localStorage.setItem(`migrated_codex_${scenarioId}_${user.uid}`, 'true');
+        setCodexEntries(syncedEntries);
+
+        // Migrate local codex
+        try {
+          const migratedFlag = localStorage.getItem(`migrated_codex_${scenarioId}_${user.uid}`);
+          if (!migratedFlag) {
+            localStorage.setItem(`migrated_codex_${scenarioId}_${user.uid}`, 'true');
+            const savedCodex = await loadData<CodexEntry[]>(STORAGE_KEYS.SCENARIO_CODEX(scenarioId));
+            if (savedCodex && savedCodex.length > 0) {
+              console.log("Migrating local codex to Firestore...");
+              await saveCodexEntriesBatch(scenarioId, savedCodex);
             }
-          } catch (e) {}
-        }
+          }
+        } catch (e) {}
+
         setIsLoaded(true);
       });
       return () => unsubscribe();

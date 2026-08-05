@@ -1131,22 +1131,82 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
   };
 }
 
+async function generateImageFromPrompt(prompt: string): Promise<string> {
+  const ai = getGenAI();
+  const response = await withRetry(() => ai.models.generateContent({
+    model: "gemini-2.5-flash-image",
+    contents: prompt,
+    config: {
+      responseModalities: ["TEXT", "IMAGE"]
+    }
+  }));
+
+  const candidate = response.candidates?.[0];
+  if (candidate?.content?.parts) {
+    for (const part of candidate.content.parts) {
+      if (part.inlineData?.data) {
+        const mimeType = part.inlineData.mimeType || "image/png";
+        return `data:${mimeType};base64,${part.inlineData.data}`;
+      }
+    }
+  }
+
+  throw new Error("No image data returned from Gemini API");
+}
+
 export async function generateAvatar(profile: CharacterProfile): Promise<string> {
-  console.log("generateAvatar: Image generation is temporarily disabled.");
-  const seed = Math.floor(Math.random() * 1000);
-  return `https://picsum.photos/seed/${seed}/512/512`;
+  const prompt = `A highly detailed character avatar or setting illustration for a ${profile.mode} story.
+Name/Title: ${profile.name || 'Unknown'}
+Appearance: ${profile.appearance || ''}
+Clothing/Setting: ${profile.clothing || ''}
+Accessories/Props: ${profile.accessories || ''}
+Hair: ${profile.hairStyle || ''} ${profile.hairColor || ''}
+Eyes: ${profile.eyeColor || ''}
+Atmosphere: ${profile.worldAtmosphere || ''}
+Tone: ${profile.storyTone || ''}
+Art Style: Cinematic high-quality illustration.`;
+
+  try {
+    return await generateImageFromPrompt(prompt);
+  } catch (error) {
+    console.error("generateAvatar Error:", error);
+    const seed = Math.floor(Math.random() * 1000);
+    return `https://picsum.photos/seed/${seed}/512/512`;
+  }
 }
 
 export async function generateCodexImage(entry: CodexEntry, profile: CharacterProfile): Promise<string> {
-  console.log("generateCodexImage: Image generation is temporarily disabled.");
-  const seed = Math.floor(Math.random() * 1000);
-  return `https://picsum.photos/seed/${seed}/512/512`;
+  const prompt = `An illustration of a codex entry for the world of ${profile.name}.
+Entry Title: ${entry.title}
+Category: ${entry.category}
+Description: ${entry.content}
+World Atmosphere: ${profile.worldAtmosphere || profile.appearance || ''}
+Art Style: Detailed lore book illustration, atmospheric and immersive.`;
+
+  try {
+    return await generateImageFromPrompt(prompt);
+  } catch (error) {
+    console.error("generateCodexImage Error:", error);
+    const seed = Math.floor(Math.random() * 1000);
+    return `https://picsum.photos/seed/${seed}/512/512`;
+  }
 }
 
 export async function generateItemImage(item: InventoryItem, profile: CharacterProfile): Promise<string> {
-  console.log("generateItemImage: Image generation is temporarily disabled.");
-  const seed = Math.floor(Math.random() * 1000);
-  return `https://picsum.photos/seed/${seed}/512/512`;
+  const prompt = `An illustration of an inventory item in ${profile.name}.
+Item Name: ${item.name}
+Type: ${item.type}
+Rarity: ${item.rarity || 'Common'}
+Description: ${item.description}
+Art Style: High-quality game item icon on a dark background.`;
+
+  try {
+    return await generateImageFromPrompt(prompt);
+  } catch (error) {
+    console.error("generateItemImage Error:", error);
+    const seed = Math.floor(Math.random() * 1000);
+    return `https://picsum.photos/seed/${seed}/512/512`;
+  }
 }
 
 export async function extractInventoryUpdates(history: any[], currentInventory: InventoryItem[]): Promise<{
@@ -1923,9 +1983,22 @@ export async function detectMood(history: any[]): Promise<string> {
 }
 
 export async function generateContextualAvatar(profile: CharacterProfile, history: any[]): Promise<string> {
-  console.log("generateContextualAvatar: Image generation is temporarily disabled.");
-  const seed = Math.floor(Math.random() * 1000);
-  return `https://picsum.photos/seed/${seed}/512/512`;
+  const recentEvents = history.slice(-5).map(m => m.parts?.[0]?.text || m.text || '').filter(Boolean).join(' ');
+  const prompt = `A contextual scene or character portrait reflecting the current story state.
+Character/Setting: ${profile.name}
+Appearance: ${profile.appearance || ''}
+Clothing: ${profile.clothing || ''}
+Current Mood: ${profile.currentMood || 'Neutral'}
+Recent Story Context: ${recentEvents.slice(0, 300)}
+Art Style: High-quality narrative scene artwork.`;
+
+  try {
+    return await generateImageFromPrompt(prompt);
+  } catch (error) {
+    console.error("generateContextualAvatar Error:", error);
+    const seed = Math.floor(Math.random() * 1000);
+    return `https://picsum.photos/seed/${seed}/512/512`;
+  }
 }
 
 export async function generateVeoAnimation() {

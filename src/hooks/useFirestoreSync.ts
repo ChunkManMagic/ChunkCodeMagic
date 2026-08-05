@@ -37,9 +37,8 @@ export function handleFirestoreError(
     attemptedOperation
   };
   
-  const formattedError = new Error(`Firestore Operation Failed: ${JSON.stringify(diagnosticInfo, null, 2)}`);
-  console.error("Firestore Diagnostic Collection Error:", formattedError);
-  return formattedError;
+  console.error("Firestore Diagnostic Collection Error:", diagnosticInfo);
+  return new Error("Couldn't save — check your connection and try again.");
 }
 
 export function useFirestoreSync() {
