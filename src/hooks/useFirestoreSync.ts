@@ -55,6 +55,10 @@ export function useFirestoreSync() {
   const endWrite = () => setActiveWrites(prev => Math.max(0, prev - 1));
 
   useEffect(() => {
+    if (!auth) {
+      setIsAuthReady(true);
+      return;
+    }
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       setUser(user);
       setIsAuthReady(true);
@@ -66,6 +70,7 @@ export function useFirestoreSync() {
   useEffect(() => {
     if (isAuthReady && user) {
       const testConnection = async () => {
+        if (!db) return;
         try {
           await getDocFromServer(doc(db, 'users', user.uid));
         } catch (error) {

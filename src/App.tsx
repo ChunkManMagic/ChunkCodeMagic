@@ -149,6 +149,7 @@ export default function App() {
   
   // Handle mobile redirect sign-in results/errors on mount
   useEffect(() => {
+    if (!auth) return;
     getRedirectResult(auth)
       .then((result) => {
         if (result) {
@@ -192,7 +193,8 @@ export default function App() {
             console.log("Checking for sync conflicts...");
             
             // Get current remote scenarios
-            const remoteSnap = await getDocs(collection(db, 'users', user.uid, 'scenarios'));
+            if (!db) return;
+          const remoteSnap = await getDocs(collection(db, 'users', user.uid, 'scenarios'));
             const remoteScenariosMap = new Map(remoteSnap.docs.map(doc => [doc.id, doc.data() as Scenario]));
             
             const conflicts: { local: Scenario, remote: Scenario }[] = [];
@@ -365,6 +367,7 @@ export default function App() {
       
       const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
       
+      if (!auth) return;
       if (isMobile) {
         await signInWithRedirect(auth, provider);
       } else {
@@ -378,6 +381,7 @@ export default function App() {
   }, [toastSuccess, toastError]);
 
   const handleLogout = async () => {
+    if (!auth) return;
     try {
       await signOut(auth);
       toastSuccess("Successfully signed out!");
@@ -1018,4 +1022,3 @@ export default function App() {
     </>
   );
 }
-,path:src/App.tsx}],message:feat: Support signInWithRedirect conditionally for Mobile Browsers,owner:ChunkManMagic,repo:ChunkCodeMagic}>< Emily: what are you doing? > In Firebase auth, popups can fail on mobile, so we conditionally use redirect on mobile.

@@ -43,6 +43,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     setIsSubmitting(true);
     setError(null);
     try {
+      if (!db) return;
       await addDoc(collection(db, 'premium_waitlist'), {
         email: waitlistEmail,
         genre: waitlistGenre,
