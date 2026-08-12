@@ -1,20 +1,75 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# PersonaForge
 
-# Run and deploy your AI Studio app
+Generate and bring conversational AI personas to life with the Gemini API — a React + Express + Firebase web app by **ChunkManMagic**.
 
-This contains everything you need to run your app locally.
+## Features
 
-View your app in AI Studio: https://ai.studio/apps/30699cb5-6622-4069-b8d3-cd216ea612fe
+- Create, edit, and iterate on AI personas with structured prompts
+- Chat with personas backed by the Gemini API
+- Persist personas and chat history with Firebase (Firestore)
+- Responsive UI built with React, Tailwind CSS v4, and Vite
 
-## Run Locally
+## Prerequisites
 
-**Prerequisites:**  Node.js
+- Node.js 20+
+- A [Gemini API key](https://aistudio.google.com/apikey)
+- (Optional) A Firebase project for persistence
 
+## Getting Started
 
 1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+
+   ```sh
+   npm install
+   ```
+
+2. Configure environment variables:
+
+   ```sh
+   cp .env.example .env.local
+   ```
+
+   Set `GEMINI_API_KEY` to your Gemini API key.
+
+3. (Optional) Configure Firebase:
+
+   ```sh
+   cp firebase-applet-config.example.json firebase-applet-config.json
+   ```
+
+   Fill in your Firebase project credentials. The app runs without Firebase —
+   personas are then kept in browser storage only.
+
+4. Start the dev server:
+
+   ```sh
+   npm run dev
+   ```
+
+## Scripts
+
+| Command           | Description                               |
+| ----------------- | ----------------------------------------- |
+| `npm run dev`     | Start the dev server with hot reload      |
+| `npm run build`   | Build the web app and server bundle       |
+| `npm run start`   | Serve the production build                |
+| `npm run preview` | Preview the built web app                 |
+| `npm run lint`    | Run ESLint against the codebase           |
+
+## Project Structure
+
+```
+.
+├── src/            # React frontend source
+├── server.ts       # Express + Gemini API server
+├── firestore.rules # Firestore security rules
+└── vite.config.ts  # Vite configuration
+```
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [CODEOWNERS](.github/CODEOWNERS) for ownership.
+
+## License
+
+[MIT](LICENSE) © 2026 ChunkManMagic
