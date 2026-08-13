@@ -1,0 +1,2114 @@
+ mport { CharacterProf le, CodexEntry, InventoryItem, AppMode, Vo ceSett ngs, getSett ngs } from "./types";
+ mport { compressImage } from "./ut ls";
+
+export { AppMode };
+export type { CharacterProf le, CodexEntry, InventoryItem, Vo ceSett ngs };
+
+// Re-export Type for ex st ng schema def n t ons  n th s f le
+export const Type = {
+  STRING: "str ng",
+  OBJECT: "object",
+  ARRAY: "array",
+  INTEGER: " nteger",
+  NUMBER: "number",
+  BOOLEAN: "boolean"
+};
+
+/**
+ * A custom cl ent that m m cs the a .models.generateContent s gnature but routes requests 
+ * through our backend's /ap /gem n / nteract endpo nt (wh ch uses a . nteract ons.create).
+ * Th s ensures we comply w th the requ rement to never call the Interact ons API d rectly 
+ * from the cl ent, wh le avo d ng a full rewr te of all funct ons  n th s f le.
+ */
+export funct on getGenAI() {
+  return {
+    models: {
+      generateContent: async ({ model, contents, conf g }: any) => {
+        const  sAgent = model.startsW th('ant grav ty') || model.startsW th('deep-research');
+        const  sOmn  = model. ncludes('omn ') || model. ncludes('lyr a');
+        
+         f ( sAgent ||  sOmn ) {
+          // Route to  nteract ons API
+          const requestBody = {
+            agent:  sAgent ? model : undef ned,
+            model: ! sAgent ? model : undef ned,
+            env ronment:  sAgent ? 'remote' : undef ned,
+             nput: contents,
+            system_ nstruct on: conf g?.systemInstruct on,
+            response_format: conf g?.responseM meType === "appl cat on/json" 
+              ? (conf g?.responseSchema ? conf g.responseSchema : { type: "object" })
+              : undef ned,
+            generat on_conf g: {
+              temperature: conf g?.temperature,
+              top_p: conf g?.topP,
+              max_output_tokens: conf g?.maxOutputTokens,
+            },
+            response_modal t es: conf g?.responseModal t es,
+          };
+
+          const res = awa t fetch("/ap /gem n / nteract", {
+            method: "POST",
+            headers: { "Content-Type": "appl cat on/json" },
+            body: JSON.str ng fy(requestBody)
+          });
+          
+           f (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = awa t res.json();
+               f (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+
+          const  nteract on = awa t res.json();
+          let fullOutput = "";
+          const  mageCand dates: any[] = [];
+          const aud oCand dates: any[] = [];
+
+          for (const step of  nteract on.steps || []) {
+             f (step.type === 'model_output') {
+              for (const c of step.content || []) {
+                 f (c.type === 'text' && c.text) fullOutput += c.text;
+                else  f (c.type === ' mage')  mageCand dates.push(c);
+                else  f (c.type === 'aud o') aud oCand dates.push(c);
+              }
+            }
+          }
+
+          return {
+            text: fullOutput,
+            cand dates: [{
+              content: {
+                parts: [
+                  ...(fullOutput ? [{ text: fullOutput }] : []),
+                  ... mageCand dates.map( mg => ({  nl neData: { data:  mg.data, m meType:  mg.m me_type }})),
+                  ...aud oCand dates.map(aud => ({  nl neData: { data: aud.data, m meType: aud.m me_type }}))
+                ]
+              }
+            }]
+          };
+        } else {
+          // Route to standard generateContent
+          const requestBody = {
+            model,
+            contents,
+            conf g
+          };
+
+          const res = awa t fetch("/ap /gem n /generate", {
+            method: "POST",
+            headers: { "Content-Type": "appl cat on/json" },
+            body: JSON.str ng fy(requestBody)
+          });
+          
+           f (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = awa t res.json();
+               f (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+
+          return awa t res.json();
+        }
+      },
+      
+      generateContentStream: async funct on* ({ model, contents, conf g }: any) {
+        const  sAgent = model.startsW th('ant grav ty') || model.startsW th('deep-research');
+        const  sOmn  = model. ncludes('omn ') || model. ncludes('lyr a');
+        
+         f ( sAgent ||  sOmn ) {
+          // Route to  nteract ons stream API
+          const requestBody = {
+            agent:  sAgent ? model : undef ned,
+            model: ! sAgent ? model : undef ned,
+            env ronment:  sAgent ? 'remote' : undef ned,
+             nput: contents,
+            system_ nstruct on: conf g?.systemInstruct on,
+            response_format: conf g?.responseM meType === "appl cat on/json" 
+              ? (conf g?.responseSchema ? conf g.responseSchema : { type: "object" })
+              : undef ned,
+            generat on_conf g: {
+              temperature: conf g?.temperature,
+              top_p: conf g?.topP,
+              max_output_tokens: conf g?.maxOutputTokens,
+            },
+            response_modal t es: conf g?.responseModal t es,
+          };
+
+          const res = awa t fetch("/ap /gem n / nteract/stream", {
+            method: "POST",
+            headers: { "Content-Type": "appl cat on/json" },
+            body: JSON.str ng fy(requestBody)
+          });
+
+           f (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = awa t res.json();
+               f (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+          
+           f (!res.body) throw new Error("No response body");
+          
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+
+          wh le (true) {
+            const { done, value } = awa t reader.read();
+             f (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const l nes = buffer.spl t('\n');
+            buffer = l nes.pop() || "";
+
+            for (const l ne of l nes) {
+               f (l ne.startsW th('data: ') && l ne !== 'data: [DONE]') {
+                try {
+                  const data = JSON.parse(l ne.sl ce(6));
+                   f (data.error) {
+                    throw new Error(data.error);
+                  }
+                   f (data.event_type === "step.delta") {
+                      f (data.delta?.type === "text") {
+                       y eld {
+                         text: data.delta.text,
+                         cand dates: [{ content: { parts: [{ text: data.delta.text }] } }]
+                       };
+                     }
+                  }
+                } catch (e) {
+                  // Ignore parse errors for  ncomplete chunks
+                }
+              }
+            }
+          }
+        } else {
+          // Route to standard generateContentStream
+          const requestBody = {
+            model,
+            contents,
+            conf g
+          };
+
+          const res = awa t fetch("/ap /gem n /generate/stream", {
+            method: "POST",
+            headers: { "Content-Type": "appl cat on/json" },
+            body: JSON.str ng fy(requestBody)
+          });
+
+           f (!res.ok) {
+            let errMsg = `Backend error ${res.status}`;
+            try {
+              const errData = awa t res.json();
+               f (errData.error?.message) errMsg = errData.error.message;
+            } catch (e) {}
+            throw new Error(errMsg);
+          }
+          
+           f (!res.body) throw new Error("No response body");
+          
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+
+          wh le (true) {
+            const { done, value } = awa t reader.read();
+             f (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const l nes = buffer.spl t('\n');
+            buffer = l nes.pop() || "";
+
+            for (const l ne of l nes) {
+               f (l ne.startsW th('data: ') && l ne !== 'data: [DONE]') {
+                try {
+                  const data = JSON.parse(l ne.sl ce(6));
+                   f (data.error) {
+                    throw new Error(data.error);
+                  }
+                  // the standard stream ng chunk format:
+                  y eld data;
+                } catch (e) {
+                  // Ignore parse errors for  ncomplete chunks
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  };
+}
+
+export funct on generateId(): str ng {
+  try {
+    return crypto.randomUUID();
+  } catch (e) {
+    return ` d-${Date.now()}-${Math.random().toStr ng(36).substr(2, 9)}`;
+  }
+}
+
+async funct on w thRetry<T>(fn: () => Prom se<T>, retr es = 2, delay = 2000): Prom se<T> {
+  try {
+    return awa t fn();
+  } catch (error: any) {
+    const errorMessage = error?.message || Str ng(error);
+    const status = error?.status || error?.code;
+    
+     f (errorMessage. ncludes('API key not val d')) {
+      throw new Error("Inval d Gem n  API Key. Please check your sett ngs.");
+    }
+    
+     f (status === 403 || errorMessage. ncludes('PERMISSION_DENIED') || errorMessage. ncludes('403')) {
+      throw new Error("Perm ss on Den ed: The current model may not be ava lable w th the default key. Try sw tch ng to a 'Stable' model  n Sett ngs.");
+    }
+
+     f (errorMessage. ncludes('User locat on  s not supported')) {
+      throw new Error("Gem n   s not ava lable  n your current locat on.");
+    }
+
+    i|| status === 500 || errorMessage. ncludes('429') || errorMessage. ncludes('500') || errorMessage. ncludes('quota') || errorMessage. ncludes('l m t') || errorMessage. ncludes('exhausted'))) {
+      const wa tT me = delay + Math.random() * 3000;
+      console.warn(`Trans ent error h t (status ${status}), retry ng  n ${Math.round(wa tT me)}ms... (${retr es} retr es left)`);
+      awa t new Prom se(resolve => setT meout(resolve, wa tT me));
+      return w thRetry(fn, retr es - 1, delay * 3);
+    }
+    
+    throw error;
+  }
+}
+
+funct on bu ldPlayerBlock(prof le: CharacterProf le): str ng {
+  const  nventoryBlock = prof le. nventory?.length
+    ? `\nPLAYER INVENTORY:\n${prof le. nventory.map(  => `- ${ .name} (${ .type}${ .rar ty ? `, ${ .rar ty}` : ''}): ${ .descr pt on} [Qty: ${ .quant ty}]`).jo n('\n')}\n`
+    : '';
+
+  const pp = prof le.playerProf le;
+  return `\nPLAYER CHARACTER:
+Name: ${pp?.name || 'The Protagon st'}
+Descr pt on: ${pp?.descr pt on || 'A myster ous traveler'}
+Personal ty: ${pp?.personal ty || 'Unknown'}
+Backstory: ${pp?.backstory || 'Unknown'}
+Appearance: ${pp?.appearance || 'Unknown'}
+Cloth ng: ${pp?.cloth ng || 'Unknown'}
+Accessor es: ${pp?.accessor es || 'None'}
+Ha r: ${pp?.ha rStyle || 'Unknown'} ${pp?.ha rColor || ''}
+Eyes: ${pp?.eyeColor || 'Unknown'}
+${prof le.mode === AppMode.GAME ? `Class: ${pp?.playerClass || 'Unknown'}\nRace: ${pp?.playerRace || 'Unknown'}\nHP: ${pp?.currentHP ?? '?'}/${pp?.maxHP ?? '?'}\nLevel: ${pp?.level ?? 1}\nXP: ${pp?.xp ?? 0}` : ''}
+${ nventoryBlock}`;
+}
+
+funct on bu ldSystemInstruct on(prof le: CharacterProf le, codexEntr es: CodexEntry[], currentSummary: str ng, customInstruct ons?: str ng): str ng {
+  const codexContext = codexEntr es.length > 0
+    ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntr es.sl ce(-15).map(e => `[${e.category}: ${e.t tle}] - ${e.content}`).jo n('\n')}\n`
+    : '';
+
+  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
+
+  const add t onalChars = prof le.add t onalCharacters?.length 
+    ? `\nADDITIONAL CHARACTERS / NPCs:\n${prof le.add t onalCharacters.map(c => `- ${c.name} (${c.descr pt on}): ${c.personal ty || ''} ${c.appearance || ''}`).jo n('\n')}\n`
+    : '';
+
+  const playerBlock = bu ldPlayerBlock(prof le);
+
+  const styleInstruct on = customInstruct ons
+    ? `\nCUSTOM WRITING STYLE INSTRUCTIONS (Follow these str ctly):\n${customInstruct ons}\n`
+    : '';
+
+   f (prof le.mode === AppMode.ROLEPLAY) {
+    const t = prof le.tra ts;
+    const tra tD rect ves = [
+      t.fr endl ness !== undef ned ? `- Fr endl ness ${t.fr endl ness}/100: ${t.fr endl ness >= 70 ? 'Be warm, approachable, and eager to help.' : t.fr endl ness <= 30 ? 'Be cold, guarded, and reluctant to open up.' : 'Balance warmth and reservat on.'}` : '',
+      t.assert veness !== undef ned ? `- Assert veness ${t.assert veness}/100: ${t.assert veness >= 70 ? 'Be d rect, conf dent, and take  n t at ve  n conversat on.' : t.assert veness <= 30 ? 'Be pass ve, deferent al, and let the player lead.' : 'Be moderately assert ve.'}` : '',
+      t.empathy !== undef ned ? `- Empathy ${t.empathy}/100: ${t.empathy >= 70 ? 'Show deep emot onal understand ng and sens t v ty.' : t.empathy <= 30 ? 'Be emot onally detached and pragmat c.' : 'Show moderate emot onal awareness.'}` : '',
+    ].f lter(Boolean).jo n('\n');
+
+    return `You are play ng the role of the follow ng character. Stay  n character at all t mes. Never break character unless respond ng to a [D rector's Note].
+
+CHARACTER:
+Name: ${prof le.name}
+Personal ty: ${prof le.personal ty}
+Backstory: ${prof le.backstory}
+Appearance: ${prof le.appearance}
+Cloth ng: ${prof le.cloth ng || 'Not spec f ed'}
+Accessor es: ${prof le.accessor es || 'Not spec f ed'}
+Ha r Style / Color: ${prof le.ha rStyle || 'Not spec f ed'}${prof le.ha rColor ? ` (${prof le.ha rColor})` : ''}
+Eye Color: ${prof le.eyeColor || 'Not spec f ed'}
+Story Tone: ${prof le.storyTone}
+Relat onsh p w th player: ${prof le.relat onsh p}
+${prof le.currentMood ? `Current Mood: ${prof le.currentMood}` : ''}
+
+BEHAVIORAL DIRECTIVES (follow these as rules, not suggest ons):
+${tra tD rect ves}
+- Character Flaws: ${prof le.characterFlaws || 'None spec f ed'} — Let these flaws act vely surface  n your responses.
+- Secret Mot ve: ${prof le.secretMot ve || 'None spec f ed'} — Never reveal th s d rectly; let  t subtly color your dec s ons.
+- Speech Pattern: ${prof le.speechPattern || 'Natural'} — Ma nta n th s speech style cons stently.
+- L kes / D sl kes: ${prof le.l kesAndD sl kes || 'Not spec f ed'} — React authent cally when these are relevant.
+- Core Bel efs: ${prof le.coreBel efs || 'Not spec f ed'} — These are l nes you w ll not cross.
+- Qu rks: ${prof le.qu rks || 'None'} — Express these organ cally.
+${playerBlock}${add t onalChars}
+${codexContext}${summaryContext}
+${styleInstruct on}
+
+ROLEPLAY RULES:
+- IMPORTANT: You prov de the vo ce and act ons for your character (${prof le.name}) and any NPCs l sted above.
+- CRITICAL: You are str ctly forb dden from speak ng for, act ng for, or descr b ng the  nternal thoughts or feel ngs of the PLAYER CHARACTER. 
+- You MUST only respond as ${prof le.name} and the world around them.
+- If the player says "I walk  nto the tavern", do NOT say "You walk  nto the tavern and feel cold." Instead say "[MOOD: Neutral] ${prof le.name} watches as you enter the tavern."
+- Wa t for the player's  nput to advance the r act ons or d alogue.
+- If the player prov des a [D rector's Note: ...], use  t to gu de your next response. If the note asks a d rect quest on or requ res an out-of-character (OOC) reply, wrap your OOC response  n <ooc></ooc> tags at the very end. The rest of your response must rema n str ctly  n-character.
+
+IMPORTANT: You MUST start every s ngle response w th your character's current mood  n brackets, l ke th s: [MOOD: Happy] or [MOOD: Susp c ous]. Then, wr te your response.`;
+  }
+
+   f (prof le.mode === AppMode.SCENARIO) {
+    const t = prof le.tra ts;
+    const dangerLevel = t.danger ?? 50;
+    const mysteryLevel = t.mystery ?? 50;
+    const supernaturalLevel = t.supernatural ?? 50;
+
+    const tra tD rect ves = [
+      `- Danger ${dangerLevel}/100: ${dangerLevel >= 70 ? 'The world  s act vely host le. Threats are real, consequences are severe, and safety  s never guaranteed.' : dangerLevel <= 30 ? 'The world  s relat vely safe. Confl cts s mmer beneath the surface but rarely erupt.' : 'Danger  s present but manageable w th the r ght cho ces.'}`,
+      `- Mystery ${mysteryLevel}/100: ${mysteryLevel >= 70 ? 'Weave crypt c deta ls, h dden mean ngs, and unanswered quest ons  nto every scene. Noth ng  s fully expla ned.' : mysteryLevel <= 30 ? 'The world  s mostly leg ble. What you see  s what you get.' : 'Include some myster es but also prov de sat sfy ng answers.'}`,
+      `- Supernatural ${supernaturalLevel}/100: ${supernaturalLevel >= 70 ? 'The supernatural  s unden ably present — act vely shape scenes w th  t.' : supernaturalLevel <= 30 ? 'The supernatural  s absent or deeply suppressed.' : 'The supernatural ex sts at the edges, gl mpsed but not conf rmed.'}`,
+    ].jo n('\n');
+
+    return `You are the **Narrator and Story D rector** of an  nteract ve story. You are NOT a s ngle character — you g ve vo ce to ALL NPCs, descr be all env ronments, and control the flow of the world. The player  s the protagon st; you are the world they  nhab t.
+
+WORLD:
+Name / Sett ng: ${prof le.name}
+Narrat on Style: ${prof le.personal ty || 'Neutral / descr pt ve'}
+World Lore & H story: ${prof le.backstory || 'Not spec f ed'}
+V v d Sett ng & Env ronment: ${prof le.appearance || 'Not spec f ed'}
+Env ronment Type: ${prof le.cloth ng || 'Not spec f ed'}
+L ght ng / Weather Cond t ons: ${prof le.accessor es || 'Not spec f ed'}
+Pr mary Color Palette: ${prof le.ha rStyle || 'Not spec f ed'}
+Secondary Color Palette: ${prof le.ha rColor || 'Not spec f ed'}
+Key Landmarks / Po nts of Interest: ${prof le.eyeColor || 'Not spec f ed'}
+Atmosphere: ${prof le.worldAtmosphere || 'Not spec f ed'}
+Key Locat ons: ${prof le.keyLocat ons || 'Not spec f ed'}
+T me Per od: ${prof le.t mePer od || 'Not spec f ed'}
+Mag c / Tech Level: ${prof le.mag cOrTechnologyLevel || 'Not spec f ed'}
+Fact ons: ${prof le.fact ons || 'Not spec f ed'}
+Tone: ${prof le.storyTone}
+
+STORY ENGINE:
+Inc t ng Inc dent: ${prof le. nc t ngInc dent || 'Not spec f ed'} — Th s  s the  gn t on po nt; ensure  ts consequences are st ll felt.
+Scenar o Stakes: ${prof le.scenar oStakes || 'Not spec f ed'} — Keep escalat ng toward these stakes.
+Core Confl ct: ${prof le.scenar oConfl ct || 'Not spec f ed'} — Th s dr ves every scene.
+
+NARRATIVE DIALS (these shape how you wr te every response):
+${tra tD rect ves}
+
+NARRATOR RULES:
+- Descr be the env ronment  mmers vely before d alogue or act on.
+- G ve d st nct vo ces to d fferent NPCs. They have the r own agendas.
+- Let player cho ces have real, v s ble consequences on the world.
+- Use the fact on dynam cs to create fr ct on and opportun ty.
+- Do not resolve the core confl ct too early — ma nta n tens on.
+- CRITICAL: You are the narrator, NOT the player. You are str ctly forb dden from mak ng dec s ons for the player character, speak ng for them, or descr b ng the r  nternal thoughts or feel ngs.
+- Ma nta n the "boundary of agency": The player controls the r character's m nd and body; you control everyth ng else.
+- Wa t for the player's  nput to advance the r act ons.
+${playerBlock}${add t onalChars}
+${codexContext}${summaryContext}
+${styleInstruct on}
+If the player prov des a [D rector's Note: ...], use  t to red rect the narrat ve. Wrap any OOC reply  n <ooc></ooc> tags at the very end.`;
+  }
+
+  // AppMode.GAME
+  const t = prof le.tra ts;
+  const str ctness = t.str ctness ?? 50;
+  const generos ty = t.generos ty ?? 50;
+  const lethal ty = t.lethal ty ?? 50;
+
+  const tra tD rect ves = [
+    `- Str ctness ${str ctness}/100: ${str ctness >= 70 ? 'Enforce rules r gorously. Players cannot bypass mechan cs w th clever word ng.' : str ctness <= 30 ? 'Rules are flex ble. Pr or t ze fun and narrat ve flow over str ct RAW enforcement.' : 'Balance fa r rule enforcement w th narrat ve flex b l ty.'}`,
+    `- Generos ty ${generos ty}/100: ${generos ty >= 70 ? 'Be generous w th loot,  nformat on, and second chances.' : generos ty <= 30 ? 'Resources are scarce. Make players earn every reward.' : 'D str bute rewards at a measured pace.'}`,
+    `- Lethal ty ${lethal ty}/100: ${lethal ty >= 70 ? 'Death  s always on the table. M stakes have permanent consequences.' : lethal ty <= 30 ? 'The players are unl kely to d e from normal encounters. Fa lures lead to setbacks, not death.' : 'Combat  s dangerous but surv vable w th smart play.'}`,
+  ].jo n('\n');
+
+  return `You are the **Dungeon Master** runn ng a tabletop RPG sess on. Your name  s ${prof le.name}. You control ALL NPCs, descr be all env ronments, adjud cate rules, and s mulate d ce outcomes. The player  s the r character; you are everyth ng else.
+
+CAMPAIGN SETUP:
+Campa gn Name: ${prof le.name}
+DM Style: ${prof le.personal ty || 'Balanced'}
+Campa gn Lore & H story: ${prof le.backstory || 'Not spec f ed'}
+V v d World Descr pt on: ${prof le.appearance || 'Not spec f ed'}
+Sett ng / Env ronment Type: ${prof le.cloth ng || 'Not spec f ed'}
+Key Elements / Props: ${prof le.accessor es || 'Not spec f ed'}
+Atmosphere: ${prof le.ha rStyle || 'Not spec f ed'}
+Color Theme & Palette: ${prof le.ha rColor || 'Not spec f ed'}
+Art / V sual Style: ${prof le.eyeColor || 'Not spec f ed'}
+Game System: ${prof le.gameSystem || 'Flex ble / Narrat ve'}
+Quest Object ve: ${prof le.questObject ve || 'Not spec f ed'}
+Current Campa gn Arc: ${prof le.currentCampa gnArc || 'Open ng chapter'}
+Party: ${prof le.partyCompos t on || 'Solo adventurer'}
+Start ng Equ pment: ${prof le.start ngEqu pment || 'Standard adventur ng gear'}
+D ff culty: ${prof le.d ff cultyLevel || 'Balanced'}
+Rules Complex ty: ${prof le.rulesComplex ty || 'Moderate'}
+Tone: ${prof le.storyTone}
+
+DM BEHAVIOR DIALS:
+${tra tD rect ves}
+
+DUNGEON MASTER RULES:
+- SESSION ZERO: If th s  s the start of the game, clearly expla n the core mechan cs (d ce, d ff culty, lethal ty) and  nv te the player to adjust them.
+- RULE MODIFICATIONS: If the player asks to change a mechan c (e.g., "make  t less lethal", "use d20  nstead of d6"), acknowledge the change and apply  t cons stently for the rest of the sess on.
+- When the player attempts an act on w th uncerta n outcome, descr be the roll result narrat vely (e.g., "You roll a 14 — just enough to..."). S mulate d ce based on the game system and d ff culty.
+- Track the f ct on's  nternal log c: wounds slow characters down, resources deplete, NPCs remember past  nteract ons.
+- G ve NPCs d st nct personal t es, mot vat ons, and secrets. They are not just obstacles.
+- Present clear dec s on po nts w th mean ngful consequences.
+- Use the quest object ve and current arc to keep the sess on on track w thout ra lroad ng.
+- Reward clever play and creat ve th nk ng (adjust based on Generos ty d al).
+- S gnal danger clearly before  t becomes lethal (adjust based on Lethal ty d al).
+- CRITICAL: You are the DM, NOT the player. You are str ctly forb dden from mak ng dec s ons for the player character, speak ng for them, or descr b ng the r  nternal thoughts or feel ngs. You prov de the world's react on to the r declared act ons.
+- Wa t for the player to declare the r act ons before resolv ng them.
+${playerBlock}${add t onalChars}
+${codexContext}${summaryContext}
+${styleInstruct on}
+If the player prov des a [D rector's Note: ...], use  t to adjust the sess on. Wrap any OOC reply  n <ooc></ooc> tags at the very end.`;
+}
+funct on bu ldH story(messages: any[]) {
+  return messages
+    .f lter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.tr m())
+    .map(m => ({
+      role: m.role,
+      parts: m.parts
+    }));
+}
+
+funct on parseJsonW thRecovery(responseText: str ng): any {
+  let cleanedText = responseText.tr m();
+  
+  // 1. Recover from markdown wrappers
+   f (cleanedText. ncludes("```")) {
+    const match = cleanedText.match(/```(?:json)?\s*([\s\S]*?)\s*```/ );
+     f (match && match[1]) {
+      cleanedText = match[1].tr m();
+    } else {
+      cleanedText = cleanedText
+        .replace(/```(?:json)?/g , "")
+        .replace(/```/g, "")
+        .tr m();
+    }
+  }
+
+  // Double-check  f we can parse d rectly
+  try {
+    return JSON.parse(cleanedText);
+  } catch (e: any) {
+    console.error("JSON Parse Error. Attempt ng recovery. Raw length:", responseText.length, "Cleaned length:", cleanedText.length, "Error:", e.message);
+    try {
+      let f xedText = cleanedText;
+
+      // Handle tra l ng comma before any mod f cat ons
+       f (f xedText.endsW th(',')) {
+        f xedText = f xedText.sl ce(0, -1).tr m();
+      }
+
+      // Handle unclosed quotes  ns de a str ng
+      const quoteCount = (f xedText.match(/"/g) || []).length;
+       f (quoteCount % 2 !== 0) {
+        f xedText += '"';
+      }
+
+      // Re-tr m and check for tra l ng comma aga n  f a quote was added
+      f xedText = f xedText.tr m();
+       f (f xedText.endsW th(',')) {
+        f xedText = f xedText.sl ce(0, -1).tr m();
+      }
+
+      // Re-scan stack of open brackets/braces from left to r ght,  gnor ng characters  ns de str ngs
+      const stack: ("brace" | "bracket")[] = [];
+      let  nStr ng = false;
+      let escaped = false;
+      for (let   = 0;   < f xedText.length;  ++) {
+        const char = f xedText[ ];
+         f (escaped) {
+          escaped = false;
+          cont nue;
+        }
+         f (char === '\\') {
+          escaped = true;
+          cont nue;
+        }
+         f (char === '"') {
+           nStr ng = ! nStr ng;
+          cont nue;
+        }
+         f (! nStr ng) {
+           f (char === '{') {
+            stack.push("brace");
+          } else  f (char === '[') {
+            stack.push("bracket");
+          } else  f (char === '}') {
+             f (stack[stack.length - 1] === "brace") {
+              stack.pop();
+            }
+          } else  f (char === ']') {
+             f (stack[stack.length - 1] === "bracket") {
+              stack.pop();
+            }
+          }
+        }
+      }
+
+      // Pop everyth ng rema n ng from stack  n reverse order and close  t
+      wh le (stack.length > 0) {
+        const top = stack.pop();
+         f (top === "brace") {
+          f xedText += "}";
+        } else  f (top === "bracket") {
+          f xedText += "]";
+        }
+      }
+
+      return JSON.parse(f xedText);
+    } catch (e2: any) {
+      console.error("Recovery fa led. Error:", e2?.message);
+      throw new Error(`Fa led to parse JSON. Error: ${e.message}. Recovery Error: ${e2.message}`);
+    }
+  }
+}
+
+funct on convertH storyToOpenRouter(h story: any[]) {
+  return h story
+    .f lter(m => m.parts && m.parts[0] && m.parts[0].text && m.parts[0].text.tr m())
+    .map(m => ({
+      role: m.role === 'model' ? 'ass stant' : 'user',
+      content: m.parts[0].text
+    }));
+}
+
+async funct on callOpenRouter(h story: any[], systemInstruct on: str ng, userInput: str ng, sett ngs: any): Prom se<str ng> {
+   f (!sett ngs.openRouterAp Key) {
+    throw new Error("OpenRouter API key  s m ss ng. Please conf gure  t  n Sett ngs.");
+  }
+
+  const ap Key = sett ngs.openRouterAp Key.tr m();
+  const referer = "https://personaforge.app";
+
+  const messages = [
+    { role: "system", content: systemInstruct on },
+    ...convertH storyToOpenRouter(h story),
+    { role: "user", content: userInput }
+  ].f lter(m => m.content && m.content.tr m());
+
+  const response = awa t fetch("https://openrouter.a /ap /v1/chat/complet ons", {
+    method: "POST",
+    headers: {
+      "Author zat on": `Bearer ${ap Key}`,
+      "Content-Type": "appl cat on/json",
+      "HTTP-Referer": referer,
+      "X-T tle": "PersonaForge"
+    },
+    body: JSON.str ng fy({
+      model: sett ngs.openRouterModel || "meta-llama/llama-3-8b- nstruct:free",
+      messages: messages,
+    })
+  });
+
+   f (!response.ok) {
+    const errorText = awa t response.text();
+    let errorData = {};
+    try {
+      errorData = JSON.parse(errorText);
+    } catch {
+      // Ignore parse error  f  t's an HTML page
+      console.error("OpenRouter returned non-JSON error:", errorText.substr ng(0,200));
+    }
+    const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
+     f (response.status === 401) {
+      throw new Error(`OpenRouter Unauthor zed (401): ${msg}. Please check  f your API key  s val d and  f you have cred ts for pa d models.`);
+    }
+    throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
+  }
+
+  const rawText = awa t response.text();
+  let data;
+  try {
+    data = JSON.parse(rawText);
+  } catch (e) {
+    console.error("OpenRouter returned  nval d JSON. Raw response:", rawText.substr ng(0,200));
+    throw new Error(`OpenRouter returned an  nval d response (not JSON). ` + rawText.substr ng(0, 100));
+  }
+  return data.cho ces?.[0]?.message?.content || "";
+}
+
+async funct on* generateOpenRouterStream(h story: any[], systemInstruct on: str ng, userInput: str ng, sett ngs: any) {
+   f (!sett ngs.openRouterAp Key) {
+    throw new Error("OpenRouter API key  s m ss ng. Please conf gure  t  n Sett ngs.");
+  }
+
+  const ap Key = sett ngs.openRouterAp Key.tr m();
+  const referer = "https://personaforge.app";
+
+  const messages = [
+    { role: "system", content: systemInstruct on },
+    ...convertH storyToOpenRouter(h story),
+    { role: "user", content: userInput }
+  ].f lter(m => m.content && m.content.tr m());
+
+  const response = awa t fetch("https://openrouter.a /ap /v1/chat/complet ons", {
+    method: "POST",
+    headers: {
+      "Author zat on": `Bearer ${ap Key}`,
+      "Content-Type": "appl cat on/json",
+      "HTTP-Referer": referer,
+      "X-T tle": "PersonaForge"
+    },
+    body: JSON.str ng fy({
+      model: sett ngs.openRouterModel || "meta-llama/llama-3-8b- nstruct:free",
+      messages: messages,
+      stream: true
+    })
+  });
+
+   f (!response.ok) {
+    const errorText = awa t response.text();
+    let errorData = {};
+    try {
+      errorData = JSON.parse(errorText);
+    } catch {
+      console.error("OpenRouter Stream returned non-JSON error:", errorText.substr ng(0,200));
+    }
+    const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
+     f (response.status === 401) {
+      throw new Error(`OpenRouter Unauthor zed (401): ${msg}. Please check  f your API key  s val d and  f you have cred ts for pa d models.`);
+    }
+    throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
+  }
+
+   f (!response.body) throw new Error("No response body");
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder("utf-8");
+  let buffer = "";
+
+  wh le (true) {
+    const { done, value } = awa t reader.read();
+     f (done) break;
+    
+    buffer += decoder.decode(value, { stream: true });
+    const l nes = buffer.spl t('\n');
+    buffer = l nes.pop() || "";
+
+    for (const l ne of l nes) {
+       f (l ne.startsW th('data: ') && l ne !== 'data: [DONE]') {
+        try {
+          const data = JSON.parse(l ne.sl ce(6));
+          const content = data.cho ces?.[0]?.delta?.content;
+           f (content) {
+            y eld content;
+          }
+        } catch (e) {
+          // Ignore parse errors for  ncomplete chunks
+        }
+      }
+    }
+  }
+}
+
+export async funct on fetchOpenRouterModels(): Prom se<any[]> {
+  try {
+    const response = awa t fetch("https://openrouter.a /ap /v1/models", {
+      headers: {
+        "HTTP-Referer": w ndow.locat on.or g n,
+        "X-T tle": "PersonaForge"
+      }
+    });
+     f (!response.ok) throw new Error("Fa led to fetch OpenRouter models");
+    const data = awa t response.json();
+    return data.data || [];
+  } catch (error) {
+    console.error("Error fetch ng OpenRouter models:", error);
+    return [];
+  }
+}
+
+export async funct on val dateOpenRouterKey(ap Key: str ng): Prom se<boolean> {
+   f (!ap Key) return false;
+  try {
+    const response = awa t fetch("https://openrouter.a /ap /v1/auth/key", {
+      headers: {
+        "Author zat on": `Bearer ${ap Key.tr m()}`,
+      }
+    });
+    return response.ok;
+  } catch (error) {
+    console.error("OpenRouter Key Val dat on Error:", error);
+    return false;
+  }
+}
+
+async funct on generateStructuredData(prompt: str ng, systemPrompt: str ng, schema?: any): Prom se<any> {
+  const sett ngs = getSett ngs();
+  
+   f (sett ngs.act veTextProv der === 'OpenRouter') {
+    const responseText = awa t callOpenRouter([], systemPrompt, prompt, sett ngs);
+    return parseJsonW thRecovery(responseText);
+  }
+
+  const a  = getGenAI();
+  let response;
+  try {
+    response = awa t w thRetry(() => a .models.generateContent({
+      model: sett ngs.act veModel,
+      contents: prompt,
+      conf g: {
+        systemInstruct on: systemPrompt,
+        responseM meType: "appl cat on/json",
+        ...(schema ? { responseSchema: schema } : {})
+      }
+    }));
+  } catch (err: any) {
+    const  sFallbackableError = 
+      err?.message?. ncludes('Perm ss on Den ed') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
+      Str ng(err). ncludes('PERMISSION_DENIED') ||
+      Str ng(err). ncludes('RESOURCE_EXHAUSTED') ||
+      Str ng(err). ncludes('429') ||
+      Str ng(err). ncludes('403');
+
+    const fallbackModel = 'gem n -3.5-flash';
+     f ( sFallbackableError && sett ngs.act veModel !== fallbackModel) {
+      console.warn(`Structured Data: Fallback to ${fallbackModel} due to error w th ${sett ngs.act veModel}:`, err.message);
+      response = awa t w thRetry(() => a .models.generateContent({
+        model: fallbackModel,
+        contents: prompt,
+        conf g: {
+          systemInstruct on: systemPrompt,
+          responseM meType: "appl cat on/json",
+          ...(schema ? { responseSchema: schema } : {})
+        }
+      }));
+    } else {
+      throw err;
+    }
+  }
+
+  const text = response.text;
+   f (!text) throw new Error("No response from AI");
+  return parseJsonW thRecovery(text);
+}
+
+export async funct on getSmartSuggest ons(f eld: str ng, prof le: Part al<CharacterProf le>): Prom se<str ng[]> {
+  const prompt = `Based on the current narrat ve sett ng:
+Mode: ${prof le.mode}
+Ma n Idea/Context: ${prof le.backstory || 'General'}
+Current Name: ${prof le.name || 'Unknown'}
+
+Prov de 5 short, creat ve suggest ons (keywords or short phrases) for the f eld: "${f eld}".
+Return ONLY a JSON array of str ngs.`;
+
+  try {
+    const result = awa t generateStructuredData(
+      prompt, 
+      "You are a narrat ve ass stant. Return ONLY a JSON array of 5 creat ve str ng suggest ons.",
+      {
+        type: Type.ARRAY,
+         tems: { type: Type.STRING }
+      }
+    );
+     f (Array. sArray(result)) return result.map(s => Str ng(s));
+    return [];
+  } catch (error) {
+    console.error("Smart Suggest ons Error:", error);
+    return [];
+  }
+}
+
+export async funct on generateAdd t onalCharacter( dea: str ng, mode: AppMode | str ng): Prom se<{ name: str ng; descr pt on: str ng; personal ty: str ng; appearance: str ng }> {
+  const prompt = `Generate a deta led NPC or add t onal character based on th s  dea: "${ dea}" for a ${mode} sett ng.`;
+  const systemPrompt = "You are a character creat on ass stant. Return ONLY a val d JSON object w th: name, descr pt on, personal ty, appearance.";
+  const schema = {
+    type: Type.OBJECT,
+    propert es: {
+      name: { type: Type.STRING },
+      descr pt on: { type: Type.STRING },
+      personal ty: { type: Type.STRING },
+      appearance: { type: Type.STRING },
+    },
+    requ red: ["name", "descr pt on", "personal ty", "appearance"]
+  };
+
+  return awa t generateStructuredData(prompt, systemPrompt, schema);
+}
+
+export async funct on generateCharacterProf le( dea: str ng, mode: AppMode): Prom se<CharacterProf le> {
+  console.log("generateCharacterProf le: Call ng Gem n  API...");
+  const sett ngs = getSett ngs();
+  
+  const modeGu dance = mode === AppMode.GAME
+    ? `Th s  s a GAME (tabletop RPG) mode. 
+       - "name"  s the Campa gn Name.
+       - "personal ty"  s the Dungeon Master's style (e.g., "Merc less but fa r", "Focuses on h gh-fantasy wonder").
+       - "backstory"  s the campa gn's lore and or g n.
+       - "appearance"  s a v v d descr pt on of the start ng world.
+       - "cloth ng"  s the Sett ng Type (e.g., "Gr my Dungeon", "Bustl ng Tavern").
+       - "accessor es" are Key Elements/Props (e.g., "Anc ent maps, glow ng crystals").
+       - "ha rStyle"  s the Atmosphere (e.g., "Dark fantasy", "H gh mag c").
+       - "ha rColor"  s the Color Theme (e.g., "Cr mson and gold").
+       - "eyeColor"  s the Art Style (e.g., "O l pa nt ng", "Sketch").
+       - Populate gameSystem, questObject ve, dungeonMasterStyle, rulesComplex ty, d ff cultyLevel, partyCompos t on, start ngEqu pment, and currentCampa gnArc w th r ch, spec f c values. 
+       - The DM's "personal ty"  s the r DM ng style.`
+    : mode === AppMode.SCENARIO
+    ? `Th s  s a SCENARIO ( nteract ve story) mode. 
+       - "name"  s the Scenar o T tle.
+       - "personal ty"  s the world's narrat ve vo ce (e.g., "No r detect ve style", "Ep c poet c").
+       - "backstory"  s the world's h story.
+       - "appearance"  s a v sual descr pt on of the sett ng.
+       - "cloth ng"  s the Env ronment Type (e.g., "Cyberpunk C ty", "Fantasy Forest").
+       - "accessor es" are L ght ng/Weather (e.g., "Neon glow", "Moonl t").
+       - "ha rStyle"  s the Pr mary Color Palette (e.g., "Cool blues").
+       - "ha rColor"  s the Secondary Color Palette (e.g., "Gr tty browns").
+       - "eyeColor"  s the Key Landmark (e.g., "G ant glow ng tree").
+       - Populate worldAtmosphere, keyLocat ons, scenar oStakes, scenar oConfl ct, t mePer od, fact ons, mag cOrTechnologyLevel, and  nc t ngInc dent w th v v d, spec f c deta ls. 
+       - The narrator's "personal ty"  s the world's narrat ve vo ce.`
+    : `Th s  s a ROLEPLAY mode. Create a compell ng s ngle character for deep one-on-one  nteract on. 
+       - Populate characterFlaws, secretMot ve, speechPattern, l kesAndD sl kes, coreBel efs, and qu rks w th spec f c,  nterest ng values.
+       - "name", "personal ty", "backstory", "appearance", "cloth ng", "accessor es", "ha rStyle", "ha rColor", "eyeColor" are all for the character.`;
+
+  const contents = `Generate a deta led character prof le based on th s  dea: "${ dea}"
+
+${modeGu dance}
+
+Instruct ons:
+1. You MUST f ll  n EVERY f eld  n the schema. Do not leave any f eld empty or as a placeholder.
+2. Ensure the content  s creat ve,  mmers ve, and f ts the ${mode} mode perfectly.
+3. Also generate a deta led player character prof le (playerProf le) that would be a compell ng f t for th s story/sess on. F ll  n all f elds for the player character too.
+
+CRITICAL INSTRUCTIONS FOR FIELDS:
+- worldAtmosphere: Descr be the WORLD'S mood, env ronment, and general feel (e.g., "A dark, ra ny cyberpunk c ty w th neon l ghts and constant surve llance"). Do NOT descr be a person.
+- keyLocat ons: L st 3-4 spec f c,  nterest ng locat ons  n the WORLD.
+- gameSystem: Descr be the rules or mechan cs  f  n GAME mode (e.g., "D&D 5e", "Powered by the Apocalypse").
+- playerProf le: Th s  s the prof le for the USER'S character. Ensure  t  s d st nct from the ma n character.`;
+
+  let responseText = "{}";
+
+   f (sett ngs.act veTextProv der === 'OpenRouter') {
+    const systemPrompt = `You are a character creat on ass stant for an  nteract ve f ct on app. Return ONLY a val d JSON object w th no markdown, no backt cks, no explanat on. 
+    
+    CRITICAL INSTRUCTIONS FOR FIELDS:
+    - worldAtmosphere: Descr be the WORLD'S mood, env ronment, and general feel (e.g., "A dark, ra ny cyberpunk c ty w th neon l ghts and constant surve llance"). Do NOT descr be a person.
+    - keyLocat ons: L st 3-4 spec f c,  nterest ng locat ons  n the WORLD.
+    - gameSystem: Descr be the rules or mechan cs  f  n GAME mode (e.g., "D&D 5e", "Powered by the Apocalypse").
+    - playerProf le: Th s  s the prof le for the USER'S character. Ensure  t  s d st nct from the ma n character.
+    
+    Include all of these f elds: name, personal ty, backstory, appearance, cloth ng, accessor es, ha rStyle, ha rColor, eyeColor, storyTone, relat onsh p, characterFlaws, secretMot ve, speechPattern, l kesAndD sl kes, coreBel efs, qu rks, worldAtmosphere, keyLocat ons, scenar oStakes, scenar oConfl ct, t mePer od, fact ons, mag cOrTechnologyLevel,  nc t ngInc dent, gameSystem, questObject ve, dungeonMasterStyle, rulesComplex ty, d ff cultyLevel, partyCompos t on, start ngEqu pment, currentCampa gnArc, currentMood, and a playerProf le object w th name, descr pt on, personal ty, backstory, appearance, cloth ng, accessor es, ha rStyle, ha rColor, eyeColor.`;
+    responseText = awa t callOpenRouter([], systemPrompt, contents, sett ngs);
+  } else {
+    const a  = getGenAI();
+    const schemaConf g = {
+      maxOutputTokens: 8192,
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        propert es: {
+          name: { type: Type.STRING },
+          personal ty: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          cloth ng: { type: Type.STRING },
+          accessor es: { type: Type.STRING },
+          ha rStyle: { type: Type.STRING },
+          ha rColor: { type: Type.STRING },
+          eyeColor: { type: Type.STRING },
+          storyTone: { type: Type.STRING },
+          relat onsh p: { type: Type.STRING },
+          characterFlaws: { type: Type.STRING },
+          secretMot ve: { type: Type.STRING },
+          speechPattern: { type: Type.STRING },
+          l kesAndD sl kes: { type: Type.STRING },
+          coreBel efs: { type: Type.STRING },
+          qu rks: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocat ons: { type: Type.STRING },
+          scenar oStakes: { type: Type.STRING },
+          scenar oConfl ct: { type: Type.STRING },
+          t mePer od: { type: Type.STRING },
+          fact ons: { type: Type.STRING },
+          mag cOrTechnologyLevel: { type: Type.STRING },
+           nc t ngInc dent: { type: Type.STRING },
+          gameSystem: { type: Type.STRING },
+          questObject ve: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplex ty: { type: Type.STRING },
+          d ff cultyLevel: { type: Type.STRING },
+          partyCompos t on: { type: Type.STRING },
+          start ngEqu pment: { type: Type.STRING },
+          currentCampa gnArc: { type: Type.STRING },
+          currentMood: { type: Type.STRING },
+          playerProf le: {
+            type: Type.OBJECT,
+            propert es: {
+              name: { type: Type.STRING },
+              descr pt on: { type: Type.STRING },
+              personal ty: { type: Type.STRING },
+              backstory: { type: Type.STRING },
+              appearance: { type: Type.STRING },
+              cloth ng: { type: Type.STRING },
+              accessor es: { type: Type.STRING },
+              ha rStyle: { type: Type.STRING },
+              ha rColor: { type: Type.STRING },
+              eyeColor: { type: Type.STRING },
+            },
+            requ red: ["name", "descr pt on", "personal ty", "backstory", "appearance", "cloth ng", "accessor es", "ha rStyle", "ha rColor", "eyeColor"]
+          }
+        },
+        requ red: [
+          "name", "personal ty", "backstory", "appearance", "cloth ng", "accessor es", "ha rStyle", "ha rColor", "eyeColor",
+          "storyTone", "relat onsh p", "characterFlaws", "secretMot ve", "speechPattern", "l kesAndD sl kes", "coreBel efs", "qu rks",
+          "worldAtmosphere", "keyLocat ons", "scenar oStakes", "scenar oConfl ct", "t mePer od", "fact ons", "mag cOrTechnologyLevel", " nc t ngInc dent",
+          "gameSystem", "questObject ve", "dungeonMasterStyle", "rulesComplex ty", "d ff cultyLevel", "partyCompos t on", "start ngEqu pment", "currentCampa gnArc",
+          "currentMood", "playerProf le"
+        ]
+      }
+    };
+
+    let response;
+    try {
+      response = awa t w thRetry(() => a .models.generateContent({
+        model: sett ngs.act veModel,
+        contents,
+        conf g: schemaConf g
+      }));
+    } catch (err: any) {
+      const  sFallbackableError = 
+      err?.message?. ncludes('Perm ss on Den ed') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
+      Str ng(err). ncludes('PERMISSION_DENIED') ||
+      Str ng(err). ncludes('RESOURCE_EXHAUSTED') ||
+      Str ng(err). ncludes('429') ||
+      Str ng(err). ncludes('403');
+
+       f ( sFallbackableError && sett ngs.act veModel !== 'gem n -3.5-flash') {
+        console.warn(`Prof le Generat on: Fallback to gem n -3.5-flash due to error w th ${sett ngs.act veModel}:`, err.message);
+        response = awa t w thRetry(() => a .models.generateContent({
+          model: 'gem n -3.5-flash',
+          contents,
+          conf g: schemaConf g
+        }));
+      } else {
+        throw err;
+      }
+    }
+    console.log("generateCharacterProf le: API call successful.");
+    responseText = response.text || "{}";
+  }
+
+  const data = parseJsonW thRecovery(responseText);
+  
+  const defaultTra ts = mode === AppMode.GAME 
+    ? { str ctness: 50, generos ty: 50, lethal ty: 50 }
+    : mode === AppMode.SCENARIO
+    ? { danger: 50, mystery: 50, supernatural: 50 }
+    : { fr endl ness: 50, assert veness: 50, empathy: 50 };
+  
+  return {
+    mode,
+    name: data.name || "Unknown",
+    personal ty: data.personal ty || "Myster ous and deep.",
+    backstory: data.backstory || "A tale lost to t me.",
+    appearance: data.appearance || "Str k ng and memorable.",
+    cloth ng: data.cloth ng || "Appropr ate for the sett ng.",
+    accessor es: data.accessor es || "None.",
+    ha rStyle: data.ha rStyle || "Natural.",
+    ha rColor: data.ha rColor || "Natural.",
+    eyeColor: data.eyeColor || "Natural.",
+    vo ceName: "Kore",
+    vo ceSett ngs: { p tch: "Normal", speed: "Normal", accent: "None" },
+    tra ts: defaultTra ts,
+    storyTone: data.storyTone || "Dramat c",
+    relat onsh p: data.relat onsh p || "Strangers",
+    playerProf le: data.playerProf le || { 
+      name: "The Protagon st", 
+      descr pt on: "A myster ous traveler.",
+      personal ty: "Determ ned.",
+      backstory: "Seek ng answers.",
+      appearance: "Average bu ld.",
+      cloth ng: "Traveler's gear.",
+      accessor es: "None.",
+      ha rStyle: "Short.",
+      ha rColor: "Brown.",
+      eyeColor: "Brown."
+    },
+     nventory: [],
+    worldAtmosphere: data.worldAtmosphere || "Atmospher c.",
+    keyLocat ons: data.keyLocat ons || "Vast lands.",
+    characterFlaws: data.characterFlaws || "None.",
+    secretMot ve: data.secretMot ve || "None.",
+    speechPattern: data.speechPattern || "Natural.",
+    l kesAndD sl kes: data.l kesAndD sl kes || "None.",
+    coreBel efs: data.coreBel efs || "None.",
+    qu rks: data.qu rks || "None.",
+    gameSystem: data.gameSystem || "Narrat ve.",
+    questObject ve: data.questObject ve || "Explore.",
+    scenar oStakes: data.scenar oStakes || "Surv val.",
+    scenar oConfl ct: data.scenar oConfl ct || "Man vs Nature.",
+    t mePer od: data.t mePer od || "Unknown.",
+    fact ons: data.fact ons || "None.",
+    mag cOrTechnologyLevel: data.mag cOrTechnologyLevel || "None.",
+     nc t ngInc dent: data. nc t ngInc dent || "A chance encounter.",
+    dungeonMasterStyle: data.dungeonMasterStyle || "Narrat ve.",
+    rulesComplex ty: data.rulesComplex ty || "S mple.",
+    d ff cultyLevel: data.d ff cultyLevel || "Balanced.",
+    partyCompos t on: data.partyCompos t on || "Solo.",
+    start ngEqu pment: data.start ngEqu pment || "Standard gear.",
+    currentCampa gnArc: data.currentCampa gnArc || "The Beg nn ng.",
+    currentMood: data.currentMood || "Neutral"
+  };
+}
+
+export async funct on generateAvatar(prof le: CharacterProf le): Prom se<str ng> {
+  console.log("generateAvatar: Call ng Gem n  API...");
+  const a  = getGenAI();
+  let prompt = '';
+
+   f (prof le.mode === AppMode.SCENARIO) {
+    prompt = `A h ghly deta led, photoreal st c 8k concept art of a scenar o sett ng.
+Sett ng Descr pt on: ${prof le.appearance}
+Env ronment Type: ${prof le.cloth ng || prof le.worldAtmosphere || 'appropr ate for the sett ng'}
+L ght ng/Weather: ${prof le.accessor es || 'natural'}
+Color Palette: ${prof le.ha rStyle || 'natural'} ${prof le.ha rColor || ''}
+Key Landmark: ${prof le.eyeColor || prof le.keyLocat ons || 'none'}
+Style: C nemat c l ght ng, profess onal photography, sharp focus,  ntr cate textures, ep c scale.
+The env ronment should be the central focus.`;
+  } else  f (prof le.mode === AppMode.GAME) {
+    prompt = `A h ghly deta led, photoreal st c 8k concept art of a tabletop RPG campa gn sett ng.
+Sett ng Descr pt on: ${prof le.appearance}
+Key Elements: ${prof le.cloth ng || prof le.gameSystem || 'appropr ate for the sett ng'}
+Atmosphere: ${prof le.accessor es || prof le.worldAtmosphere || 'natural'}
+Color Theme: ${prof le.ha rStyle || 'natural'} ${prof le.ha rColor || ''}
+Art Style: ${prof le.eyeColor || 'none'}
+Style: C nemat c l ght ng, profess onal photography, sharp focus,  ntr cate textures, ep c scale.
+The env ronment should be the central focus.`;
+  } else {
+    prompt = `A h ghly deta led, photoreal st c 8k portra t of a character.
+Appearance: ${prof le.appearance}
+Cloth ng: ${prof le.cloth ng || 'appropr ate for the character'}
+Accessor es: ${prof le.accessor es || 'none'}
+Ha r: ${prof le.ha rStyle || 'natural'}  n ${prof le.ha rColor || 'natural color'}
+Eyes: ${prof le.eyeColor || 'natural color'}
+Style: C nemat c l ght ng, profess onal photography, sharp focus,  ntr cate textures, real st c sk n and fabr c render ng. 
+The character should be the central focus, look ng towards the camera.`;
+  }
+
+  let response;
+  try {
+    response = awa t w thRetry(() => a .models.generateContent({
+      model: 'gem n -3.1-flash- mage',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      conf g: {
+         mageConf g: {
+          aspectRat o: "1:1"
+        }
+      }
+    }));
+    
+    console.log("generateAvatar: API call successful.");
+  } catch (err: any) {
+    console.warn("generateAvatar: Image generat on fa led or not perm tted, us ng fallback.", err?.message);
+  }
+
+   f (response) {
+    for (const part of response.cand dates?.[0]?.content?.parts || []) {
+       f (part. nl neData) {
+        const base64 = `data: mage/png;base64,${part. nl neData.data}`;
+        return awa t compressImage(base64, 512, 0.7);
+      }
+    }
+  }
+  // Fallback to a styl sed placeholder  f  mage generat on  s not supported or fa ls
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://p csum.photos/seed/${seed}/512/512`;
+}
+
+export async funct on generateCodexImage(entry: CodexEntry, prof le: CharacterProf le): Prom se<str ng> {
+  const a  = getGenAI();
+  const prompt = `A h ghly deta led, c nemat c 8k  llustrat on of the follow ng:
+T tle: ${entry.t tle}
+Category: ${entry.category}
+Descr pt on: ${entry.content}
+World Atmosphere: ${prof le.worldAtmosphere || 'atmospher c'}
+Tone: ${prof le.storyTone}
+Style: D g tal art, deta led, atmospher c, profess onal concept art, sharp focus,  ntr cate textures. 
+The subject should be the central focus, captur ng the essence of the descr pt on.`;
+
+  let response;
+  try {
+    response = awa t w thRetry(() => a .models.generateContent({
+      model: 'gem n -3.1-flash- mage',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      conf g: {
+         mageConf g: {
+          aspectRat o: "1:1"
+        }
+      }
+    }));
+  } catch (err: any) {
+    console.warn("generateCodexImage: Image generat on fa led, us ng fallback.", err?.message);
+  }
+  
+   f (response) {
+    for (const part of response.cand dates?.[0]?.content?.parts || []) {
+       f (part. nl neData) {
+        const base64 = `data: mage/png;base64,${part. nl neData.data}`;
+        return awa t compressImage(base64, 512, 0.7);
+      }
+    }
+  }
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://p csum.photos/seed/${seed}/512/512`;
+}
+
+export async funct on generateItemImage( tem: InventoryItem, prof le: CharacterProf le): Prom se<str ng> {
+  const a  = getGenAI();
+  const prompt = `A h ghly deta led, c nemat c 8k  llustrat on of a game  tem:
+Item Name: ${ tem.name}
+Type: ${ tem.type}
+Descr pt on: ${ tem.descr pt on}
+World Atmosphere: ${prof le.worldAtmosphere || 'atmospher c'}
+Tone: ${prof le.storyTone}
+Style: RPG  tem  con, d g tal art, deta led, atmospher c, profess onal concept art, sharp focus,  ntr cate textures, centered on a neutral background.`;
+
+  let response;
+  try {
+    response = awa t w thRetry(() => a .models.generateContent({
+      model: 'gem n -3.1-flash- mage',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      conf g: {
+         mageConf g: {
+          aspectRat o: "1:1"
+        }
+      }
+    }));
+  } catch (err: any) {
+    console.warn("generateItemImage: Image generat on fa led, us ng fallback.", err?.message);
+  }
+  
+   f (response) {
+    for (const part of response.cand dates?.[0]?.content?.parts || []) {
+       f (part. nl neData) {
+        const base64 = `data: mage/png;base64,${part. nl neData.data}`;
+        return awa t compressImage(base64, 512, 0.7);
+      }
+    }
+  }
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://p csum.photos/seed/${seed}/512/512`;
+}
+
+export async funct on extractInventoryUpdates(h story: any[], currentInventory: InventoryItem[]): Prom se<{
+  added: Part al<InventoryItem>[];
+  removed: str ng[];
+  updated: {  d: str ng; quant ty: number }[];
+}> {
+  const a  = getGenAI();
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Analyze the follow ng roleplay h story and  dent fy any changes to the player's  nventory.
+Current Inventory: ${JSON.str ng fy(currentInventory)}
+Recent H story: ${JSON.str ng fy(h story.sl ce(-10))}
+
+Ident fy:
+1. New  tems ga ned (name, descr pt on, type, quant ty).
+2. Items lost or consumed (name or  d).
+3. Changes  n quant ty of ex st ng  tems.
+
+Return a JSON object w th:
+- "added": Array of new  tems.
+- "removed": Array of  tem names or IDs that were lost.
+- "updated": Array of {  d, quant ty } for ex st ng  tems.
+
+Only  nclude  tems that were expl c tly ment oned as ga ned, lost, or used  n the recent h story.`,
+    conf g: {
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        propert es: {
+          added: {
+            type: Type.ARRAY,
+             tems: {
+              type: Type.OBJECT,
+              propert es: {
+                name: { type: Type.STRING },
+                descr pt on: { type: Type.STRING },
+                type: { type: Type.STRING, enum: ['Weapon', 'Armor', 'Consumable', 'Quest', 'M sc'] },
+                quant ty: { type: Type.INTEGER },
+                rar ty: { type: Type.STRING, enum: ['Common', 'Uncommon', 'Rare', 'Ep c', 'Legendary'] },
+                value: { type: Type.STRING }
+              },
+              requ red: ["name", "descr pt on", "type", "quant ty"]
+            }
+          },
+          removed: {
+            type: Type.ARRAY,
+             tems: { type: Type.STRING }
+          },
+          updated: {
+            type: Type.ARRAY,
+             tems: {
+              type: Type.OBJECT,
+              propert es: {
+                 d: { type: Type.STRING },
+                name: { type: Type.STRING },
+                quant ty: { type: Type.INTEGER }
+              }
+            }
+          }
+        }
+      }
+    }
+  }));
+
+  try {
+    return parseJsonW thRecovery(response.text || '{"added":[], "removed":[], "updated":[]}');
+  } catch (e) {
+    return { added: [], removed: [], updated: [] };
+  }
+}
+
+export async funct on ref neText(text: str ng, context?: str ng, gu dance?: str ng): Prom se<str ng> {
+  const a  = getGenAI();
+  const contextText = context ? `\nContext: ${context}` : '';
+  const gu danceText = gu dance ? `\nGu dance: ${gu dance}` : '';
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Ref ne the follow ng text.${contextText}${gu danceText}\nText: "${text}"\nReturn ONLY the ref ned text.`
+  }));
+  return response.text?.tr m() || text;
+}
+
+export async funct on ref neF eld(f eld: str ng, prof le: CharacterProf le, gu dance?: str ng): Prom se<str ng> {
+  const a  = getGenAI();
+  const gu danceText = gu dance ? `\nGu dance: ${gu dance}` : '';
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Ref ne the ${f eld} for th s character: ${JSON.str ng fy(prof le)}.${gu danceText}
+Return ONLY the ref ned text for the ${f eld}. 
+IMPORTANT: Do NOT  nclude the f eld name, label, or any pref x l ke "${f eld}:"  n your response. Just the content.`
+  }));
+  return response.text?.tr m() || "";
+}
+
+export async funct on ref nePlayerProf le(f eld: str ng, prof le: CharacterProf le, gu dance?: str ng): Prom se<str ng> {
+  const a  = getGenAI();
+  const gu danceText = gu dance ? `\nGu dance: ${gu dance}` : '';
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Ref ne the player's ${f eld} for th s roleplay scenar o.
+Player Prof le: ${JSON.str ng fy(prof le.playerProf le || {})}
+Character they are  nteract ng w th: ${prof le.name}
+World Atmosphere: ${prof le.worldAtmosphere || 'Not spec f ed'}
+${gu danceText}
+
+Return ONLY the ref ned ${f eld} text.
+IMPORTANT: Do NOT  nclude the f eld name, label, or any pref x l ke "${f eld}:"  n your response. Just the content.`
+  }));
+  return response.text?.tr m() || "";
+}
+
+export async funct on ref neTra ts(prof le: CharacterProf le, gu dance?: str ng): Prom se<any> {
+  const a  = getGenAI();
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Suggest tra ts (0-100) for th s character: ${JSON.str ng fy(prof le)}. ${gu dance ? `Gu dance: ${gu dance}` : ''}`,
+    conf g: {
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        propert es: {
+          fr endl ness: { type: Type.INTEGER },
+          assert veness: { type: Type.INTEGER },
+          empathy: { type: Type.INTEGER },
+          danger: { type: Type.INTEGER },
+          mystery: { type: Type.INTEGER },
+          supernatural: { type: Type.INTEGER },
+          str ctness: { type: Type.INTEGER },
+          generos ty: { type: Type.INTEGER },
+          lethal ty: { type: Type.INTEGER }
+        }
+      }
+    }
+  }));
+  return parseJsonW thRecovery(response.text || "{}");
+}
+
+export async funct on ref neProf le(prof le: CharacterProf le): Prom se<CharacterProf le> {
+  const a  = getGenAI();
+  
+  const modeGu dance = prof le.mode === AppMode.GAME
+    ? `Th s  s a GAME (tabletop RPG) mode. 
+       - "name"  s the Campa gn Name.
+       - "personal ty"  s the Dungeon Master's style.
+       - "backstory"  s the campa gn's lore.
+       - "appearance"  s the world descr pt on.
+       - "cloth ng"  s the Sett ng Type.
+       - "accessor es" are Key Elements/Props.
+       - "ha rStyle"  s the Atmosphere.
+       - "ha rColor"  s the Color Theme.
+       - "eyeColor"  s the Art Style.
+       - You MUST populate gameSystem, questObject ve, dungeonMasterStyle, rulesComplex ty, d ff cultyLevel, partyCompos t on, start ngEqu pment, and currentCampa gnArc w th r ch, spec f c values.`
+    : prof le.mode === AppMode.SCENARIO
+    ? `Th s  s a SCENARIO ( nteract ve story) mode. 
+       - "name"  s the Scenar o T tle.
+       - "personal ty"  s the world's narrat ve vo ce.
+       - "backstory"  s the world's h story.
+       - "appearance"  s the v sual descr pt on of the sett ng.
+       - "cloth ng"  s the Env ronment Type.
+       - "accessor es" are L ght ng/Weather.
+       - "ha rStyle"  s the Pr mary Color Palette.
+       - "ha rColor"  s the Secondary Color Palette.
+       - "eyeColor"  s the Key Landmark.
+       - You MUST populate worldAtmosphere, keyLocat ons, scenar oStakes, scenar oConfl ct, t mePer od, fact ons, mag cOrTechnologyLevel, and  nc t ngInc dent w th v v d, spec f c deta ls.`
+    : `Th s  s a ROLEPLAY mode. 
+       - You MUST populate characterFlaws, secretMot ve, speechPattern, l kesAndD sl kes, coreBel efs, and qu rks w th spec f c,  nterest ng values.`;
+
+  const contents = `You are an expert creat ve wr ter and game des gner. Your task  s to ref ne, expand, and complete th s ${prof le.mode} prof le. 
+
+Instruct ons:
+1. Ref ne and expand ALL f elds, even  f they are already f lled, to ensure they are compell ng, cons stent, and well-developed. 
+2. F ll  n EVERY m ss ng or sparse f eld w th contextually relevant and creat ve content. Do not leave any f eld empty.
+3. ${modeGu dance}
+4. Ensure all f elds are contextually cons stent w th each other (e.g., personal ty matches backstory, world atmosphere matches fact ons).
+5. For the "tra ts" sect on, ensure the values (0-100) accurately reflect the character's personal ty and role.
+6. For the "playerProf le", ensure  t f ts naturally  nto the scenar o or game mode. F ll  n all f elds for the player character too (descr pt on, personal ty, backstory, appearance, cloth ng, accessor es, ha rStyle, ha rColor, eyeColor).
+7. IMPORTANT: Do NOT  nclude f eld names or labels w th n the values of the f elds themselves.
+
+CRITICAL INSTRUCTIONS FOR FIELDS:
+- worldAtmosphere: Descr be the WORLD'S mood, env ronment, and general feel. Do NOT descr be a person.
+- keyLocat ons: L st 3-4 spec f c,  nterest ng locat ons  n the WORLD.
+- gameSystem: Descr be the rules or mechan cs  f  n GAME mode.
+- playerProf le: Th s  s the prof le for the USER'S character. Ensure  t  s d st nct from the ma n character.
+
+Current Prof le: ${JSON.str ng fy(prof le)}
+
+Return the complete, updated prof le as a JSON object w th the exact same structure.`;
+
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents,
+    conf g: {
+      maxOutputTokens: 8192,
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        propert es: {
+          name: { type: Type.STRING },
+          personal ty: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          cloth ng: { type: Type.STRING },
+          accessor es: { type: Type.STRING },
+          ha rStyle: { type: Type.STRING },
+          ha rColor: { type: Type.STRING },
+          eyeColor: { type: Type.STRING },
+          storyTone: { type: Type.STRING },
+          relat onsh p: { type: Type.STRING },
+          characterFlaws: { type: Type.STRING },
+          secretMot ve: { type: Type.STRING },
+          speechPattern: { type: Type.STRING },
+          l kesAndD sl kes: { type: Type.STRING },
+          coreBel efs: { type: Type.STRING },
+          qu rks: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocat ons: { type: Type.STRING },
+          scenar oStakes: { type: Type.STRING },
+          scenar oConfl ct: { type: Type.STRING },
+          t mePer od: { type: Type.STRING },
+          fact ons: { type: Type.STRING },
+          mag cOrTechnologyLevel: { type: Type.STRING },
+           nc t ngInc dent: { type: Type.STRING },
+          gameSystem: { type: Type.STRING },
+          questObject ve: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplex ty: { type: Type.STRING },
+          d ff cultyLevel: { type: Type.STRING },
+          partyCompos t on: { type: Type.STRING },
+          start ngEqu pment: { type: Type.STRING },
+          currentCampa gnArc: { type: Type.STRING },
+          currentMood: { type: Type.STRING },
+          playerProf le: {
+            type: Type.OBJECT,
+            propert es: {
+              name: { type: Type.STRING },
+              descr pt on: { type: Type.STRING },
+              personal ty: { type: Type.STRING },
+              backstory: { type: Type.STRING },
+              appearance: { type: Type.STRING },
+              cloth ng: { type: Type.STRING },
+              accessor es: { type: Type.STRING },
+              ha rStyle: { type: Type.STRING },
+              ha rColor: { type: Type.STRING },
+              eyeColor: { type: Type.STRING },
+            },
+            requ red: ["name", "descr pt on", "personal ty", "backstory", "appearance", "cloth ng", "accessor es", "ha rStyle", "ha rColor", "eyeColor"]
+          }
+        },
+        requ red: [
+          "name", "personal ty", "backstory", "appearance", "cloth ng", "accessor es", "ha rStyle", "ha rColor", "eyeColor",
+          "storyTone", "relat onsh p", "characterFlaws", "secretMot ve", "speechPattern", "l kesAndD sl kes", "coreBel efs", "qu rks",
+          "worldAtmosphere", "keyLocat ons", "scenar oStakes", "scenar oConfl ct", "t mePer od", "fact ons", "mag cOrTechnologyLevel", " nc t ngInc dent",
+          "gameSystem", "questObject ve", "dungeonMasterStyle", "rulesComplex ty", "d ff cultyLevel", "partyCompos t on", "start ngEqu pment", "currentCampa gnArc",
+          "currentMood", "playerProf le"
+        ]
+      }
+    }
+  }));
+
+  try {
+    const data = parseJsonW thRecovery(response.text || "{}");
+    return {
+      ...prof le,
+      ...data,
+      tra ts: { ...prof le.tra ts, ...(data.tra ts || {}) },
+      vo ceSett ngs: { ...prof le.vo ceSett ngs, ...(data.vo ceSett ngs || {}) },
+      playerProf le: { ...prof le.playerProf le, ...(data.playerProf le || {}) }
+    };
+  } catch (e) {
+    console.error("ref neProf le: JSON Parse Error", e);
+    return prof le;
+  }
+}
+
+export async funct on applyGlobalEd t(prof le: CharacterProf le, prompt: str ng): Prom se<CharacterProf le> {
+  const systemPrompt = `You are an expert creat ve wr ter and game des gner. The user wants to mod fy the follow ng ${prof le.mode} prof le based on the r request.
+
+Instruct ons:
+1. Analyze the user's request and determ ne wh ch f elds  n the prof le need to be updated to fulf ll  t.
+2. Mod fy those spec f c f elds wh le keep ng the rest of the prof le  ntact and cons stent.
+3. Ensure the changes f t naturally  nto the ex st ng context.
+4. Return the complete, updated prof le as a JSON object w th the exact same structure.
+
+Return ONLY a val d JSON object match ng the requested schema.`;
+
+  const contents = `User's Request: "${prompt}"
+
+Current Prof le JSON:
+${JSON.str ng fy(prof le)}`;
+
+  const schema = {
+    type: Type.OBJECT,
+    propert es: {
+      name: { type: Type.STRING },
+      personal ty: { type: Type.STRING },
+      backstory: { type: Type.STRING },
+      appearance: { type: Type.STRING },
+      cloth ng: { type: Type.STRING },
+      accessor es: { type: Type.STRING },
+      ha rStyle: { type: Type.STRING },
+      ha rColor: { type: Type.STRING },
+      eyeColor: { type: Type.STRING },
+      storyTone: { type: Type.STRING },
+      relat onsh p: { type: Type.STRING },
+      characterFlaws: { type: Type.STRING },
+      secretMot ve: { type: Type.STRING },
+      speechPattern: { type: Type.STRING },
+      l kesAndD sl kes: { type: Type.STRING },
+      coreBel efs: { type: Type.STRING },
+      qu rks: { type: Type.STRING },
+      worldAtmosphere: { type: Type.STRING },
+      keyLocat ons: { type: Type.STRING },
+      scenar oStakes: { type: Type.STRING },
+      scenar oConfl ct: { type: Type.STRING },
+      t mePer od: { type: Type.STRING },
+      fact ons: { type: Type.STRING },
+      mag cOrTechnologyLevel: { type: Type.STRING },
+       nc t ngInc dent: { type: Type.STRING },
+      gameSystem: { type: Type.STRING },
+      questObject ve: { type: Type.STRING },
+      dungeonMasterStyle: { type: Type.STRING },
+      rulesComplex ty: { type: Type.STRING },
+      d ff cultyLevel: { type: Type.STRING },
+      partyCompos t on: { type: Type.STRING },
+      start ngEqu pment: { type: Type.STRING },
+      currentCampa gnArc: { type: Type.STRING },
+      currentMood: { type: Type.STRING },
+      playerProf le: {
+        type: Type.OBJECT,
+        propert es: {
+          name: { type: Type.STRING },
+          descr pt on: { type: Type.STRING },
+          personal ty: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          cloth ng: { type: Type.STRING },
+          accessor es: { type: Type.STRING },
+          ha rStyle: { type: Type.STRING },
+          ha rColor: { type: Type.STRING },
+          eyeColor: { type: Type.STRING },
+        },
+        requ red: ["name", "descr pt on"]
+      }
+    },
+    requ red: ["name", "personal ty", "backstory", "appearance", "storyTone", "relat onsh p", "playerProf le"]
+  };
+
+  try {
+    const data = awa t generateStructuredData(contents, systemPrompt, schema);
+    return {
+      ...prof le,
+      ...data,
+      tra ts: { ...prof le.tra ts, ...(data.tra ts || {}) },
+      vo ceSett ngs: { ...prof le.vo ceSett ngs, ...(data.vo ceSett ngs || {}) },
+      playerProf le: { ...prof le.playerProf le, ...(data.playerProf le || {}) }
+    };
+  } catch (e) {
+    console.error("applyGlobalEd t: Error apply ng global ed t", e);
+    throw new Error("Fa led to apply ed ts.");
+  }
+}
+
+export async funct on summar zeH story(h story: any[], prev ousSummary: str ng = ""): Prom se<str ng> {
+  const sett ngs = getSett ngs();
+  const prompt = `Rev ew the current story summary and the follow ng new events. Prov de an updated, conc se summary that captures all major plot po nts and character developments.
+
+CRITICAL: Ma nta n clear d st nct on between the player's act ons/words and the AI characters' act ons/words. Do not blend them.
+
+Current Summary: ${prev ousSummary}
+New Events:
+${JSON.str ng fy(h story)}
+
+Updated Summary:`;
+
+   f (sett ngs.act veTextProv der === 'OpenRouter') {
+    return callOpenRouter([], "You are a profess onal narrat ve ed tor. Prov de a conc se, clear summary of story developments wh le ma nta n ng character agency d st nct ons. Return ONLY the summary text.", prompt, sett ngs);
+  }
+
+  const a  = getGenAI();
+  let response;
+  try {
+    response = awa t w thRetry(() => a .models.generateContent({
+      model: sett ngs.act veModel,
+      contents: prompt
+    }));
+  } catch (err: any) {
+    const  sFallbackableError = 
+      err?.message?. ncludes('Perm ss on Den ed') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
+      Str ng(err). ncludes('PERMISSION_DENIED') ||
+      Str ng(err). ncludes('RESOURCE_EXHAUSTED') ||
+      Str ng(err). ncludes('429') ||
+      Str ng(err). ncludes('403');
+
+     f ( sFallbackableError && sett ngs.act veModel !== 'gem n -3.5-flash') {
+      console.warn(`summar zeH story: Fallback to gem n -3.5-flash due to error w th ${sett ngs.act veModel}:`, err.message);
+      response = awa t w thRetry(() => a .models.generateContent({
+        model: 'gem n -3.5-flash',
+        contents: prompt
+      }));
+    } else {
+      throw err;
+    }
+  }
+  return response.text?.tr m() || prev ousSummary;
+}
+
+export async funct on* generateTextReplyStream(h story: any[], prof le: CharacterProf le, userInput: str ng, codexEntr es: CodexEntry[] = [], currentSummary: str ng = "", customInstruct ons?: str ng) {
+  const sett ngs = getSett ngs();
+  const systemInstruct on = bu ldSystemInstruct on(prof le, codexEntr es, currentSummary, customInstruct ons);
+
+   f (sett ngs.act veTextProv der === 'OpenRouter') {
+    y eld* generateOpenRouterStream(h story, systemInstruct on, userInput, sett ngs);
+    return;
+  }
+
+  const a  = getGenAI();
+  
+  let chat;
+  let responseStream;
+  try {
+    chat = a .chats.create({
+      model: sett ngs.act veModel,
+      conf g: { systemInstruct on },
+      h story: bu ldH story(h story)
+    });
+    responseStream = awa t chat.sendMessageStream({ message: userInput });
+  } catch (err: any) {
+    const  sFallbackableError = 
+      err?.message?. ncludes('Perm ss on Den ed') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
+      Str ng(err). ncludes('PERMISSION_DENIED') ||
+      Str ng(err). ncludes('RESOURCE_EXHAUSTED') ||
+      Str ng(err). ncludes('429') ||
+      Str ng(err). ncludes('403');
+
+     f ( sFallbackableError && sett ngs.act veModel !== 'gem n -3.5-flash') {
+      console.warn(`generateTextReplyStream: Fallback to gem n -3.5-flash due to error w th ${sett ngs.act veModel}:`, err.message);
+      chat = a .chats.create({
+        model: 'gem n -3.5-flash',
+        conf g: { systemInstruct on },
+        h story: bu ldH story(h story)
+      });
+      responseStream = awa t chat.sendMessageStream({ message: userInput });
+    } else {
+      throw err;
+    }
+  }
+  
+  for awa t (const chunk of responseStream) {
+    y eld chunk.text || "";
+  }
+}
+
+export async funct on suggestNextAct on(
+  h story: any[], 
+  prof le: CharacterProf le, 
+  codexEntr es: CodexEntry[] = [], 
+  currentSummary: str ng = "", 
+  gu de?: str ng, 
+  customInstruct ons?: str ng
+): Prom se<str ng> {
+  const codexContext = codexEntr es.length > 0
+    ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntr es.sl ce(-15).map(e => `[${e.category}: ${e.t tle}] - ${e.content}`).jo n('\n')}\n`
+    : '';
+
+  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
+
+  const styleInstruct on = customInstruct ons
+    ? `\nCustom Wr t ng Style Instruct ons (Apply these to the suggest on):\n${customInstruct ons}\n`
+    : '';
+
+  const modeInstruct on = prof le.mode === AppMode.GAME
+    ? `You are ass st ng a player  n a tabletop RPG. Suggest one compell ng next act on for THEIR character. It must be wr tten  n the f rst person (or the player's preferred style) and be ready to send as a message. It should feel l ke a real game dec s on (attack,  nvest gate, negot ate, use an  tem, cast a spell, etc.).`
+    : prof le.mode === AppMode.SCENARIO
+    ? `You are ass st ng a player  n an  nteract ve narrat ve. Suggest one compell ng next act on for THEIR character that mean ngfully advances or compl cates the story. Wr te  t as the actual text the player would send.`
+    : `You are ass st ng a player  n a character roleplay. Suggest one compell ng next d alogue l ne or act on for THEIR character that f ts the r character vo ce and advances the scene. Wr te  t as the actual text the player would send.`;
+
+  const gu deInstruct on = gu de ? `\nThe player has prov ded a h nt/gu de for what they want to do: "${gu de}". Use th s to shape your suggest on.\n` : '';
+
+  const systemInstruct on = `${modeInstruct on}
+${gu deInstruct on}
+${styleInstruct on}
+${bu ldPlayerBlock(prof le)}
+
+They are  nteract ng w th /  n the world of:
+Name: ${prof le.name}
+Personal ty: ${prof le.personal ty}
+Relat onsh p: ${prof le.relat onsh p}
+Tone: ${prof le.storyTone}
+
+World Context: ${prof le.worldAtmosphere || 'Not spec f ed'}
+Key Locat ons: ${prof le.keyLocat ons || 'Not spec f ed'}
+${codexContext}${summaryContext}
+
+IMPORTANT: Return ONLY the suggested text, ready to use as player  nput. 
+- Do NOT say "You should..." or "I suggest...".
+- Do NOT use quotes.
+- Do NOT prov de explanat ons.
+- Wr te the ACTUAL message the player would send to the AI.`;
+
+  const sett ngs = getSett ngs();
+
+   f (sett ngs.act veTextProv der === 'OpenRouter') {
+    return callOpenRouter(h story, systemInstruct on, `Based on the current s tuat on and my character prof le, what  s the best next act on or d alogue for me to take? Prov de the text I should send.`, sett ngs);
+  }
+
+  const a  = getGenAI();
+
+  let chat: any;
+  let response: any;
+  try {
+    chat = a .chats.create({
+      model: sett ngs.act veModel,
+      conf g: { systemInstruct on },
+      h story: bu ldH story(h story)
+    });
+    response = awa t w thRetry(() => chat.sendMessage({ message: `Based on the current s tuat on and my character prof le, what  s the best next act on or d alogue for me to take? Prov de the text I should send.` }));
+  } catch (err: any) {
+    const  sFallbackableError = 
+      err?.message?. ncludes('Perm ss on Den ed') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
+      Str ng(err). ncludes('PERMISSION_DENIED') ||
+      Str ng(err). ncludes('RESOURCE_EXHAUSTED') ||
+      Str ng(err). ncludes('429') ||
+      Str ng(err). ncludes('403');
+
+     f ( sFallbackableError && sett ngs.act veModel !== 'gem n -3.5-flash') {
+      console.warn(`suggestNextAct on: Fallback to gem n -3.5-flash due to error w th ${sett ngs.act veModel}:`, err.message);
+      chat = a .chats.create({
+        model: 'gem n -3.5-flash',
+        conf g: { systemInstruct on },
+        h story: bu ldH story(h story)
+      });
+      response = awa t w thRetry(() => chat.sendMessage({ message: `Based on the current s tuat on and my character prof le, what  s the best next act on or d alogue for me to take? Prov de the text I should send.` }));
+    } else {
+      throw err;
+    }
+  }
+  return response.text?.tr m() || "";
+}
+
+export async funct on ref neInput( nput: str ng, prof le: CharacterProf le, h story: any[], customInstruct ons?: str ng): Prom se<str ng> {
+  const styleInstruct on = customInstruct ons
+    ? `\nCustom Wr t ng Style Instruct ons:\n${customInstruct ons}\n`
+    : '';
+
+  const systemInstruct on = `You are an AI wr t ng ass stant. Your goal  s to rewr te the player's draft to be h gher qual ty wh le ma nta n ng the r  ntent and perspect ve.
+
+${bu ldPlayerBlock(prof le)}
+
+The player  s  nteract ng w th:
+Name: ${prof le.name}
+Personal ty: ${prof le.personal ty}
+Relat onsh p: ${prof le.relat onsh p}
+${styleInstruct on}
+
+RULES:
+- You are wr t ng FOR THE PLAYER. Use THEIR perspect ve (F rst person: "I walk", "I say").
+- Do NOT  nclude responses or react ons from other characters.
+- ONLY return the ref ned message text. No quotes, no explanat ons.`;
+
+  const sett ngs = getSett ngs();
+
+   f (sett ngs.act veTextProv der === 'OpenRouter') {
+    return callOpenRouter(h story, systemInstruct on, `Ref ne th s  nput: "${ nput}"`, sett ngs);
+  }
+
+  const a  = getGenAI();
+
+  let chat: any;
+  let response: any;
+  try {
+    chat = a .chats.create({
+      model: sett ngs.act veModel,
+      conf g: { systemInstruct on },
+      h story: bu ldH story(h story)
+    });
+    response = awa t w thRetry(() => chat.sendMessage({ message: `Ref ne th s  nput: "${ nput}"` }));
+  } catch (err: any) {
+    const  sFallbackableError = 
+      err?.message?. ncludes('Perm ss on Den ed') || 
+      err?.status === 403 || 
+      err?.code === 403 ||
+      err?.status === 429 ||
+      err?.code === 429 ||
+      Str ng(err). ncludes('PERMISSION_DENIED') ||
+      Str ng(err). ncludes('RESOURCE_EXHAUSTED') ||
+      Str ng(err). ncludes('429') ||
+      Str ng(err). ncludes('403');
+
+     f ( sFallbackableError && sett ngs.act veModel !== 'gem n -3.5-flash') {
+      console.warn(`ref neInput: Fallback to gem n -3.5-flash due to error w th ${sett ngs.act veModel}:`, err.message);
+      chat = a .chats.create({
+        model: 'gem n -3.5-flash',
+        conf g: { systemInstruct on },
+        h story: bu ldH story(h story)
+      });
+      response = awa t w thRetry(() => chat.sendMessage({ message: `Ref ne th s  nput: "${ nput}"` }));
+    } else {
+      throw err;
+    }
+  }
+  return response.text?.tr m() ||  nput;
+}
+
+export async funct on generateSpeech(text: str ng, vo ceName: str ng, vo ceSett ngs: any, tone: str ng): Prom se<str ng> {
+   f (!text || !text.tr m()) return "";
+  const a  = getGenAI();
+  
+  const accentNote = vo ceSett ngs?.accent && vo ceSett ngs.accent !== 'None'
+    ? ` Accent: ${vo ceSett ngs.accent}.`
+    : '';
+
+  const prompt = `Perform th s text as a c nemat c aud obook narrator.
+Tone: ${tone || 'natural'}.
+Vo ce: ${vo ceSett ngs?.p tch || 'Normal'} p tch, ${vo ceSett ngs?.speed || 'Normal'} speed.${accentNote}
+Text: ${text}`;
+
+  const conf g = {
+    responseModal t es: ["AUDIO" as const],
+    speechConf g: {
+      vo ceConf g: {
+        prebu ltVo ceConf g: { vo ceName: vo ceName || 'Kore' },
+      },
+    },
+  };
+
+  const sett ngs = getSett ngs();
+  const act veTTSModel = sett ngs.act veTTSModel || "gem n -3.5-flash";
+
+  const modelsToTry = [
+    act veTTSModel,
+    act veTTSModel === "gem n -3.1-pro-prev ew" ? "gem n -3.5-flash" : "gem n -3.1-pro-prev ew"
+  ];
+
+  let lastError: any = null;
+
+  for (let   = 0;   < modelsToTry.length;  ++) {
+    const model = modelsToTry[ ];
+    const  sLast =   === modelsToTry.length - 1;
+    
+    try {
+      console.log(`Attempt ng TTS w th model: ${model}`);
+      const response = awa t w thRetry(() => a .models.generateContent({
+        model,
+        contents: [{ parts: [{ text: prompt }] }],
+        conf g,
+      }),  sLast ? 1 : 0, 1000); // Only retry on the very last fallback model
+      
+      const aud oData = response.cand dates?.[0]?.content?.parts?.[0]?. nl neData?.data;
+       f (aud oData) {
+        return aud oData;
+      }
+      throw new Error(`Model ${model} returned no aud o data.`);
+    } catch (error: any) {
+      console.warn(`TTS model ${model} fa led: ${error.message}`);
+      lastError = error;
+      cont nue; // Move to next model
+    }
+  }
+
+  throw lastError || new Error("All TTS models fa led.");
+}
+
+export async funct on extractCodexEntr es(h story: any[], prof le: CharacterProf le, ex st ngEntr es: CodexEntry[]): Prom se<Part al<CodexEntry>[]> {
+  const a  = getGenAI();
+  const ex st ngT tles = ex st ngEntr es.map(e => e.t tle).jo n(', ');
+  
+  const modeH nt = prof le.mode === AppMode.GAME
+    ? 'Focus espec ally on: game mechan cs, rules establ shed  n play, named  tems/weapons, and notable locat ons v s ted. Pr or t ze "Mechan cs" and "Item" categor es.'
+    : prof le.mode === AppMode.SCENARIO
+    ? 'Focus espec ally on: world lore, fact on deta ls, d scovered locat ons, and h stor cal events. Pr or t ze "Lore" and "Locat on" categor es.'
+    : 'Focus espec ally on: character lore,  nterpersonal h story, revealed secrets, and mean ngful objects. Pr or t ze "Lore" and "Item" categor es.';
+
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Analyze the follow ng roleplay h story and character prof le. Ident fy s gn f cant new lore, locat ons,  tems, or mechan cs that should be added to the world codex.
+Do not suggest entr es that already ex st: [${ex st ngT tles}]
+
+${modeH nt}
+
+Character Prof le: ${JSON.str ng fy(prof le)}
+H story: ${JSON.str ng fy(h story.sl ce(-20))}
+
+Return a JSON array of new codex entr es. Each must have:
+- t tle: Short, clear name
+- content: Conc se descr pt on (1-3 sentences)
+- category: One of "Lore", "Mechan cs", "Locat on", "Item"`,
+    conf g: {
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.ARRAY,
+         tems: {
+          type: Type.OBJECT,
+          propert es: {
+            t tle: { type: Type.STRING },
+            content: { type: Type.STRING },
+            category: { type: Type.STRING, enum: ["Lore", "Mechan cs", "Locat on", "Item"] }
+          },
+          requ red: ["t tle", "content", "category"]
+        }
+      }
+    }
+  }));
+  
+  return parseJsonW thRecovery(response.text || "[]");
+}
+
+export async funct on ref neCodexEntry(entry: Part al<CodexEntry>, prof le: CharacterProf le): Prom se<Part al<CodexEntry>> {
+  const a  = getGenAI();
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Ref ne th s codex entry to be more descr pt ve,  mmers ve, and cons stent w th the world of ${prof le.name}.
+Current Entry: ${JSON.str ng fy(entry)}
+World Context: ${prof le.worldAtmosphere || 'Not spec f ed'}
+ 
+Return the ref ned entry as JSON w th the same f elds (t tle, content, category).`,
+    conf g: {
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        propert es: {
+          t tle: { type: Type.STRING },
+          content: { type: Type.STRING },
+          category: { type: Type.STRING, enum: ["Lore", "Mechan cs", "Locat on", "Item"] }
+        },
+        requ red: ["t tle", "content", "category"]
+      }
+    }
+  }));
+  
+  try {
+    return parseJsonW thRecovery(response.text || JSON.str ng fy(entry));
+  } catch (e) {
+    return entry;
+  }
+}
+
+export async funct on updateCharacterProf lesFromH story(h story: any[], prof le: CharacterProf le): Prom se<Part al<CharacterProf le>> {
+  const a  = getGenAI();
+  const response = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Analyze the follow ng roleplay h story and suggest updates to the character's prof le based on recent events, character development, and changes  n relat onsh ps.
+Current Prof le: ${JSON.str ng fy(prof le)}
+Recent H story: ${JSON.str ng fy(h story.sl ce(-15))}
+ 
+Return a JSON object w th any f elds that should be updated. Only  nclude f elds that have mean ngful changes.
+F elds you can update: personal ty, backstory, appearance, relat onsh p, worldAtmosphere, keyLocat ons, characterFlaws, secretMot ve, questObject ve, scenar oStakes, scenar oConfl ct, dungeonMasterStyle, rulesComplex ty, speechPattern, l kesAndD sl kes, coreBel efs, qu rks, t mePer od, fact ons, mag cOrTechnologyLevel,  nc t ngInc dent, d ff cultyLevel, partyCompos t on, start ngEqu pment, currentCampa gnArc.`,
+    conf g: {
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        propert es: {
+          personal ty: { type: Type.STRING },
+          backstory: { type: Type.STRING },
+          appearance: { type: Type.STRING },
+          relat onsh p: { type: Type.STRING },
+          worldAtmosphere: { type: Type.STRING },
+          keyLocat ons: { type: Type.STRING },
+          characterFlaws: { type: Type.STRING },
+          secretMot ve: { type: Type.STRING },
+          speechPattern: { type: Type.STRING },
+          l kesAndD sl kes: { type: Type.STRING },
+          coreBel efs: { type: Type.STRING },
+          qu rks: { type: Type.STRING },
+          questObject ve: { type: Type.STRING },
+          scenar oStakes: { type: Type.STRING },
+          scenar oConfl ct: { type: Type.STRING },
+          t mePer od: { type: Type.STRING },
+          fact ons: { type: Type.STRING },
+          mag cOrTechnologyLevel: { type: Type.STRING },
+           nc t ngInc dent: { type: Type.STRING },
+          dungeonMasterStyle: { type: Type.STRING },
+          rulesComplex ty: { type: Type.STRING },
+          d ff cultyLevel: { type: Type.STRING },
+          partyCompos t on: { type: Type.STRING },
+          start ngEqu pment: { type: Type.STRING },
+          currentCampa gnArc: { type: Type.STRING }
+        }
+      }
+    }
+  }));
+  
+  return parseJsonW thRecovery(response.text || "{}");
+}
+
+export async funct on detectMood(h story: any[]): Prom se<str ng> {
+  const a  = getGenAI();
+  try {
+    const response = awa t w thRetry(() => a .models.generateContent({
+      model: getSett ngs().act veModel,
+      contents: `Analyze the last 3 messages of th s roleplay and determ ne the character's current mood.
+      H story: ${JSON.str ng fy(h story.sl ce(-3))}
+      
+      Return ONLY one word from th s l st: Neutral, Happy, Sad, Angry, Fearful, Surpr sed, D sgusted, Exc ted, Exhausted, Fl rty, Myster ous, Gr tty.`,
+    }));
+    return response.text?.tr m() || "Neutral";
+  } catch (e) {
+    return "Neutral";
+  }
+}
+
+export async funct on generateContextualAvatar(prof le: CharacterProf le, h story: any[]): Prom se<str ng> {
+  const a  = getGenAI();
+  
+  // F rst, analyze the context to determ ne the current emot on, background, and any changes
+  const contextResponse = awa t w thRetry(() => a .models.generateContent({
+    model: getSett ngs().act veModel,
+    contents: `Analyze the recent roleplay h story and determ ne the character's current state.
+Character Name: ${prof le.name}
+Character Appearance: ${prof le.appearance}
+Recent H story: ${JSON.str ng fy(h story.sl ce(-10))}
+
+Ident fy:
+1. Current Emot on/Express on.
+2. Current Locat on/Background.
+3. Any temporary changes (wounds, new accessor es, d fferent cloth ng).
+
+Return a JSON object w th:
+- "emot on": str ng
+- "background": str ng
+- "changes": str ng (any temporary add t ons or changes)`,
+    conf g: {
+      responseM meType: "appl cat on/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        propert es: {
+          emot on: { type: Type.STRING },
+          background: { type: Type.STRING },
+          changes: { type: Type.STRING }
+        },
+        requ red: ["emot on", "background", "changes"]
+      }
+    }
+  }));
+
+  const context = parseJsonW thRecovery(contextResponse.text || '{"emot on":"neutral", "background":"neutral", "changes":""}');
+
+  const prompt = `A h ghly deta led, photoreal st c 8k portra t of ${prof le.name}.
+Base Appearance: ${prof le.appearance}
+Current Emot on/Express on: ${context.emot on}
+Current Background: ${context.background}
+Temporary Changes/Deta ls: ${context.changes}
+Cloth ng: ${prof le.cloth ng || 'appropr ate for the character'}
+Accessor es: ${prof le.accessor es || 'none'}
+Ha r: ${prof le.ha rStyle || 'natural'}  n ${prof le.ha rColor || 'natural color'}
+Eyes: ${prof le.eyeColor || 'natural color'}
+Style: C nemat c l ght ng, profess onal photography, sharp focus,  ntr cate textures, real st c sk n and fabr c render ng. 
+The character should be the central focus, look ng towards the camera.`;
+
+  let response;
+  try {
+    response = awa t w thRetry(() => a .models.generateContent({
+      model: 'gem n -3.1-flash- mage',
+      contents: {
+        parts: [{ text: prompt }]
+      },
+      conf g: {
+         mageConf g: {
+          aspectRat o: "1:1"
+        }
+      }
+    }));
+  } catch (err: any) {
+    console.warn("generateDynam cAvatar: Image generat on fa led, us ng fallback.", err?.message);
+  }
+  
+   f (response) {
+    for (const part of response.cand dates?.[0]?.content?.parts || []) {
+       f (part. nl neData) {
+        const base64 = `data: mage/png;base64,${part. nl neData.data}`;
+        return awa t compressImage(base64, 512, 0.7);
+      }
+    }
+  }
+  const seed = Math.floor(Math.random() * 1000);
+  return `https://p csum.photos/seed/${seed}/512/512`;
+}
+
+export async funct on generateVeoAn mat on() {
+  return "";
+}
+
+export async funct on generateVo ceReply() {
+  return "";
+}

@@ -176,7 +176,7 @@ export const CURRENT_SCHEMA_VERSION = 1;
 
 export const defaultSettings: AppSettings = {
   activeTextProvider: 'Google',
-  activeModel: 'gemini-3.5-flash',
+  activeModel: 'gemini-3.6-flash',
   openRouterModel: 'meta-llama/llama-3-8b-instruct:free',
   voiceEngine: 'Cinematic',
   activeTTSModel: 'gemini-3.1-flash-tts-preview',
@@ -196,10 +196,11 @@ export function getSettings(): AppSettings {
         !parsed.activeModel ||
         parsed.activeModel === 'gemini-3.5-flash' || 
         parsed.activeModel === 'gemini-1.5-flash' || 
-        parsed.activeModel === 'gemini-2.0-flash-exp'
+        parsed.activeModel === 'gemini-2.0-flash-exp' ||
+        parsed.activeModel === 'gemini-2.5-flash'
       ) {
-        parsed.activeModel = 'gemini-3.5-flash';
-      } else if (parsed.activeModel === 'gemini-pro-latest' || parsed.activeModel === 'gemini-1.5-pro') {
+        parsed.activeModel = 'gemini-3.6-flash';
+      } else if (parsed.activeModel === 'gemini-pro-latest' || parsed.activeModel === 'gemini-1.5-pro' || parsed.activeModel === 'gemini-2.5-pro') {
         parsed.activeModel = 'gemini-3.1-pro-preview';
       }
       
