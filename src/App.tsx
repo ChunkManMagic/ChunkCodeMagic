@@ -18,7 +18,7 @@ import { useFirestoreSync } from './hooks/useFirestoreSync';
 import { SyncConflictModal } from './components/SyncConflictModal';
 import { collection, getDocs } from 'firebase/firestore';
 import { db, auth } from './firebase';
-import { signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut } from 'firebase/auth';
+import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
 
 // Custom Confirmation Modal
 interface ConfirmationModalProps {
@@ -147,20 +147,6 @@ export default function App() {
   
   useStaleDataCleanup(scenarios, isScenariosLoaded);
   
-  // Handle mobile redirect sign-in results/errors on mount
-  useEffect(() => {
-    getRedirectResult(auth)
-      .then((result) => {
-        if (result) {
-          toastSuccess("Successfully signed in!");
-        }
-      })
-      .catch((error) => {
-        console.error("Redirect Login Error:", error);
-        toastError(`Login failed: ${error.message}`);
-      });
-  }, [toastSuccess, toastError]);
-
   // Sync scenarios from Firestore when user is logged in
   useEffect(() => {
     if (isAuthReady && user) {
@@ -250,7 +236,7 @@ export default function App() {
           if (localScenariosStr) {
             const localScenarios = JSON.parse(localScenariosStr);
             if (Array.isArray(localScenarios) && localScenarios.length > 0) {
-              // Merge savedScenarios with localScenarios
+              // Merge localScenarios with savedScenarios
               if (!savedScenarios) savedScenarios = [];
               
               const existingIds = new Set(savedScenarios.map((s: any) => s.id));
@@ -360,17 +346,8 @@ export default function App() {
   const handleLogin = useCallback(async () => {
     try {
       const provider = new GoogleAuthProvider();
-      // Force select account during login to prevent silent automatic logins with wrong accounts
-      provider.setCustomParameters({ prompt: 'select_account' });
-      
-      const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-      
-      if (isMobile) {
-        await signInWithRedirect(auth, provider);
-      } else {
-        await signInWithPopup(auth, provider);
-        toastSuccess("Successfully signed in!");
-      }
+      await signInWithPopup(auth, provider);
+      toastSuccess("Successfully signed in!");
     } catch (error: any) {
       console.error("Login Error:", error);
       toastError(`Login failed: ${error.message}`);
@@ -837,7 +814,7 @@ export default function App() {
             <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
               settings.voiceEngine === 'Cinematic'
                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                : 'bg-amber-500/10 text-amber-400 border-emerald-500/20'
+                : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
             }`}>
               {settings.voiceEngine}
             </div>
@@ -1018,4 +995,3 @@ export default function App() {
     </>
   );
 }
-,path:src/App.tsx}],message:feat: Support signInWithRedirect conditionally for Mobile Browsers,owner:ChunkManMagic,repo:ChunkCodeMagic}>< Emily: what are you doing? > In Firebase auth, popups can fail on mobile, so we conditionally use redirect on mobile.

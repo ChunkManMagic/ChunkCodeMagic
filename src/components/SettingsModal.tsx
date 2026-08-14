@@ -172,7 +172,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
                 >
                   <optgroup label="Free Models">
-                    <option value="gemini-3.5-flash">Gemini 3.5 Flash (Recommended)</option>
+                    <option value="gemini-3.6-flash">Gemini 3.6 Flash (Recommended)</option>
+                    <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
                     <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
                     <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
                     <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>

@@ -1,5 +1,4 @@
 import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings, getSettings } from "./types";
-import { compressImage } from "./utils";
 
 export { AppMode };
 export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
@@ -1134,7 +1133,7 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
 async function generateImageFromPrompt(prompt: string): Promise<string> {
   const ai = getGenAI();
   const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-2.5-flash-image",
+    model: "gemini-3.1-flash-lite-image",
     contents: prompt,
     config: {
       responseModalities: ["TEXT", "IMAGE"]

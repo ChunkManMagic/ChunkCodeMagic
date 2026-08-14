@@ -6,6 +6,3 @@ coverage/
 *.log
 .env*
 !.env.example
-
-# Firebase applet config may contain real secrets; keep only the example committed
-firebase-applet-config.json
