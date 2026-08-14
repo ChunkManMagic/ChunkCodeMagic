@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
-import { X, Search, User, Filter, Image as ImageIcon } from 'lucide-react';
+import { X, Search, User, Image as ImageIcon } from 'lucide-react';
 import { Scenario } from '../lib/types';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion } from 'motion/react';
 
 interface Props {
   isOpen: boolean;
