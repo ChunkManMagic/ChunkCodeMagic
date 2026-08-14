@@ -15,7 +15,7 @@
     "@google/genai": "^2.16.0",
     "express": "^5.2.1",
     "firebase": "^12.11.0",
-    "http-proxy-middleware": "^4.0.0",
+"http-proxy-middleware": "^4.2.0",
     "idb-keyval": "^6.2.1",
     "lucide-react": "^0.475.0",
     "motion": "^12.4.7",
