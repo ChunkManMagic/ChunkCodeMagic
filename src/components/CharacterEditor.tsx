@@ -26,44 +26,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
   const [isGlobalEditing, setIsGlobalEditing] = useState(false);
   const [isPreviewingVoice, setIsPreviewingVoice] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
-  const [showLibraryModal, setShowLibraryModal] = useState(false);
-  const [libraryImportTarget, setLibraryImportTarget] = useState<'main' | 'player'>('main');
   const { toastSuccess, toastError } = useToast();
-
-  const handleLibrarySelect = (char: any) => {
-    if (libraryImportTarget === 'player') {
-      setProfile((prev) => ({
-        ...prev,
-        playerProfile: {
-          ...prev.playerProfile,
-          name: char.name,
-          description: char.description || char.personality || '',
-          personality: char.personality,
-          backstory: char.backstory,
-          appearance: char.appearance,
-          clothing: char.clothing,
-          accessories: char.accessories,
-          hairStyle: char.hairStyle,
-          hairColor: char.hairColor,
-          eyeColor: char.eyeColor,
-        },
-      }));
-    } else {
-      setProfile((prev) => ({
-        ...prev,
-        name: char.name,
-        personality: char.personality || prev.personality,
-        backstory: char.backstory || char.description || prev.backstory,
-        appearance: char.appearance || prev.appearance,
-        clothing: char.clothing,
-        accessories: char.accessories,
-        hairStyle: char.hairStyle,
-        hairColor: char.hairColor,
-        eyeColor: char.eyeColor,
-      }));
-      if (char.avatarBase64) setAvatar(char.avatarBase64);
-    }
-  };
 
   const handleGlobalEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -872,12 +835,6 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           />
         </div>
       </div>
-      <CharacterLibraryModal
-        isOpen={showLibraryModal}
-        onClose={() => setShowLibraryModal(false)}
-        scenarios={scenarios}
-        onSelect={handleLibrarySelect}
-      />
     </div>
   );
 }
