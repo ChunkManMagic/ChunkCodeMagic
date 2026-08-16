@@ -161,6 +161,7 @@ export interface Message {
   timestamp?: number;
   versions?: string[]; // Multiple drafts for this message
   activeVersionIndex?: number;
+  isPinned?: boolean;
 }
 
 declare global {
