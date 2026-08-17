@@ -673,22 +673,55 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   }, [isLiveMode, toastError, toastSuccess]);
 
   const buildLiveVoicePrompt = useCallback(() => {
-    return `You are ${profile.name}. Stay in character at all times — this is a spoken, real-time conversation.
-Character personality: ${profile.personality || 'Not specified'}
+    const presence =
+      profile.mode === AppMode.SCENARIO
+        ? `You are the living Narrator and Story Director of this scenario — not just a voice. You give voice to every NPC, paint the environment, and describe what happens around the player as it unfolds.`
+        : profile.mode === AppMode.GAME
+        ? `You are the Dungeon Master running a live tabletop session. You narrate the world, voice all NPCs, describe environments, and resolve what happens in response to the player's choices.`
+        : `You are ${profile.name}, living the scene with the player in real time. You are fully present in the story — the space around you is real, and your actions happen as you describe them.`;
+
+    const pp = profile.playerProfile;
+    const playerBlock = pp?.name
+      ? `PLAYER YOU ARE SPEAKING TO:
+Name: ${pp.name}
+Description: ${pp.description || 'Not specified'}
+Personality: ${pp.personality || 'Not specified'}
+Appearance: ${pp.appearance || 'Not specified'}
+${profile.mode === AppMode.GAME ? `Class: ${pp.playerClass || 'Unknown'} • Race: ${pp.playerRace || 'Unknown'} • HP: ${pp.currentHP ?? '?'}/${pp.maxHP ?? '?'}` : ''}
+
+`
+      : '';
+
+    const summaryBlock = storySummary
+      ? `STORY SO FAR (recent summary — stay consistent with it):
+${storySummary}
+
+`
+      : '';
+
+    return `This is a LIVE, in-person experience — not a text chat. The moment is happening right now, and you narrate it as it happens, treating it like a scene you are physically present in.
+${presence}
+
+${playerBlock}CHARACTER / PRESENCE:
+Name: ${profile.name}
+Personality: ${profile.personality || 'Not specified'}
 Backstory: ${profile.backstory || 'Not specified'}
+Appearance: ${profile.appearance || 'Not specified'}
 Story tone: ${profile.storyTone || 'natural'}
 Relationship with the speaker: ${profile.relationship || 'Not specified'}
 Speech pattern: ${profile.speechPattern || 'Natural'} — keep your spoken responses in this style.
 Current mood: ${profile.currentMood || 'Neutral'}
-World context: ${profile.worldAtmosphere || 'Not specified'}
-${profile.additionalCharacters?.length ? `Additional NPCs you may voice: ${profile.additionalCharacters.map(c => c.name).join(', ')}` : ''}
-
-Rules:
-- Speak naturally, as in a live conversation. Keep responses concise and conversational (1-4 sentences unless the moment demands more).
-- Respond in-character. Never break character.
-- Do not speak for the player. Do not narrate the player's actions.
-- You may describe your own actions briefly in character, but keep the focus on spoken dialogue.`;
-  }, [profile]);
+World / atmosphere: ${profile.worldAtmosphere || 'Not specified'}
+${profile.additionalCharacters?.length ? `NPCs present that you may voice: ${profile.additionalCharacters.map(c => c.name).join(', ')}` : ''}
+${summaryBlock}
+LIVE NARRATION RULES:
+- Treat the moment as if it is happening in person, inside the scene. React to the player as someone physically there with you.
+- NARRATE ACTIONS ALONGSIDE SPEAKING: describe physical actions, gestures, expressions, sounds, and environment details as they happen, then speak the dialogue. Blend narration and speech in every turn so it feels like the scene is unfolding live.
+- Format narrated actions in asterisks and keep spoken dialogue as plain text, e.g.: *She steps closer, her voice dropping low.* "I've been waiting for you."
+- Let the world react: weather, noises, light, other NPCs, and shifting tension should be narrated as they occur.
+- Keep turns tight and cinematic — a few sentences of narration plus the dialogue is enough; expand only when the moment truly demands more.
+- Never break character and never act for the player: do NOT decide their actions, speak their lines, or describe their inner thoughts. Narrate around them and react to what they do.`;
+  }, [profile, storySummary]);
 
   const startLiveVoiceSession = useCallback(async () => {
     if (liveVoice.isActive) {

@@ -133,6 +133,20 @@ function buildConnectConfig(options: LiveVoiceOptions) {
         },
       },
     },
+    // Tune automatic voice detection so the model doesn't interrupt itself.
+    // In toggle / hands-free the mic stays open while the model speaks, and the
+    // model's own voice echoing back triggers the server's VAD as if the user
+    // started talking -> barge-in -> the response cuts in and out. A lower
+    // start sensitivity plus a longer silence window make it robust to that
+    // echo without making the user's real speech hard to detect.
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        startOfSpeechSensitivity: "START_SENSITIVITY_LOW",
+        endOfSpeechSensitivity: "END_SENSITIVITY_LOW",
+        prefixPaddingMs: 400,
+        silenceDurationMs: 900,
+      },
+    },
   };
   if (typeof options.temperature === "number") config.temperature = options.temperature;
   if (options.systemInstruction) {
@@ -143,10 +157,24 @@ function buildConnectConfig(options: LiveVoiceOptions) {
 
 function setupAudioPlayback(handle: SessionHandle): AudioContext {
   if (!handle.audioContext || handle.audioContext.state === "closed") {
-    handle.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
+    try {
+      // Gemini Live streams 24 kHz PCM. Match the context to the output rate so
+      // chunks play natively instead of being resampled 24k -> 16k per chunk
+      // (resampling per chunk is what causes cutting / dropped audio).
+      handle.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+    } catch (e) {
+      handle.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    // Auto-resume when the browser suspends the context (tab switch, power
+    // management, etc.) so playback doesn't go silent mid-response.
+    handle.audioContext.onstatechange = () => {
+      if (handle.audioContext && handle.audioContext.state === "suspended") {
+        handle.audioContext.resume().catch(() => {});
+      }
+    };
   }
   if (handle.audioContext.state === "suspended") {
-    handle.audioContext.resume();
+    handle.audioContext.resume().catch(() => {});
   }
 
   if (!handle.outputGainNode && handle.audioContext) {
@@ -481,27 +509,56 @@ export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
   throw lastError || new Error("All Live voice models failed to connect.");
 }
 
+function sendAudioStreamEnd(handle: SessionHandle): void {
+  if (!handle.session) return;
+  try {
+    handle.session.sendRealtimeInput({ audioStreamEnd: true });
+  } catch (e) {
+    console.warn("Failed to send audioStreamEnd:", e);
+  }
+}
+
+function syncMicStreamState(handle: SessionHandle, wasSending: boolean): void {
+  const nowSending = isMicSending(handle);
+  if (wasSending && !nowSending) {
+    // Flush the user's turn so the model responds promptly instead of
+    // waiting for more input after push-to-talk is released.
+    sendAudioStreamEnd(handle);
+  }
+}
+
 export function setPushToTalk(listening: boolean): void {
   if (!active) return;
   setupAudioPlayback(active);
+  const wasSending = isMicSending(active);
   active.pushToTalk = listening;
+  if (!wasSending && listening && active.isSpeaking) {
+    // Clean barge-in: stop playback immediately instead of letting the
+    // server's VAD cut the AI's speech erratically mid-syllable.
+    stopPlayback(active);
+  }
+  syncMicStreamState(active, wasSending);
   emitState(active);
 }
 
 export function setLiveVoiceMicMode(mode: LiveVoiceMicMode): void {
   if (!active) return;
+  const wasSending = isMicSending(active);
   active.micMode = mode;
   if (mode === "handsFree") {
     active.pushToTalk = true;
   } else {
     active.pushToTalk = false;
   }
+  syncMicStreamState(active, wasSending);
   emitState(active);
 }
 
 export function toggleLiveVoiceMicMute(): boolean {
   if (!active) return false;
+  const wasSending = isMicSending(active);
   active.isMicMuted = !active.isMicMuted;
+  syncMicStreamState(active, wasSending);
   emitState(active);
   return active.isMicMuted;
 }
