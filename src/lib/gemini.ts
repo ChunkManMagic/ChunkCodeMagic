@@ -1130,27 +1130,21 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
   };
 }
 
-async function generateImageFromPrompt(prompt: string): Promise<string> {
-  const ai = getGenAI();
-  const response = await withRetry(() => ai.models.generateContent({
-    model: "gemini-3.1-flash-lite-image",
-    contents: prompt,
-    config: {
-      responseModalities: ["TEXT", "IMAGE"]
-    }
-  }));
-
-  const candidate = response.candidates?.[0];
-  if (candidate?.content?.parts) {
-    for (const part of candidate.content.parts) {
-      if (part.inlineData?.data) {
-        const mimeType = part.inlineData.mimeType || "image/png";
-        return `data:${mimeType};base64,${part.inlineData.data}`;
-      }
-    }
+function hashSeed(text: string): number {
+  let hash = 0;
+  for (let i = 0; i < text.length; i++) {
+    hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
   }
+  return Math.abs(hash);
+}
 
-  throw new Error("No image data returned from Gemini API");
+async function generateImageFromPrompt(prompt: string, style: 'avatar' | 'art' = 'art'): Promise<string> {
+  if (style === 'avatar') {
+    const seed = encodeURIComponent(prompt.trim().slice(0, 64) || 'personaforge');
+    return `https://api.dicebear.com/9.x/adventurer/svg?seed=${seed}`;
+  }
+  const seed = hashSeed(prompt) || 1;
+  return `https://picsum.photos/seed/${seed}/512/512`;
 }
 
 export async function generateAvatar(profile: CharacterProfile): Promise<string> {
@@ -1166,7 +1160,7 @@ Tone: ${profile.storyTone || ''}
 Art Style: Cinematic high-quality illustration.`;
 
   try {
-    return await generateImageFromPrompt(prompt);
+    return await generateImageFromPrompt(prompt, 'avatar');
   } catch (error) {
     console.error("generateAvatar Error:", error);
     const seed = Math.floor(Math.random() * 1000);
@@ -1992,7 +1986,7 @@ Recent Story Context: ${recentEvents.slice(0, 300)}
 Art Style: High-quality narrative scene artwork.`;
 
   try {
-    return await generateImageFromPrompt(prompt);
+    return await generateImageFromPrompt(prompt, 'avatar');
   } catch (error) {
     console.error("generateContextualAvatar Error:", error);
     const seed = Math.floor(Math.random() * 1000);

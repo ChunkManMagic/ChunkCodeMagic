@@ -1,9 +1,10 @@
 import { useState, useRef, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy, Search, Filter, Upload } from 'lucide-react';
+import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy, Search, Filter, Upload, Download } from 'lucide-react';
 import { AppMode } from '../lib/gemini';
 import { Scenario } from '../lib/types';
 import { useToast } from '../hooks/useToast';
+import { readExportFile, PersonaForgeStoryExport } from '../lib/transfer';
 
 interface ScenarioLibraryProps {
   scenarios: Scenario[];
@@ -14,7 +15,8 @@ interface ScenarioLibraryProps {
   onNew: () => void;
   hasDraft?: boolean;
   onRestoreDraft?: () => void;
-  onImport?: (scenarioData: any) => void;
+  onImport?: (scenarioData: PersonaForgeStoryExport) => void;
+  onExport?: (scenario: Scenario) => void;
 }
 
 const getVibeTags = (scenario: Scenario) => {
@@ -38,38 +40,32 @@ const getVibeTags = (scenario: Scenario) => {
   return [...new Set(tags)].slice(0, 3);
 };
 
-export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDelete, onNew, hasDraft, onRestoreDraft, onImport }: ScenarioLibraryProps) {
+export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDelete, onNew, hasDraft, onRestoreDraft, onImport, onExport }: ScenarioLibraryProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterMode, setFilterMode] = useState<AppMode | 'ALL'>('ALL');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toastError, toastSuccess } = useToast();
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const json = JSON.parse(event.target?.result as string);
-        if (json && json.scenario && json.scenario.id) {
-          if (onImport) {
-            onImport(json);
-            toastSuccess("Scenario imported successfully!");
-          }
-        } else {
-          toastError("Invalid scenario file format.");
-        }
-      } catch (err) {
-        console.error("Import error:", err);
-        toastError("Failed to parse scenario file.");
-      }
-    };
-    reader.readAsText(file);
+    const exportData = await readExportFile(file);
+    if (exportData && onImport) {
+      onImport(exportData);
+      toastSuccess("Story imported successfully!");
+    } else if (!exportData) {
+      toastError("Invalid export file format. Expected PersonaForge export format.");
+    }
     
-    // Reset input
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
+    }
+  };
+
+  const handleExportClick = (scenario: Scenario) => {
+    if (onExport) {
+      onExport(scenario);
     }
   };
 
@@ -118,7 +114,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
             <button
               onClick={() => fileInputRef.current?.click()}
               className="flex items-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-2xl font-bold transition-all"
-              title="Import Scenario"
+              title="Import Story"
             >
               <Upload className="w-5 h-5" />
             </button>
@@ -295,6 +291,15 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                     >
                       <Copy className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Clone</span>
                     </button>
+                    {onExport && (
+                      <button
+                        onClick={() => handleExportClick(scenario)}
+                        className="p-2 text-zinc-600 hover:text-amber-400 transition-colors"
+                        title="Export Story"
+                      >
+                        <Download className="w-4 h-4" /><span className="hidden lg:inline ml-1 text-[10px] font-bold uppercase tracking-wider">Export</span>
+                      </button>
+                    )}
                   </div>
                   <button
                     onClick={() => onSelect(scenario)}

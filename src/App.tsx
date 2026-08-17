@@ -7,6 +7,7 @@ import { CharacterEditor } from './components/CharacterEditor';
 import { ScenarioLibrary } from './components/ScenarioLibrary';
 import { CharacterProfile, generateId } from './lib/gemini';
 import { Scenario, getSettings, Message, CodexEntry } from './lib/types';
+import { importStory, exportStory, downloadExport, PersonaForgeStoryExport } from './lib/transfer';
 import { Library, AlertCircle, CheckCircle2, Settings, LogIn, User as UserIcon } from 'lucide-react';
 import { STORAGE_KEYS } from './constants';
 import { SettingsModal } from './components/SettingsModal';
@@ -509,11 +510,17 @@ export default function App() {
     });
   };
 
-  const handleImportScenario = async (importedData: any) => {
+  const handleImportScenario = async (importedData: PersonaForgeStoryExport) => {
     try {
+      const imported = importStory(importedData);
+      if (!imported) {
+        toastError("Invalid export file format.");
+        return;
+      }
+
       const newScenarioId = generateId();
       const newScenario: Scenario = {
-        ...importedData.scenario,
+        ...imported.scenario,
         id: newScenarioId,
         lastUpdated: Date.now()
       };
@@ -522,24 +529,38 @@ export default function App() {
         await saveScenario(newScenario);
       }
       
-      if (importedData.messages) {
-        await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), importedData.messages);
+      if (imported.messages.length > 0) {
+        await set(STORAGE_KEYS.SCENARIO_MESSAGES(newScenarioId), imported.messages);
       }
-      if (importedData.codex) {
-        await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), importedData.codex);
+      if (imported.codex.length > 0) {
+        await set(STORAGE_KEYS.SCENARIO_CODEX(newScenarioId), imported.codex);
       }
-      if (importedData.inventory) {
-        await set(STORAGE_KEYS.SCENARIO_INVENTORY(newScenarioId), importedData.inventory);
+      if (imported.inventory.length > 0) {
+        await set(STORAGE_KEYS.SCENARIO_INVENTORY(newScenarioId), imported.inventory);
       }
-      if (importedData.summary) {
-        await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), importedData.summary);
+      if (imported.summary) {
+        await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), imported.summary);
       }
 
       setScenarios(prev => [...prev, newScenario]);
-      // toastSuccess is handled in ScenarioLibrary, but we could do it here too
     } catch (err) {
       console.error("Import error:", err);
-      toastError("Failed to import scenario data.");
+      toastError("Failed to import story data.");
+    }
+  };
+
+  const handleExportScenario = async (scenario: Scenario) => {
+    try {
+      const messages = await get(STORAGE_KEYS.SCENARIO_MESSAGES(scenario.id)) || [];
+      const codex = await get(STORAGE_KEYS.SCENARIO_CODEX(scenario.id)) || [];
+      const inventory = await get(STORAGE_KEYS.SCENARIO_INVENTORY(scenario.id)) || [];
+      const summary = await get(STORAGE_KEYS.SCENARIO_SUMMARY(scenario.id)) || undefined;
+      
+      const exportData = exportStory(scenario, messages, codex, inventory, summary);
+      downloadExport(exportData, `personaforge-${scenario.profile.name}-${Date.now()}.json`);
+    } catch (err) {
+      console.error("Export error:", err);
+      toastError("Failed to export story.");
     }
   };
 
@@ -890,6 +911,7 @@ export default function App() {
               hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
               onRestoreDraft={() => setShowDraft(true)}
               onImport={handleImportScenario}
+              onExport={handleExportScenario}
             />
           </ErrorBoundary>
         ) : (isCreating || showDraft) && !currentScenarioId ? (
