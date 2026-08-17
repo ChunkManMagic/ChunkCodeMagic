@@ -7,13 +7,28 @@ export const LIVE_MODELS = [
 
 export const LIVE_VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"] as const;
 
+export const LIVE_VOICE_DESCRIPTIONS: Record<string, { label: string; tone: string; description: string }> = {
+  Kore: { label: "Kore", tone: "Calm & Narrative", description: "Balanced, articulate, and expressive storytelling voice." },
+  Puck: { label: "Puck", tone: "Playful & Youthful", description: "Energetic, bright, and spirited tone." },
+  Charon: { label: "Charon", tone: "Deep & Resonant", description: "Authoritative, grave, and cinematic narrator voice." },
+  Fenrir: { label: "Fenrir", tone: "Gravelly & Bold", description: "Intense, dramatic, and rugged persona." },
+  Aoede: { label: "Aoede", tone: "Melodic & Elegant", description: "Soft, graceful, and enchanting delivery." },
+};
+
 export type LiveVoiceStatus = "idle" | "connecting" | "connected" | "error";
+export type LiveVoiceMicMode = "hold" | "toggle" | "handsFree";
 
 export interface LiveVoiceState {
   status: LiveVoiceStatus;
   isListening: boolean;
   isSpeaking: boolean;
+  isMicMuted: boolean;
+  isAiMuted: boolean;
+  micMode: LiveVoiceMicMode;
   model: string;
+  voiceName: string;
+  inputLevel: number;
+  outputLevel: number;
 }
 
 export interface LiveVoiceOptions {
@@ -21,28 +36,40 @@ export interface LiveVoiceOptions {
   voiceName?: string;
   temperature?: number;
   preferredModel?: string;
+  micMode?: LiveVoiceMicMode;
   contextTurns?: { role: string; text: string }[];
   onUserTranscript?: (text: string, final: boolean) => void;
   onModelTranscript?: (text: string, final: boolean) => void;
   onTurnEnd?: (userText: string, modelText: string) => void;
   onStateChange?: (state: LiveVoiceState) => void;
+  onAudioLevels?: (inputLevel: number, outputLevel: number) => void;
   onError?: (message: string) => void;
 }
 
 interface SessionHandle {
   session: any;
   model: string;
+  voiceName: string;
   audioContext: AudioContext | null;
   stream: MediaStream;
   processor: ScriptProcessorNode | null;
   source: MediaStreamAudioSourceNode | null;
+  inputAnalyser: AnalyserNode | null;
+  outputAnalyser: AnalyserNode | null;
+  outputGainNode: GainNode | null;
   pushToTalk: boolean;
+  isMicMuted: boolean;
+  isAiMuted: boolean;
+  micMode: LiveVoiceMicMode;
   status: LiveVoiceStatus;
   isSpeaking: boolean;
+  inputLevel: number;
+  outputLevel: number;
   userTranscript: string;
   modelTranscript: string;
   playbackQueue: AudioBufferSourceNode[];
   nextPlaybackTime: number;
+  animFrameId: number | null;
   options: LiveVoiceOptions;
 }
 
@@ -121,6 +148,18 @@ function setupAudioPlayback(handle: SessionHandle): AudioContext {
   if (handle.audioContext.state === "suspended") {
     handle.audioContext.resume();
   }
+
+  if (!handle.outputGainNode && handle.audioContext) {
+    const gain = handle.audioContext.createGain();
+    const analyser = handle.audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    analyser.smoothingTimeConstant = 0.8;
+    gain.connect(analyser);
+    analyser.connect(handle.audioContext.destination);
+    handle.outputGainNode = gain;
+    handle.outputAnalyser = analyser;
+  }
+
   return handle.audioContext;
 }
 
@@ -147,52 +186,118 @@ function enqueuePcmAudio(handle: SessionHandle, base64: string) {
   for (let i = 0; i < pcm.length; i++) {
     channelData[i] = pcm[i] / 32768.0;
   }
-  const startTime = Math.max(ctx.currentTime + 0.05, handle.nextPlaybackTime);
+  const startTime = Math.max(ctx.currentTime + 0.04, handle.nextPlaybackTime);
   const source = ctx.createBufferSource();
   source.buffer = buffer;
-  source.connect(ctx.destination);
+
+  if (handle.outputGainNode) {
+    source.connect(handle.outputGainNode);
+  } else {
+    source.connect(ctx.destination);
+  }
+
   source.start(startTime);
   handle.nextPlaybackTime = startTime + buffer.duration;
   handle.playbackQueue.push(source);
   handle.isSpeaking = true;
   emitState(handle);
+
   source.onended = () => {
-    handle.playbackQueue = handle.playbackQueue.filter(s => s !== source);
+    handle.playbackQueue = handle.playbackQueue.filter((s) => s !== source);
     if (handle.playbackQueue.length === 0) {
       handle.isSpeaking = false;
+      handle.outputLevel = 0;
       emitState(handle);
     }
   };
 }
 
-function stopPlayback(handle: SessionHandle) {
+export function stopPlayback(handle: SessionHandle) {
   for (const source of handle.playbackQueue) {
-    try { source.stop(); } catch (e) {}
+    try {
+      source.stop();
+    } catch (e) {}
   }
   handle.playbackQueue = [];
   handle.nextPlaybackTime = 0;
   handle.isSpeaking = false;
+  handle.outputLevel = 0;
   emitState(handle);
+}
+
+function isMicSending(handle: SessionHandle): boolean {
+  if (handle.isMicMuted) return false;
+  if (handle.micMode === "handsFree") return true;
+  return handle.pushToTalk;
 }
 
 function emitState(handle: SessionHandle) {
   handle.options?.onStateChange?.({
     status: handle.status,
-    isListening: handle.pushToTalk,
+    isListening: isMicSending(handle),
     isSpeaking: handle.isSpeaking,
+    isMicMuted: handle.isMicMuted,
+    isAiMuted: handle.isAiMuted,
+    micMode: handle.micMode,
     model: handle.model,
+    voiceName: handle.voiceName,
+    inputLevel: handle.inputLevel,
+    outputLevel: handle.outputLevel,
   });
+}
+
+function startAudioMeterLoop(handle: SessionHandle) {
+  const inputBuffer = new Uint8Array(128);
+  const outputBuffer = new Uint8Array(128);
+
+  const tick = () => {
+    if (!active || active !== handle) return;
+
+    let inLevel = 0;
+    if (handle.inputAnalyser && isMicSending(handle)) {
+      handle.inputAnalyser.getByteFrequencyData(inputBuffer);
+      let sum = 0;
+      for (let i = 0; i < inputBuffer.length; i++) {
+        sum += inputBuffer[i];
+      }
+      inLevel = Math.min(1, (sum / inputBuffer.length) / 128);
+    }
+
+    let outLevel = 0;
+    if (handle.outputAnalyser && handle.isSpeaking && !handle.isAiMuted) {
+      handle.outputAnalyser.getByteFrequencyData(outputBuffer);
+      let sum = 0;
+      for (let i = 0; i < outputBuffer.length; i++) {
+        sum += outputBuffer[i];
+      }
+      outLevel = Math.min(1, (sum / outputBuffer.length) / 128);
+    }
+
+    handle.inputLevel = inLevel;
+    handle.outputLevel = outLevel;
+    handle.options?.onAudioLevels?.(inLevel, outLevel);
+
+    handle.animFrameId = requestAnimationFrame(tick);
+  };
+
+  handle.animFrameId = requestAnimationFrame(tick);
 }
 
 function attachMicCapture(handle: SessionHandle) {
   const ctx = setupAudioPlayback(handle);
   const sourceNode = ctx.createMediaStreamSource(handle.stream);
+
+  const inputAnalyser = ctx.createAnalyser();
+  inputAnalyser.fftSize = 256;
+  inputAnalyser.smoothingTimeConstant = 0.5;
+  sourceNode.connect(inputAnalyser);
+
   const processor = ctx.createScriptProcessor(4096, 1, 1);
   sourceNode.connect(processor);
   processor.connect(ctx.destination);
 
   processor.onaudioprocess = (event) => {
-    if (!handle.pushToTalk || !handle.session) return;
+    if (!isMicSending(handle) || !handle.session) return;
     const inputData = event.inputBuffer.getChannelData(0);
     const sampleRate = ctx.sampleRate || 48000;
     const resampled = resampleTo16k(inputData, sampleRate, 16000);
@@ -202,13 +307,18 @@ function attachMicCapture(handle: SessionHandle) {
       int16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
     }
     const base64 = base64EncodePcm(int16);
-    handle.session.sendRealtimeInput({
-      audio: { data: base64, mimeType: "audio/pcm;rate=16000" },
-    });
+    try {
+      handle.session.sendRealtimeInput({
+        audio: { data: base64, mimeType: "audio/pcm;rate=16000" },
+      });
+    } catch (e) {
+      console.warn("Failed to stream audio chunk:", e);
+    }
   };
 
   handle.processor = processor;
   handle.source = sourceNode;
+  handle.inputAnalyser = inputAnalyser;
 }
 
 function finalizeTurn(handle: SessionHandle) {
@@ -222,9 +332,7 @@ function finalizeTurn(handle: SessionHandle) {
 function seedContext(handle: SessionHandle) {
   const context = handle.options.contextTurns;
   if (!context?.length) return;
-  // Send the ongoing story history as client content so the live model
-  // continues from the current scene rather than starting fresh.
-  const turns = context.map(c => ({
+  const turns = context.map((c) => ({
     role: c.role === "user" ? "user" : "model",
     parts: [{ text: c.text }],
   }));
@@ -250,17 +358,27 @@ async function connectSession(
   const handle: SessionHandle = {
     session: null,
     model,
+    voiceName: options.voiceName || "Kore",
     audioContext: null,
     stream,
     processor: null,
     source: null,
-    pushToTalk: false,
+    inputAnalyser: null,
+    outputAnalyser: null,
+    outputGainNode: null,
+    pushToTalk: options.micMode === "handsFree",
+    isMicMuted: false,
+    isAiMuted: false,
+    micMode: options.micMode || "hold",
     status: "connecting",
     isSpeaking: false,
+    inputLevel: 0,
+    outputLevel: 0,
     userTranscript: "",
     modelTranscript: "",
     playbackQueue: [],
     nextPlaybackTime: 0,
+    animFrameId: null,
     options,
   };
 
@@ -272,6 +390,7 @@ async function connectSession(
         handle.status = "connected";
         emitState(handle);
         seedContext(handle);
+        startAudioMeterLoop(handle);
       },
       onmessage: (message: any) => {
         const content = message.serverContent;
@@ -285,7 +404,9 @@ async function connectSession(
         if (content.modelTurn?.parts) {
           for (const part of content.modelTurn.parts) {
             if (part.inlineData?.data) {
-              enqueuePcmAudio(handle, part.inlineData.data);
+              if (!handle.isAiMuted) {
+                enqueuePcmAudio(handle, part.inlineData.data);
+              }
             } else if (part.text) {
               handle.modelTranscript += part.text;
               handle.options?.onModelTranscript?.(handle.modelTranscript, false);
@@ -324,7 +445,13 @@ async function connectSession(
 export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
   stopLiveVoice();
 
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
   let lastError: Error | null = null;
 
   const modelChain: string[] = [];
@@ -350,8 +477,8 @@ export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
     }
   }
 
-  stream.getTracks().forEach(t => t.stop());
-  throw lastError || new Error("All Live voice models failed.");
+  stream.getTracks().forEach((t) => t.stop());
+  throw lastError || new Error("All Live voice models failed to connect.");
 }
 
 export function setPushToTalk(listening: boolean): void {
@@ -359,6 +486,42 @@ export function setPushToTalk(listening: boolean): void {
   setupAudioPlayback(active);
   active.pushToTalk = listening;
   emitState(active);
+}
+
+export function setLiveVoiceMicMode(mode: LiveVoiceMicMode): void {
+  if (!active) return;
+  active.micMode = mode;
+  if (mode === "handsFree") {
+    active.pushToTalk = true;
+  } else {
+    active.pushToTalk = false;
+  }
+  emitState(active);
+}
+
+export function toggleLiveVoiceMicMute(): boolean {
+  if (!active) return false;
+  active.isMicMuted = !active.isMicMuted;
+  emitState(active);
+  return active.isMicMuted;
+}
+
+export function toggleLiveVoiceAiMute(): boolean {
+  if (!active) return false;
+  active.isAiMuted = !active.isAiMuted;
+  if (active.outputGainNode) {
+    active.outputGainNode.gain.value = active.isAiMuted ? 0 : 1;
+  }
+  if (active.isAiMuted) {
+    stopPlayback(active);
+  }
+  emitState(active);
+  return active.isAiMuted;
+}
+
+export function interruptAiSpeech(): void {
+  if (!active) return;
+  stopPlayback(active);
 }
 
 export function sendTextMessage(text: string): void {
@@ -373,10 +536,28 @@ export function sendTextMessage(text: string): void {
 
 export function stopLiveVoice(): void {
   if (active) {
-    try { active.session?.close(); } catch (e) {}
-    try { active.processor?.disconnect(); } catch (e) {}
-    try { active.source?.disconnect(); } catch (e) {}
-    active.stream?.getTracks().forEach(t => t.stop());
+    if (active.animFrameId) {
+      cancelAnimationFrame(active.animFrameId);
+    }
+    try {
+      active.session?.close();
+    } catch (e) {}
+    try {
+      active.processor?.disconnect();
+    } catch (e) {}
+    try {
+      active.source?.disconnect();
+    } catch (e) {}
+    try {
+      active.inputAnalyser?.disconnect();
+    } catch (e) {}
+    try {
+      active.outputAnalyser?.disconnect();
+    } catch (e) {}
+    try {
+      active.outputGainNode?.disconnect();
+    } catch (e) {}
+    active.stream?.getTracks().forEach((t) => t.stop());
     if (active.audioContext && active.audioContext.state !== "closed") {
       active.audioContext.close();
     }
@@ -386,12 +567,29 @@ export function stopLiveVoice(): void {
 
 export function getLiveVoiceState(): LiveVoiceState {
   if (!active) {
-    return { status: "idle", isListening: false, isSpeaking: false, model: "" };
+    return {
+      status: "idle",
+      isListening: false,
+      isSpeaking: false,
+      isMicMuted: false,
+      isAiMuted: false,
+      micMode: "hold",
+      model: "",
+      voiceName: "Kore",
+      inputLevel: 0,
+      outputLevel: 0,
+    };
   }
   return {
     status: active.status,
-    isListening: active.pushToTalk,
+    isListening: isMicSending(active),
     isSpeaking: active.isSpeaking,
+    isMicMuted: active.isMicMuted,
+    isAiMuted: active.isAiMuted,
+    micMode: active.micMode,
     model: active.model,
+    voiceName: active.voiceName,
+    inputLevel: active.inputLevel,
+    outputLevel: active.outputLevel,
   };
 }

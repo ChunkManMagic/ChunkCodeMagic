@@ -138,6 +138,10 @@ export interface OpenRouterModel {
   context_length?: number;
 }
 
+export type ThemeAccent = 'emerald' | 'amethyst' | 'cyan' | 'crimson' | 'amber' | 'slate';
+export type FontFamilyOption = 'sans' | 'serif' | 'mono';
+export type ChatDensityOption = 'compact' | 'comfy' | 'cinematic';
+
 export interface AppSettings {
   activeTextProvider: 'Google' | 'OpenRouter';
   activeModel: string;
@@ -148,6 +152,11 @@ export interface AppSettings {
   activeTTSModel: string;
   liveVoiceModel: string;
   liveVoiceName: string;
+  liveVoiceTemperature?: number;
+  themeAccent?: ThemeAccent;
+  fontFamily?: FontFamilyOption;
+  chatDensity?: ChatDensityOption;
+  enableAmbientGlow?: boolean;
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;
@@ -185,6 +194,11 @@ export const defaultSettings: AppSettings = {
   activeTTSModel: 'gemini-3.1-flash-tts-preview',
   liveVoiceModel: 'gemini-3.1-flash-live-preview',
   liveVoiceName: 'Kore',
+  liveVoiceTemperature: 1.0,
+  themeAccent: 'emerald',
+  fontFamily: 'sans',
+  chatDensity: 'comfy',
+  enableAmbientGlow: true,
   premiumCustomVoices: true,
   premiumContextAnimations: true,
   premiumAutoAvatar: true,
@@ -223,6 +237,21 @@ export function getSettings(): AppSettings {
       }
       if (!parsed.liveVoiceName) {
         parsed.liveVoiceName = 'Kore';
+      }
+      if (parsed.liveVoiceTemperature === undefined) {
+        parsed.liveVoiceTemperature = 1.0;
+      }
+      if (!parsed.themeAccent) {
+        parsed.themeAccent = 'emerald';
+      }
+      if (!parsed.fontFamily) {
+        parsed.fontFamily = 'sans';
+      }
+      if (!parsed.chatDensity) {
+        parsed.chatDensity = 'comfy';
+      }
+      if (parsed.enableAmbientGlow === undefined) {
+        parsed.enableAmbientGlow = true;
       }
       return { ...defaultSettings, ...parsed };
     }

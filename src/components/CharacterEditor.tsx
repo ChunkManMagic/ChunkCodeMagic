@@ -434,34 +434,70 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
               </button>
             </div>
             <div className="grid grid-cols-5 gap-1.5">
-              {['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'].map(v => (
+              {['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede'].map(v => (
                 <button
                   key={v}
+                  type="button"
                   onClick={() => setProfile({...profile, voiceName: v})}
                   className={`py-2 rounded-lg text-[9px] font-bold border transition-all ${
-                    profile.voiceName === v ? 'bg-emerald-500 border-emerald-400 text-white' : 'glass-input text-zinc-500 border-transparent hover:border-zinc-700'
+                    (profile.voiceName || 'Kore') === v ? 'bg-emerald-500 border-emerald-400 text-white shadow-md' : 'glass-input text-zinc-400 border-transparent hover:text-white hover:border-white/20'
                   }`}
                 >
                   {v}
                 </button>
               ))}
             </div>
-            <div className="grid grid-cols-3 gap-2">
-              {[
-                { label: 'Pitch', field: 'pitch' },
-                { label: 'Speed', field: 'speed' },
-                { label: 'Accent', field: 'accent' }
-              ].map(item => (
-                <div key={item.field}>
-                  <label className="block text-[8px] font-bold text-zinc-600 uppercase tracking-widest mb-1">{item.label}</label>
-                  <input 
-                    type="text" 
-                    className="w-full px-2 py-2 glass-input rounded-lg text-white text-[10px]"
-                    value={(profile.voiceSettings as any)[item.field]}
-                    onChange={e => setProfile({...profile, voiceSettings: {...profile.voiceSettings, [item.field]: e.target.value}})}
-                  />
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div>
+                <label className="block text-[8px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Pitch</label>
+                <div className="flex gap-1">
+                  {['Low', 'Normal', 'High'].map(p => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => setProfile({...profile, voiceSettings: {...profile.voiceSettings, pitch: p}})}
+                      className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${
+                        (profile.voiceSettings?.pitch || 'Normal') === p ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'
+                      }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
                 </div>
-              ))}
+              </div>
+              <div>
+                <label className="block text-[8px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Speed</label>
+                <div className="flex gap-1">
+                  {['Slow', 'Normal', 'Fast'].map(s => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setProfile({...profile, voiceSettings: {...profile.voiceSettings, speed: s}})}
+                      className={`flex-1 py-1 rounded text-[9px] font-bold transition-all ${
+                        (profile.voiceSettings?.speed || 'Normal') === s ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'
+                      }`}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[8px] font-bold text-zinc-400 uppercase tracking-widest mb-1">Accent</label>
+                <select
+                  value={profile.voiceSettings?.accent || 'None'}
+                  onChange={e => setProfile({...profile, voiceSettings: {...profile.voiceSettings, accent: e.target.value}})}
+                  className="w-full px-2 py-1 glass-input rounded text-white text-[9px] bg-black/40"
+                >
+                  <option value="None">Neutral</option>
+                  <option value="British RP">British RP</option>
+                  <option value="Transatlantic">Transatlantic</option>
+                  <option value="Celtic">Celtic / Scottish</option>
+                  <option value="French Lilt">French</option>
+                  <option value="Southern">Southern</option>
+                  <option value="Fantasy Melodic">Fantasy</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>

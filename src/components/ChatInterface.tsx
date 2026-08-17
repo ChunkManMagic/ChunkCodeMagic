@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Phone, Package, User, Cloud, Download, Pin } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Package, User, Cloud, Download, Pin, Radio } from 'lucide-react';
 import { useVoice } from '../hooks/useVoice';
 import { useLiveVoice } from '../hooks/useLiveVoice';
 import { useCodex } from '../hooks/useCodex';
@@ -13,6 +13,7 @@ import { InventorySidebar } from './chat/InventorySidebar';
 import { CodexSidebar } from './chat/CodexSidebar';
 import { MessageBubble, parseMessageContent } from './chat/MessageBubble';
 import { PinnedMessagesPanel } from './chat/PinnedMessagesPanel';
+import { LiveVoiceHUD } from './chat/LiveVoiceHUD';
 import { refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { getSettings, Message, CharacterProfile, CodexEntry } from '../lib/types';
@@ -709,6 +710,7 @@ Rules:
       voiceName: getSettings().liveVoiceName || profile.voiceName || 'Kore',
       temperature: 1.0,
       preferredModel: getSettings().liveVoiceModel,
+      micMode: 'hold',
       contextTurns: messages.slice(-12).map(m => ({ role: m.role, text: m.text })),
     });
   }, [liveVoice, buildLiveVoicePrompt, profile.voiceName, addMessage, messages]);
@@ -741,7 +743,7 @@ Rules:
             break;
           case 'v':
             e.preventDefault();
-            toggleLiveMode();
+            startLiveVoiceSession();
             break;
           case 'r':
             e.preventDefault();
@@ -765,7 +767,7 @@ Rules:
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [setShowCodex, setShowInventory, toggleLiveMode, handleRefine, handleSuggest, setShowAddCharacter, onEditCharacter, handleSendText]);
+  }, [setShowCodex, setShowInventory, startLiveVoiceSession, handleRefine, handleSuggest, setShowAddCharacter, onEditCharacter, handleSendText]);
 
 
 
@@ -808,10 +810,12 @@ Rules:
   };
 
   const voicePresets = [
-    { name: 'Cinematic', pitch: 'Normal', speed: 'Normal', tone: 'Dramatic' },
-    { name: 'Deep Narrator', pitch: 'Low', speed: 'Slow', tone: 'Epic' },
-    { name: 'Fast Action', pitch: 'Normal', speed: 'Fast', tone: 'Intense' },
-    { name: 'Whisper', pitch: 'High', speed: 'Slow', tone: 'Mysterious' },
+    { name: 'Cinematic', pitch: 'Normal', speed: 'Normal', tone: 'Dramatic', voice: 'Kore' },
+    { name: 'Deep Narrator', pitch: 'Low', speed: 'Slow', tone: 'Epic', voice: 'Charon' },
+    { name: 'Fast Action', pitch: 'Normal', speed: 'Fast', tone: 'Intense', voice: 'Fenrir' },
+    { name: 'Whisper', pitch: 'High', speed: 'Slow', tone: 'Mysterious', voice: 'Aoede' },
+    { name: 'Playful & Bright', pitch: 'Normal', speed: 'Normal', tone: 'Energetic', voice: 'Puck' },
+    { name: 'Gothic Fantasy', pitch: 'Low', speed: 'Slow', tone: 'Dark & Ominous', voice: 'Charon' },
   ];
 
   return (
@@ -1042,39 +1046,33 @@ Rules:
             className={`p-2 rounded-xl transition-all ${
               showVoiceSettings ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-500 hover:text-blue-400 hover:bg-white/5'
             }`}
-            title="Voice Settings"
+            title="Voice Studio & Customizer"
+            aria-label="Voice Studio Settings"
           >
             <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           <button
-            onClick={toggleLiveMode}
-            className={`px-3 py-2 sm:px-6 sm:py-2.5 rounded-xl text-[10px] sm:text-sm font-bold flex items-center gap-2 sm:gap-3 transition-all ${
-              isLiveMode ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shadow-lg shadow-emerald-500/10' : 'glass-input text-zinc-400 hover:text-white'
-            }`}
-          >
-            {isLiveMode ? (
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${isMicActive ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
-                <span className="text-emerald-400">LIVE MODE ACTIVE</span>
-              </div>
-            ) : (
-              <><Phone className="w-3 h-3 sm:w-4 sm:h-4" /> LIVE MODE</>
-            )}
-          </button>
-          <button
             onClick={startLiveVoiceSession}
-            className={`px-3 py-2 sm:px-6 sm:py-2.5 rounded-xl text-[10px] sm:text-sm font-bold flex items-center gap-2 sm:gap-3 transition-all ${
-              liveVoice.isActive ? 'bg-red-500/20 text-red-400 border border-red-500/30 shadow-lg shadow-red-500/10' : 'glass-input text-zinc-400 hover:text-white'
+            className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 transition-all ${
+              liveVoice.isActive
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
+                : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
             }`}
-            title="Live Voice (real-time speech with Gemini)"
+            title="Live Voice (Real-time Spoken Conversation with Gemini)"
+            aria-label="Toggle Live Voice Call"
           >
             {liveVoice.isActive ? (
               <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${liveVoice.state.isSpeaking ? 'bg-amber-400 animate-pulse' : 'bg-red-500'}`} />
-                <span className="text-red-400">LIVE VOICE</span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span className="text-emerald-400 font-bold">
+                  {liveVoice.isConnecting ? 'CONNECTING...' : 'LIVE CALL'}
+                </span>
               </div>
             ) : (
-              <><Mic className="w-3 h-3 sm:w-4 sm:h-4" /> LIVE VOICE</>
+              <>
+                <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+                <span>LIVE VOICE</span>
+              </>
             )}
           </button>
         </div>
@@ -1426,18 +1424,51 @@ Rules:
                   exit={{ opacity: 0, height: 0 }}
                   className="overflow-hidden mb-4"
                 >
-                  <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-4">
-                    <div className="flex items-center justify-between">
-                      <h4 className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Voice Customizer</h4>
-                      <div className="flex gap-2">
-                        {voicePresets.map(preset => (
+                  <div className="glass-panel p-5 rounded-2xl border border-white/10 space-y-4 shadow-2xl">
+                    {/* Top Bar with Presets & Voice Preview */}
+                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-3">
+                      <div>
+                        <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
+                          <Volume2 className="w-3.5 h-3.5" />
+                          Voice Customizer & Audio Studio
+                        </h4>
+                        <p className="text-[10px] text-zinc-500">Fine-tune character speech, accent, and storytelling delivery</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleReadAloud(`Greetings! This is a live voice preview for ${profile.name}. My tone is ${profile.storyTone || 'natural'}.`)}
+                          className="px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
+                          title="Hear a short audio sample of this voice configuration"
+                        >
+                          <Volume2 className="w-3.5 h-3.5" />
+                          <span>Preview Voice</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Presets Row */}
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
+                        Quick Cinematic Presets
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-1.5">
+                        {voicePresets.map((preset) => (
                           <button
                             key={preset.name}
-                            onClick={() => handleUpdateVoice({
-                              voiceSettings: { ...profile.voiceSettings, pitch: preset.pitch, speed: preset.speed },
-                              storyTone: preset.tone
-                            })}
-                            className="px-2 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-[9px] font-bold text-zinc-400 transition-all"
+                            type="button"
+                            onClick={() => {
+                              handleUpdateVoice({
+                                voiceName: preset.voice,
+                                voiceSettings: {
+                                  ...profile.voiceSettings,
+                                  pitch: preset.pitch,
+                                  speed: preset.speed,
+                                },
+                                storyTone: preset.tone,
+                              });
+                            }}
+                            className="px-2 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-emerald-500/30 text-[10px] font-bold text-zinc-300 transition-all text-center"
                           >
                             {preset.name}
                           </button>
@@ -1445,63 +1476,133 @@ Rules:
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="flex items-center justify-between text-[9px] font-bold text-zinc-500 uppercase tracking-widest">
-                            <span>Pitch: {profile.voiceSettings?.pitch}</span>
-                            <Sliders className="w-3 h-3" />
-                          </label>
-                          <div className="flex gap-2">
-                            {['Low', 'Normal', 'High'].map(p => (
-                              <button
-                                key={p}
-                                onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, pitch: p } })}
-                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${profile.voiceSettings?.pitch === p ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'}`}
-                              >
-                                {p}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
+                    {/* Voice Persona Selector */}
+                    <div className="space-y-1.5">
+                      <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
+                        Persona Voice Archetype
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
+                        {(['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede'] as const).map((v) => {
+                          const isSelected = (profile.voiceName || 'Kore') === v;
+                          return (
+                            <button
+                              key={v}
+                              type="button"
+                              onClick={() => handleUpdateVoice({ voiceName: v })}
+                              className={`p-2 rounded-xl text-left border transition-all ${
+                                isSelected
+                                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-md'
+                                  : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white'
+                              }`}
+                            >
+                              <div className="text-xs font-bold text-white">{v}</div>
+                              <div className="text-[9px] text-zinc-400 leading-tight">
+                                {v === 'Kore' ? 'Narrative' : v === 'Puck' ? 'Youthful' : v === 'Charon' ? 'Deep' : v === 'Fenrir' ? 'Bold' : 'Melodic'}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
 
-                        <div className="space-y-2">
-                          <label className="flex items-center justify-between text-[9px] font-bold text-zinc-500 uppercase tracking-widest">
-                            <span>Speed: {profile.voiceSettings?.speed}</span>
-                            <Sliders className="w-3 h-3" />
-                          </label>
-                          <div className="flex gap-2">
-                            {['Slow', 'Normal', 'Fast'].map(s => (
-                              <button
-                                key={s}
-                                onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, speed: s } })}
-                                className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${profile.voiceSettings?.speed === s ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-white/5 text-zinc-500 hover:text-zinc-300'}`}
-                              >
-                                {s}
-                              </button>
-                            ))}
-                          </div>
+                    {/* Pitch, Speed, Accent, and Tone */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-white/5">
+                      <div className="space-y-2">
+                        <label className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
+                          <span>Pitch: {profile.voiceSettings?.pitch || 'Normal'}</span>
+                          <Sliders className="w-3 h-3 text-zinc-500" />
+                        </label>
+                        <div className="flex gap-1.5">
+                          {['Low', 'Normal', 'High'].map((p) => (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, pitch: p } })}
+                              className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                                profile.voiceSettings?.pitch === p
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-white/5 text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          ))}
                         </div>
                       </div>
 
-                      <div className="space-y-4">
-                        <div className="space-y-2">
-                          <label className="text-[9px] font-bold text-zinc-500 uppercase tracking-widest">Narrative Tone</label>
-                          <input
-                            type="text"
-                            value={profile.storyTone}
-                            onChange={(e) => handleUpdateVoice({ storyTone: e.target.value })}
-                            placeholder="e.g. Dramatic, Epic, Whispered..."
-                            className="w-full glass-input rounded-xl px-4 py-2 text-xs text-white placeholder-zinc-700 focus:ring-1 focus:ring-blue-500/30"
-                          />
-                        </div>
-                        
-                        <div className="p-3 rounded-xl bg-blue-500/5 border border-blue-500/10">
-                          <p className="text-[9px] text-blue-400/60 leading-relaxed italic">
-                            Tip: The tone affects both the AI's writing style and the emotional delivery of the voice.
-                          </p>
+                      <div className="space-y-2">
+                        <label className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
+                          <span>Speed: {profile.voiceSettings?.speed || 'Normal'}</span>
+                          <Sliders className="w-3 h-3 text-zinc-500" />
+                        </label>
+                        <div className="flex gap-1.5">
+                          {['Slow', 'Normal', 'Fast'].map((s) => (
+                            <button
+                              key={s}
+                              type="button"
+                              onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, speed: s } })}
+                              className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
+                                profile.voiceSettings?.speed === s
+                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                  : 'bg-white/5 text-zinc-400 hover:text-zinc-200'
+                              }`}
+                            >
+                              {s}
+                            </button>
+                          ))}
                         </div>
                       </div>
+
+                      <div className="space-y-2">
+                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
+                          Accent & Delivery Style
+                        </label>
+                        <select
+                          value={profile.voiceSettings?.accent || 'None'}
+                          onChange={(e) =>
+                            handleUpdateVoice({
+                              voiceSettings: { ...profile.voiceSettings, accent: e.target.value },
+                            })
+                          }
+                          className="w-full glass-input rounded-xl px-3 py-1.5 text-xs text-white bg-black/40 focus:ring-1 focus:ring-emerald-500/30"
+                        >
+                          <option value="None">Natural / Neutral</option>
+                          <option value="British RP">British RP</option>
+                          <option value="Transatlantic">Transatlantic Classic</option>
+                          <option value="Celtic">Celtic / Scottish</option>
+                          <option value="French Lilt">French Lilt</option>
+                          <option value="Southern">Southern Drawl</option>
+                          <option value="Fantasy Melodic">Fantasy Melodic</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Narrative Tone & Suggestions */}
+                    <div className="space-y-2 pt-2 border-t border-white/5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
+                          Narrative Tone & Emotional Flavor
+                        </label>
+                        <div className="flex flex-wrap gap-1">
+                          {['Dramatic', 'Suspenseful', 'Noir', 'Romantic', 'Playful', 'Dark Fantasy'].map((t) => (
+                            <button
+                              key={t}
+                              type="button"
+                              onClick={() => handleUpdateVoice({ storyTone: t })}
+                              className="px-1.5 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-[8px] font-bold text-zinc-400 hover:text-zinc-200"
+                            >
+                              {t}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <input
+                        type="text"
+                        value={profile.storyTone || ''}
+                        onChange={(e) => handleUpdateVoice({ storyTone: e.target.value })}
+                        placeholder="e.g. Dramatic, Epic, Whispered, Sarcastic..."
+                        className="w-full glass-input rounded-xl px-4 py-2 text-xs text-white placeholder-zinc-600 focus:ring-1 focus:ring-emerald-500/30"
+                      />
                     </div>
                   </div>
                 </motion.div>
@@ -1576,9 +1677,22 @@ Rules:
                 className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
                   isAutoRead ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-zinc-300'
                 }`}
+                title="Automatically read AI responses aloud"
               >
-                {isAutoRead ? <Volume2 className="w-3 h-3" /> : <VolumeX className="w-3 h-3" />}
+                {isAutoRead ? <Volume2 className="w-3 h-3 text-emerald-400" /> : <VolumeX className="w-3 h-3" />}
                 AUTO-READ
+              </button>
+              <button
+                onClick={toggleLiveMode}
+                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
+                  isLiveMode
+                    ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse'
+                    : 'glass-input text-zinc-500 border-transparent hover:text-zinc-300'
+                }`}
+                title="Speech-to-Text Dictation (transcribes directly into input)"
+              >
+                {isLiveMode ? <Mic className="w-3 h-3 text-red-400 animate-pulse" /> : <MicOff className="w-3 h-3" />}
+                {isLiveMode ? 'DICTATING' : 'DICTATE'}
               </button>
               <div className="text-[8px] sm:text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold ml-auto hidden sm:block">
                 Playing as: <span className="text-zinc-400">{profile.playerProfile?.name || 'The Protagonist'}</span>
@@ -1650,86 +1764,13 @@ Rules:
           </div>
         </div>
       </div>
-      {/* Live Voice Overlay */}
-      <AnimatePresence>
-        {liveVoice.isActive && (
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 30 }}
-            className="fixed bottom-6 right-6 z-[90] w-[min(24rem,calc(100vw-3rem))] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
-          >
-            <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
-              <div className="flex items-center gap-2">
-                <div className={`w-2 h-2 rounded-full ${liveVoice.state.isSpeaking ? 'bg-amber-400 animate-pulse' : liveVoice.state.isListening ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`} />
-                <span className="text-xs font-bold text-white uppercase tracking-widest">Live Voice</span>
-                <span className="text-[9px] text-zinc-500 font-mono">{(liveVoice.state.model || '').split('-').slice(0, 3).join('-')}</span>
-              </div>
-              <button onClick={liveVoice.stop} className="p-1 text-zinc-500 hover:text-red-400 transition-colors" title="End Live Voice">
-                <CloseIcon className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div className="px-4 py-3 space-y-2 min-h-[90px] max-h-[160px] overflow-y-auto">
-              {liveVoice.userTranscript && (
-                <div className="text-xs text-blue-300/90">
-                  <span className="font-bold text-blue-400">You:</span> {liveVoice.userTranscript}
-                </div>
-              )}
-              {liveVoice.modelTranscript && (
-                <div className="text-xs text-amber-200/90">
-                  <span className="font-bold text-amber-300">{profile.name}:</span> {liveVoice.modelTranscript}
-                </div>
-              )}
-              {!liveVoice.userTranscript && !liveVoice.modelTranscript && (
-                <div className="text-[10px] text-zinc-600 text-center pt-2">
-                  Hold the button and speak, or type below for a discreet reply.
-                </div>
-              )}
-            </div>
-
-            <form
-              className="px-4 pb-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                const value = (e.currentTarget.elements.namedItem('liveText') as HTMLInputElement)?.value?.trim();
-                if (value) {
-                  liveVoice.sendText(value);
-                  e.currentTarget.reset();
-                }
-              }}
-            >
-              <div className="flex items-center gap-2 rounded-xl bg-black/40 border border-white/10 px-3 py-2 focus-within:border-emerald-500/40">
-                <input
-                  name="liveText"
-                  type="text"
-                  placeholder="Type a discreet response..."
-                  className="flex-1 bg-transparent text-xs text-white placeholder-zinc-600 focus:outline-none"
-                />
-                <button type="submit" className="text-emerald-400 hover:text-emerald-300 transition-colors" title="Send discreet text (no microphone)">
-                  <Send className="w-4 h-4" />
-                </button>
-              </div>
-            </form>
-
-            <div className="px-4 pb-4 flex justify-center">
-              <button
-                onPointerDown={(e) => { e.preventDefault(); liveVoice.holdToTalk(true); }}
-                onPointerUp={(e) => { e.preventDefault(); liveVoice.holdToTalk(false); }}
-                onPointerLeave={() => liveVoice.holdToTalk(false)}
-                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all select-none touch-none ${
-                  liveVoice.state.isListening
-                    ? 'bg-red-600 text-white scale-95 shadow-xl shadow-red-600/30'
-                    : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/20'
-                }`}
-                title="Hold to talk"
-              >
-                <Mic className="w-8 h-8" />
-              </button>
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {/* Dedicated Live Voice HUD */}
+      <LiveVoiceHUD
+        liveVoice={liveVoice}
+        profile={profile}
+        avatarBase64={avatarBase64}
+        onUpdateProfile={handleUpdateVoice}
+      />
 
       {/* Confirmation Modal */}
   {createPortal(

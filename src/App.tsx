@@ -791,23 +791,27 @@ export default function App() {
     return <div className="min-h-screen bg-zinc-950 flex items-center justify-center text-zinc-500">Initializing Engine...</div>;
   }
 
-  return (
-    <>
-      <ToastContainer />
-      <OfflineBanner isSyncing={isSyncing} />
-      <div className="min-h-screen animated-bg text-zinc-100 p-4 md:p-8 flex flex-col selection:bg-emerald-500/30">
-      {/* Background Ambience */}
-      <div className="fixed inset-0 pointer-events-none overflow-hidden">
-        <motion.div 
-          animate={{ backgroundColor: backgroundColors.primary.replace('bg-', '').split('/')[0] }}
-          className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${backgroundColors.primary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
-        />
-        <motion.div 
-          animate={{ backgroundColor: backgroundColors.secondary.replace('bg-', '').split('/')[0] }}
-          className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${backgroundColors.secondary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
-          style={{ animationDelay: '-3s' }} 
-        />
-      </div>
+    const fontClass = settings.fontFamily === 'serif' ? 'font-serif' : settings.fontFamily === 'mono' ? 'font-mono' : 'font-sans';
+
+    return (
+      <>
+        <ToastContainer />
+        <OfflineBanner isSyncing={isSyncing} />
+        <div className={`min-h-screen animated-bg text-zinc-100 p-4 md:p-8 flex flex-col selection:bg-emerald-500/30 ${fontClass}`}>
+        {/* Background Ambience */}
+        {settings.enableAmbientGlow !== false && (
+          <div className="fixed inset-0 pointer-events-none overflow-hidden">
+            <motion.div 
+              animate={{ backgroundColor: backgroundColors.primary.replace('bg-', '').split('/')[0] }}
+              className={`absolute top-[-10%] left-[-10%] w-[40%] h-[40%] ${backgroundColors.primary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
+            />
+            <motion.div 
+              animate={{ backgroundColor: backgroundColors.secondary.replace('bg-', '').split('/')[0] }}
+              className={`absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] ${backgroundColors.secondary} blur-[120px] rounded-full animate-float transition-colors duration-1000`} 
+              style={{ animationDelay: '-3s' }} 
+            />
+          </div>
+        )}
 
       <header className="mb-12 flex items-center justify-between relative z-10">
         <div className="w-32">
