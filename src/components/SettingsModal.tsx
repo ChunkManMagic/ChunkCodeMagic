@@ -373,6 +373,34 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
               </div>
             )}
 
+            <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+              <label className="text-sm text-gray-300">Live Voice Model (Real-Time Speech)</label>
+              <select 
+                value={settings.liveVoiceModel}
+                onChange={e => handleChange('liveVoiceModel', e.target.value)}
+                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+              >
+                <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Flash Live (Recommended)</option>
+                <option value="gemini-2.5-flash-native-audio-preview-12-2025">Gemini 2.5 Flash Native Audio</option>
+              </select>
+              <p className="text-[10px] text-gray-500">Auto-falls back to the other live model if the selected one is unavailable.</p>
+            </div>
+
+            <div className="space-y-2 animate-in fade-in slide-in-from-top-1">
+              <label className="text-sm text-gray-300">Live Voice Name</label>
+              <select 
+                value={settings.liveVoiceName}
+                onChange={e => handleChange('liveVoiceName', e.target.value)}
+                className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-indigo-500"
+              >
+                <option value="Puck">Puck</option>
+                <option value="Charon">Charon</option>
+                <option value="Kore">Kore</option>
+                <option value="Fenrir">Fenrir</option>
+                <option value="Aoede">Aoede</option>
+              </select>
+            </div>
+
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <label className="text-sm text-gray-300">Global Writing Style Instructions</label>

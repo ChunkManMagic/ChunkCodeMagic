@@ -146,6 +146,8 @@ export interface AppSettings {
   openRouterModels?: OpenRouterModel[];
   voiceEngine: 'Cinematic' | 'Fast Browser';
   activeTTSModel: string;
+  liveVoiceModel: string;
+  liveVoiceName: string;
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;
@@ -181,6 +183,8 @@ export const defaultSettings: AppSettings = {
   openRouterModel: 'meta-llama/llama-3-8b-instruct:free',
   voiceEngine: 'Cinematic',
   activeTTSModel: 'gemini-3.1-flash-tts-preview',
+  liveVoiceModel: 'gemini-3.1-flash-live-preview',
+  liveVoiceName: 'Kore',
   premiumCustomVoices: true,
   premiumContextAnimations: true,
   premiumAutoAvatar: true,
@@ -213,6 +217,12 @@ export function getSettings(): AppSettings {
         parsed.activeTTSModel = 'gemini-3.1-flash-tts-preview';
       } else if (parsed.activeTTSModel === 'gemini-1.5-pro' || parsed.activeTTSModel === 'gemini-pro-latest') {
         parsed.activeTTSModel = 'gemini-3.1-pro-preview';
+      }
+      if (!parsed.liveVoiceModel) {
+        parsed.liveVoiceModel = 'gemini-3.1-flash-live-preview';
+      }
+      if (!parsed.liveVoiceName) {
+        parsed.liveVoiceName = 'Kore';
       }
       return { ...defaultSettings, ...parsed };
     }

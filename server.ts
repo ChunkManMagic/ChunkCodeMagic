@@ -303,6 +303,38 @@ async function startServer() {
     }
   });
 
+  // Mint a short-lived ephemeral token for the Gemini Live API (real-time voice).
+  // The master GEMINI_LIVE_API_KEY stays server-side; the browser only ever holds
+  // this scoped, expiring token. Falls back to GEMINI_API_KEY when the dedicated
+  // key is not set.
+  app.post("/api/gemini/live/token", async (req, res) => {
+    try {
+      const apiKey = process.env.GEMINI_LIVE_API_KEY || process.env.GEMINI_API_KEY;
+      if (!apiKey) {
+        return res.status(500).json({ error: { message: "GEMINI_LIVE_API_KEY is not set on the server." } });
+      }
+
+      const ai = new GoogleGenAI({ apiKey });
+      const { model, config } = req.body || {};
+
+      const token = await ai.authTokens.create({
+        config: {
+          uses: 10,
+          expireTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+          newSessionExpireTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
+          liveConnectConstraints: {
+            model,
+            config,
+          },
+        },
+      });
+
+      res.json({ token: token.name });
+    } catch (err: any) {
+      res.status(500).json({ error: { message: err.message || String(err) } });
+    }
+  });
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

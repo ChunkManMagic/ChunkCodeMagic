@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
 import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Phone, Package, User, Cloud, Download, Pin } from 'lucide-react';
 import { useVoice } from '../hooks/useVoice';
+import { useLiveVoice } from '../hooks/useLiveVoice';
 import { useCodex } from '../hooks/useCodex';
 import { useInventory } from '../hooks/useInventory';
 import { useChatState } from '../hooks/useChatState';
@@ -214,6 +215,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     togglePause,
     stopAudio
   } = useVoice(profile.voiceName || 'Kore', profile.voiceSettings, profile.storyTone || '');
+
+  const liveVoice = useLiveVoice();
 
   const [error, setError] = useState<string | null>(null);
 
@@ -668,6 +671,47 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     }
   }, [isLiveMode, toastError, toastSuccess]);
 
+  const buildLiveVoicePrompt = useCallback(() => {
+    return `You are ${profile.name}. Stay in character at all times — this is a spoken, real-time conversation.
+Character personality: ${profile.personality || 'Not specified'}
+Backstory: ${profile.backstory || 'Not specified'}
+Story tone: ${profile.storyTone || 'natural'}
+Relationship with the speaker: ${profile.relationship || 'Not specified'}
+Speech pattern: ${profile.speechPattern || 'Natural'} — keep your spoken responses in this style.
+Current mood: ${profile.currentMood || 'Neutral'}
+World context: ${profile.worldAtmosphere || 'Not specified'}
+${profile.additionalCharacters?.length ? `Additional NPCs you may voice: ${profile.additionalCharacters.map(c => c.name).join(', ')}` : ''}
+
+Rules:
+- Speak naturally, as in a live conversation. Keep responses concise and conversational (1-4 sentences unless the moment demands more).
+- Respond in-character. Never break character.
+- Do not speak for the player. Do not narrate the player's actions.
+- You may describe your own actions briefly in character, but keep the focus on spoken dialogue.`;
+  }, [profile]);
+
+  const startLiveVoiceSession = useCallback(async () => {
+    if (liveVoice.isActive) {
+      liveVoice.stop();
+      return;
+    }
+    liveVoice.setOnTurnEnd(async (userText, modelText) => {
+      if (!userText && !modelText) return;
+      const userMsgId = generateId();
+      if (userText) {
+        await addMessage({ id: userMsgId, role: 'user', text: userText });
+      }
+      if (modelText) {
+        await addMessage({ id: generateId(), role: 'model', text: modelText });
+      }
+    });
+    liveVoice.start({
+      systemInstruction: buildLiveVoicePrompt(),
+      voiceName: getSettings().liveVoiceName || profile.voiceName || 'Kore',
+      temperature: 1.0,
+      preferredModel: getSettings().liveVoiceModel,
+    });
+  }, [liveVoice, buildLiveVoicePrompt, profile.voiceName, addMessage]);
+
   // Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -1014,6 +1058,22 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
               </div>
             ) : (
               <><Phone className="w-3 h-3 sm:w-4 sm:h-4" /> LIVE MODE</>
+            )}
+          </button>
+          <button
+            onClick={startLiveVoiceSession}
+            className={`px-3 py-2 sm:px-6 sm:py-2.5 rounded-xl text-[10px] sm:text-sm font-bold flex items-center gap-2 sm:gap-3 transition-all ${
+              liveVoice.isActive ? 'bg-red-500/20 text-red-400 border border-red-500/30 shadow-lg shadow-red-500/10' : 'glass-input text-zinc-400 hover:text-white'
+            }`}
+            title="Live Voice (real-time speech with Gemini)"
+          >
+            {liveVoice.isActive ? (
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${liveVoice.state.isSpeaking ? 'bg-amber-400 animate-pulse' : 'bg-red-500'}`} />
+                <span className="text-red-400">LIVE VOICE</span>
+              </div>
+            ) : (
+              <><Mic className="w-3 h-3 sm:w-4 sm:h-4" /> LIVE VOICE</>
             )}
           </button>
         </div>
@@ -1589,6 +1649,63 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           </div>
         </div>
       </div>
+      {/* Live Voice Overlay */}
+      <AnimatePresence>
+        {liveVoice.isActive && (
+          <motion.div
+            initial={{ opacity: 0, y: 30 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 30 }}
+            className="fixed bottom-6 right-6 z-[90] w-[min(24rem,calc(100vw-3rem))] glass-panel rounded-2xl border border-white/10 shadow-2xl overflow-hidden"
+          >
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
+              <div className="flex items-center gap-2">
+                <div className={`w-2 h-2 rounded-full ${liveVoice.state.isSpeaking ? 'bg-amber-400 animate-pulse' : liveVoice.state.isListening ? 'bg-red-500 animate-pulse' : 'bg-emerald-500'}`} />
+                <span className="text-xs font-bold text-white uppercase tracking-widest">Live Voice</span>
+                <span className="text-[9px] text-zinc-500 font-mono">{(liveVoice.state.model || '').split('-').slice(0, 3).join('-')}</span>
+              </div>
+              <button onClick={liveVoice.stop} className="p-1 text-zinc-500 hover:text-red-400 transition-colors" title="End Live Voice">
+                <CloseIcon className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-4 py-3 space-y-2 min-h-[90px] max-h-[160px] overflow-y-auto">
+              {liveVoice.userTranscript && (
+                <div className="text-xs text-blue-300/90">
+                  <span className="font-bold text-blue-400">You:</span> {liveVoice.userTranscript}
+                </div>
+              )}
+              {liveVoice.modelTranscript && (
+                <div className="text-xs text-amber-200/90">
+                  <span className="font-bold text-amber-300">{profile.name}:</span> {liveVoice.modelTranscript}
+                </div>
+              )}
+              {!liveVoice.userTranscript && !liveVoice.modelTranscript && (
+                <div className="text-[10px] text-zinc-600 text-center pt-2">
+                  Hold the button and speak. Release to send.
+                </div>
+              )}
+            </div>
+
+            <div className="px-4 pb-4 flex justify-center">
+              <button
+                onPointerDown={(e) => { e.preventDefault(); liveVoice.holdToTalk(true); }}
+                onPointerUp={(e) => { e.preventDefault(); liveVoice.holdToTalk(false); }}
+                onPointerLeave={() => liveVoice.holdToTalk(false)}
+                className={`w-20 h-20 rounded-full flex items-center justify-center transition-all select-none touch-none ${
+                  liveVoice.state.isListening
+                    ? 'bg-red-600 text-white scale-95 shadow-xl shadow-red-600/30'
+                    : 'bg-emerald-600 text-white hover:bg-emerald-500 shadow-lg shadow-emerald-600/20'
+                }`}
+                title="Hold to talk"
+              >
+                <Mic className="w-8 h-8" />
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Confirmation Modal */}
   {createPortal(
     <AnimatePresence>
