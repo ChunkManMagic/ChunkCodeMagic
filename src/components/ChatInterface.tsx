@@ -709,8 +709,9 @@ Rules:
       voiceName: getSettings().liveVoiceName || profile.voiceName || 'Kore',
       temperature: 1.0,
       preferredModel: getSettings().liveVoiceModel,
+      contextTurns: messages.slice(-12).map(m => ({ role: m.role, text: m.text })),
     });
-  }, [liveVoice, buildLiveVoicePrompt, profile.voiceName, addMessage]);
+  }, [liveVoice, buildLiveVoicePrompt, profile.voiceName, addMessage, messages]);
 
   // Keyboard Shortcuts
   useEffect(() => {
@@ -1682,10 +1683,34 @@ Rules:
               )}
               {!liveVoice.userTranscript && !liveVoice.modelTranscript && (
                 <div className="text-[10px] text-zinc-600 text-center pt-2">
-                  Hold the button and speak. Release to send.
+                  Hold the button and speak, or type below for a discreet reply.
                 </div>
               )}
             </div>
+
+            <form
+              className="px-4 pb-3"
+              onSubmit={(e) => {
+                e.preventDefault();
+                const value = (e.currentTarget.elements.namedItem('liveText') as HTMLInputElement)?.value?.trim();
+                if (value) {
+                  liveVoice.sendText(value);
+                  e.currentTarget.reset();
+                }
+              }}
+            >
+              <div className="flex items-center gap-2 rounded-xl bg-black/40 border border-white/10 px-3 py-2 focus-within:border-emerald-500/40">
+                <input
+                  name="liveText"
+                  type="text"
+                  placeholder="Type a discreet response..."
+                  className="flex-1 bg-transparent text-xs text-white placeholder-zinc-600 focus:outline-none"
+                />
+                <button type="submit" className="text-emerald-400 hover:text-emerald-300 transition-colors" title="Send discreet text (no microphone)">
+                  <Send className="w-4 h-4" />
+                </button>
+              </div>
+            </form>
 
             <div className="px-4 pb-4 flex justify-center">
               <button

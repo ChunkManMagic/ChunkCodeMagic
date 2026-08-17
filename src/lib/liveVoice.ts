@@ -21,6 +21,7 @@ export interface LiveVoiceOptions {
   voiceName?: string;
   temperature?: number;
   preferredModel?: string;
+  contextTurns?: { role: string; text: string }[];
   onUserTranscript?: (text: string, final: boolean) => void;
   onModelTranscript?: (text: string, final: boolean) => void;
   onTurnEnd?: (userText: string, modelText: string) => void;
@@ -218,6 +219,25 @@ function finalizeTurn(handle: SessionHandle) {
   handle.modelTranscript = "";
 }
 
+function seedContext(handle: SessionHandle) {
+  const context = handle.options.contextTurns;
+  if (!context?.length) return;
+  // Send the ongoing story history as client content so the live model
+  // continues from the current scene rather than starting fresh.
+  const turns = context.map(c => ({
+    role: c.role === "user" ? "user" : "model",
+    parts: [{ text: c.text }],
+  }));
+  try {
+    handle.session.sendClientContent({
+      turns,
+      turnComplete: false,
+    });
+  } catch (e) {
+    console.warn("Failed to seed live voice context:", e);
+  }
+}
+
 async function connectSession(
   token: string,
   model: string,
@@ -251,6 +271,7 @@ async function connectSession(
       onopen: () => {
         handle.status = "connected";
         emitState(handle);
+        seedContext(handle);
       },
       onmessage: (message: any) => {
         const content = message.serverContent;
@@ -338,6 +359,16 @@ export function setPushToTalk(listening: boolean): void {
   setupAudioPlayback(active);
   active.pushToTalk = listening;
   emitState(active);
+}
+
+export function sendTextMessage(text: string): void {
+  if (!active?.session) return;
+  active.userTranscript = text;
+  active.options?.onUserTranscript?.(text, true);
+  active.session.sendClientContent({
+    turns: [{ role: "user", parts: [{ text }] }],
+    turnComplete: true,
+  });
 }
 
 export function stopLiveVoice(): void {

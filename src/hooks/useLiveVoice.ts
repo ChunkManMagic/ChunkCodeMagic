@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { startLiveVoice, stopLiveVoice, setPushToTalk, getLiveVoiceState, LiveVoiceOptions, LiveVoiceState } from '../lib/liveVoice';
+import { startLiveVoice, stopLiveVoice, setPushToTalk, getLiveVoiceState, sendTextMessage, LiveVoiceOptions, LiveVoiceState } from '../lib/liveVoice';
 import { useToast } from './useToast';
 
 export function useLiveVoice() {
@@ -60,6 +60,12 @@ export function useLiveVoice() {
     callbacksRef.current.onTurnEnd = cb;
   }, []);
 
+  const sendText = useCallback((text: string) => {
+    if (!text.trim()) return;
+    setUserTranscript(text.trim());
+    sendTextMessage(text.trim());
+  }, []);
+
   useEffect(() => {
     return () => {
       stopLiveVoice();
@@ -73,6 +79,7 @@ export function useLiveVoice() {
     start,
     stop,
     holdToTalk,
+    sendText,
     setOnTurnEnd,
     isActive: state.status === 'connected' || state.status === 'connecting',
   };
