@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Mic,
@@ -20,6 +20,9 @@ import {
   LIVE_VOICE_DESCRIPTIONS,
   LiveVoiceMicMode,
   LiveVoiceState,
+  AudioDeviceInfo,
+  getAudioDevices,
+  isAudioContextSinkSupported,
 } from '../../lib/liveVoice';
 
 interface LiveVoiceHUDProps {
@@ -34,6 +37,8 @@ interface LiveVoiceHUDProps {
     holdToTalk: (listening: boolean) => void;
     toggleMic: () => void;
     setMicMode: (mode: LiveVoiceMicMode) => void;
+    setOutputDevice: (deviceId: string) => void;
+    setInputDevice: (deviceId: string) => Promise<boolean>;
     toggleMicMute: () => void;
     toggleAiMute: () => void;
     interrupt: () => void;
@@ -55,10 +60,57 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showVoicePicker, setShowVoicePicker] = useState(false);
+  const [showDevicePicker, setShowDevicePicker] = useState(false);
   const [typedMessage, setTypedMessage] = useState('');
   const [noteType, setNoteType] = useState<'dialogue' | 'action' | 'note'>('dialogue');
+  const [audioInputs, setAudioInputs] = useState<AudioDeviceInfo[]>([]);
+  const [audioOutputs, setAudioOutputs] = useState<AudioDeviceInfo[]>([]);
+  const [micDeviceId, setMicDeviceId] = useState(() => getSettings().liveVoiceMicDeviceId || 'default');
+  const [outputDeviceId, setOutputDeviceId] = useState(() => getSettings().liveVoiceOutputDeviceId || 'default');
+  const [isSwitchingMic, setIsSwitchingMic] = useState(false);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const refreshDevices = useCallback(async () => {
+    // Chromium requires the speaker-selection permission to expose more than
+    // the default output device; request it (when available) so Bluetooth /
+    // wired headsets show up in the picker.
+    try {
+      const perms = (navigator as any).permissions;
+      if (perms && typeof perms.request === 'function') {
+        await perms.request({ name: 'speaker-selection' });
+      }
+    } catch (e) {}
+    const { inputs, outputs } = await getAudioDevices();
+    setAudioInputs(inputs);
+    setAudioOutputs(outputs);
+  }, []);
+
+  // Enumerate devices whenever the list changes (headset plug/unplug, BT pair)
+  useEffect(() => {
+    refreshDevices();
+    if (typeof navigator !== 'undefined' && navigator.mediaDevices) {
+      navigator.mediaDevices.addEventListener('devicechange', refreshDevices);
+      return () => {
+        navigator.mediaDevices.removeEventListener('devicechange', refreshDevices);
+      };
+    }
+  }, [refreshDevices]);
+
+  const handleSelectMic = async (deviceId: string) => {
+    setIsSwitchingMic(true);
+    try {
+      await liveVoice.setInputDevice(deviceId);
+      setMicDeviceId(deviceId);
+    } finally {
+      setIsSwitchingMic(false);
+    }
+  };
+
+  const handleSelectOutput = (deviceId: string) => {
+    liveVoice.setOutputDevice(deviceId);
+    setOutputDeviceId(deviceId);
+  };
 
   // Auto-scroll transcripts when updated
   useEffect(() => {
@@ -191,7 +243,11 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                   </span>
                 </div>
                 <div className="flex items-center gap-1 text-[10px] text-zinc-400 font-mono">
-                  {liveVoice.isConnecting ? (
+                  {liveVoice.state.isReconnecting ? (
+                    <span className="text-cyan-300 animate-pulse font-semibold flex items-center gap-1">
+                      <Radio className="w-2.5 h-2.5" /> Reconnecting...
+                    </span>
+                  ) : liveVoice.isConnecting ? (
                     <span className="text-amber-400 animate-pulse">Connecting...</span>
                   ) : liveVoice.state.isSpeaking ? (
                     <span className="text-amber-300 font-semibold flex items-center gap-1">
@@ -435,6 +491,23 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                 </button>
 
                 <button
+                  onClick={() => {
+                    setShowDevicePicker(!showDevicePicker);
+                    setShowVoicePicker(false);
+                    refreshDevices();
+                  }}
+                  className={`p-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
+                    showDevicePicker
+                      ? 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                      : 'bg-white/5 text-zinc-400 hover:text-white hover:bg-white/10'
+                  }`}
+                  title="Choose Audio Devices"
+                >
+                  <Volume2 className="w-4 h-4 text-cyan-400" />
+                  <span className="hidden sm:inline">Audio</span>
+                </button>
+
+                <button
                   onClick={() => setIsExpanded(false)}
                   className="p-2 text-zinc-400 hover:text-white hover:bg-white/10 rounded-xl transition-colors"
                   title="Minimize to Floating Bar"
@@ -501,6 +574,91 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                         </button>
                       );
                     })}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Audio Device Picker Drawer */}
+            <AnimatePresence>
+              {showDevicePicker && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: 'auto', opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  className="bg-black/60 border-b border-white/10 px-6 py-4 overflow-hidden"
+                >
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-zinc-400">
+                      Audio Devices
+                    </h4>
+                    <span className="text-[10px] text-zinc-500 font-mono">
+                      Headset / speaker routing
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5 mb-1.5">
+                        <Mic className="w-3 h-3 text-emerald-400" /> Microphone
+                      </label>
+                      <select
+                        value={micDeviceId}
+                        onChange={(e) => handleSelectMic(e.target.value)}
+                        disabled={isSwitchingMic}
+                        className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/40 disabled:opacity-50"
+                      >
+                        {!audioInputs.some((d) => d.deviceId === micDeviceId) && (
+                          <option value={micDeviceId}>Current ({micDeviceId.slice(0, 8)}…)</option>
+                        )}
+                        {audioInputs.length === 0 && (
+                          <option value="default">Default Microphone</option>
+                        )}
+                        {audioInputs.map((d) => (
+                          <option key={d.deviceId} value={d.deviceId}>
+                            {d.label}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-zinc-600 mt-1">
+                        {isSwitchingMic ? 'Switching microphone…' : 'Applies immediately to this call.'}
+                      </p>
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5 mb-1.5">
+                        <Volume2 className="w-3 h-3 text-cyan-400" /> Speaker
+                      </label>
+                      {isAudioContextSinkSupported() ? (
+                        <>
+                          <select
+                            value={outputDeviceId}
+                            onChange={(e) => handleSelectOutput(e.target.value)}
+                            className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/40"
+                          >
+                            {!audioOutputs.some((d) => d.deviceId === outputDeviceId) && (
+                              <option value={outputDeviceId}>Current ({outputDeviceId.slice(0, 8)}…)</option>
+                            )}
+                            {audioOutputs.length === 0 && (
+                              <option value="default">Default Speaker</option>
+                            )}
+                            {audioOutputs.map((d) => (
+                              <option key={d.deviceId} value={d.deviceId}>
+                                {d.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="text-[10px] text-zinc-600 mt-1">
+                            {audioOutputs.length <= 1
+                              ? 'This device routes sound to your headset or speaker automatically — "Default" is correct here.'
+                              : 'Applies immediately to this call.'}
+                          </p>
+                        </>
+                      ) : (
+                        <div className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-zinc-500">
+                          Speaker selection not supported in this browser.
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </motion.div>
               )}

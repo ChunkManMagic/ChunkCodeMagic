@@ -4,6 +4,8 @@ import {
   stopLiveVoice,
   setPushToTalk,
   setLiveVoiceMicMode,
+  setLiveVoiceOutputDevice,
+  setLiveVoiceInputDevice,
   toggleLiveVoiceMicMute,
   toggleLiveVoiceAiMute,
   interruptAiSpeech,
@@ -13,6 +15,7 @@ import {
   LiveVoiceState,
   LiveVoiceMicMode,
 } from '../lib/liveVoice';
+import { getSettings, saveSettings } from '../lib/types';
 import { useToast } from './useToast';
 
 export function useLiveVoice() {
@@ -53,8 +56,11 @@ export function useLiveVoice() {
       setInputLevel(0);
       setOutputLevel(0);
       try {
+        const settings = getSettings();
         await startLiveVoice({
           ...options,
+          micDeviceId: options.micDeviceId ?? settings.liveVoiceMicDeviceId ?? '',
+          outputDeviceId: options.outputDeviceId ?? settings.liveVoiceOutputDeviceId ?? '',
           onUserTranscript: (text) => setUserTranscript(text),
           onModelTranscript: (text) => setModelTranscript(text),
           onStateChange: handleStateChange,
@@ -118,6 +124,23 @@ export function useLiveVoice() {
     setLiveVoiceMicMode(mode);
   }, []);
 
+  const setOutputDevice = useCallback((deviceId: string) => {
+    const ok = setLiveVoiceOutputDevice(deviceId);
+    if (ok) {
+      const settings = getSettings();
+      saveSettings({ ...settings, liveVoiceOutputDeviceId: deviceId });
+    }
+  }, []);
+
+  const setInputDevice = useCallback(async (deviceId: string) => {
+    const ok = await setLiveVoiceInputDevice(deviceId);
+    if (ok) {
+      const settings = getSettings();
+      saveSettings({ ...settings, liveVoiceMicDeviceId: deviceId });
+    }
+    return ok;
+  }, []);
+
   const toggleMicMute = useCallback(() => {
     const isMuted = toggleLiveVoiceMicMute();
     if (isMuted) {
@@ -167,6 +190,8 @@ export function useLiveVoice() {
     holdToTalk,
     toggleMic,
     setMicMode,
+    setOutputDevice,
+    setInputDevice,
     toggleMicMute,
     toggleAiMute,
     interrupt,

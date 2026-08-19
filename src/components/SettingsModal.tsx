@@ -224,13 +224,12 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     <optgroup label="Fast & General (Default)">
                       <option value="gemini-3.6-flash">Gemini 3.6 Flash (Recommended for Interactive Stories)</option>
                       <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+                      <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option>
                       <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
                       <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
-                      <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
                     </optgroup>
                     <optgroup label="Deep Reasoning (Pro Models)">
                       <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-                      <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                     </optgroup>
                     <optgroup label="Autonomous Agents">
                       <option value="antigravity-preview-05-2026">Antigravity Preview</option>

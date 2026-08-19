@@ -153,6 +153,8 @@ export interface AppSettings {
   liveVoiceModel: string;
   liveVoiceName: string;
   liveVoiceTemperature?: number;
+  liveVoiceMicDeviceId?: string;
+  liveVoiceOutputDeviceId?: string;
   themeAccent?: ThemeAccent;
   fontFamily?: FontFamilyOption;
   chatDensity?: ChatDensityOption;
@@ -216,7 +218,8 @@ export function getSettings(): AppSettings {
         parsed.activeModel === 'gemini-3.5-flash' || 
         parsed.activeModel === 'gemini-1.5-flash' || 
         parsed.activeModel === 'gemini-2.0-flash-exp' ||
-        parsed.activeModel === 'gemini-2.5-flash'
+        parsed.activeModel === 'gemini-2.5-flash' ||
+        parsed.activeModel === 'gemini-2.5-flash-lite'
       ) {
         parsed.activeModel = 'gemini-3.6-flash';
       } else if (parsed.activeModel === 'gemini-pro-latest' || parsed.activeModel === 'gemini-1.5-pro' || parsed.activeModel === 'gemini-2.5-pro') {

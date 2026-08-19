@@ -1,20 +1,47 @@
 import express from "express";
+import fs from "fs";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
+// tsx does not auto-load .env, and shell env vars (e.g. a stale key exported in
+// ~/.bashrc) take precedence over Node's --env-file / loadEnvFile. Load .env
+// here explicitly so the repo's key always wins regardless of the shell.
+function loadEnvFile(filePath: string): void {
+  const fullPath = path.resolve(process.cwd(), filePath);
+  if (!fs.existsSync(fullPath)) return;
+  const lines = fs.readFileSync(fullPath, "utf8").split(/\r?\n/);
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const eq = trimmed.indexOf("=");
+    if (eq === -1) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+loadEnvFile(".env");
+
 function getFallbackModel(currentModel: string): string | null {
-  if (currentModel === 'gemini-3.1-pro-preview' || currentModel === 'gemini-2.5-pro') {
+  if (currentModel === 'gemini-3.1-pro-preview') {
     return 'gemini-3.5-flash';
   }
-  if (currentModel === 'gemini-3.5-flash' || currentModel === 'gemini-2.5-flash') {
+  if (currentModel === 'gemini-3.6-flash' || currentModel === 'gemini-3.5-flash' || currentModel === 'gemini-3-flash-preview') {
     return 'gemini-3.1-flash-lite';
   }
   if (currentModel === 'gemini-3.1-flash-lite') {
-    return 'gemini-2.5-flash-lite';
+    return 'gemini-3.5-flash-lite';
   }
-  // Avoid going below 2.5
-  if (currentModel !== 'gemini-3.5-flash' && !currentModel.startsWith('antigravity') && !currentModel.startsWith('deep-research')) {
+  // Avoid falling back below the lite tier or from agent/research models
+  if (currentModel !== 'gemini-3.5-flash-lite' && !currentModel.startsWith('antigravity') && !currentModel.startsWith('deep-research')) {
     return 'gemini-3.5-flash';
   }
   return null;
