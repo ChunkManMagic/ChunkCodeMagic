@@ -118,6 +118,7 @@ interface SessionHandle {
   outputLevel: number;
   userTranscript: string;
   modelTranscript: string;
+  audioSentInCurrentTurn: boolean;
   playbackQueue: AudioBufferSourceNode[];
   nextPlaybackTime: number;
   animFrameId: number | null;
@@ -440,7 +441,7 @@ function enqueuePcmAudio(handle: SessionHandle, base64: string) {
   const buffer = ctx.createBuffer(1, audio.length, outRate);
   buffer.getChannelData(0).set(audio);
 
-  // Jitter buffer: keep the playback head ~180ms ahead so brief stalls
+  // Jitter buffer: keep the playback head ~220ms ahead so brief stalls
   // between chunks (network / server buffering) don't turn into audible gaps.
   // If we fell behind (stall, context suspend/resume), resync to now instead
   // of scheduling stale audio with dead air.
@@ -706,6 +707,7 @@ async function attachMicCapture(handle: SessionHandle, forceProcessor = false) {
       handle.session.sendRealtimeInput({
         audio: { data: base64, mimeType: "audio/pcm;rate=16000" },
       });
+      handle.audioSentInCurrentTurn = true;
     } catch (e) {
       console.warn("Failed to stream audio chunk:", e);
     }
@@ -846,6 +848,7 @@ async function connectSession(
     outputLevel: 0,
     userTranscript: "",
     modelTranscript: "",
+    audioSentInCurrentTurn: false,
     playbackQueue: [],
     nextPlaybackTime: 0,
     animFrameId: null,
@@ -941,6 +944,7 @@ export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
     return;
   }
   let lastError: Error | null = null;
+  let micAttachError: Error | null = null;
 
   for (const model of buildModelChain(options.preferredModel)) {
     try {
@@ -955,7 +959,16 @@ export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
         teardownSession(handle);
         return;
       }
-      await attachMicCapture(handle);
+      try {
+        await attachMicCapture(handle);
+      } catch (attachErr: any) {
+        // Mic capture isn't model-specific: tear the live session down (don't
+        // leak an open WebSocket) and fail fast instead of replaying the whole
+        // model chain against the same broken mic.
+        teardownSession(handle);
+        micAttachError = attachErr;
+        throw attachErr;
+      }
       // Hold / Tap modes don't need the mic until the user actually talks —
       // release it now so the phone doesn't sit in "call" mode the whole time.
       if (!isMicSending(handle)) {
@@ -966,6 +979,9 @@ export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
       emitState(handle);
       return;
     } catch (err: any) {
+      if (micAttachError) {
+        throw micAttachError;
+      }
       lastError = err;
       console.warn(`Live voice model ${model} failed: ${err?.message}`);
     }
@@ -1008,6 +1024,7 @@ async function reconnectNow(): Promise<void> {
     stream.getTracks().forEach((t) => t.stop());
     return;
   }
+  let micAttachError: Error | null = null;
 
   for (const model of buildModelChain(options.preferredModel)) {
     try {
@@ -1029,7 +1046,13 @@ async function reconnectNow(): Promise<void> {
         handle.isAiMuted = stale.isAiMuted;
         handle.pushToTalk = stale.micMode === "handsFree" || isMicSending(stale);
       }
-      await attachMicCapture(handle);
+      try {
+        await attachMicCapture(handle);
+      } catch (attachErr: any) {
+        teardownSession(handle);
+        micAttachError = attachErr;
+        throw attachErr;
+      }
       if (stale?.isAiMuted && handle.outputGainNode) {
         handle.outputGainNode.gain.value = 0;
       }
@@ -1047,6 +1070,9 @@ async function reconnectNow(): Promise<void> {
       emitState(handle);
       return;
     } catch (err: any) {
+      if (micAttachError) {
+        throw micAttachError;
+      }
       console.warn(`Live voice reconnect model ${model} failed: ${err?.message}`);
     }
   }
@@ -1064,6 +1090,7 @@ function sendAudioStreamEnd(handle: SessionHandle): void {
   if (!handle.session) return;
   try {
     handle.session.sendRealtimeInput({ audioStreamEnd: true });
+    handle.audioSentInCurrentTurn = false;
   } catch (e) {
     console.warn("Failed to send audioStreamEnd:", e);
   }
@@ -1103,11 +1130,15 @@ async function startMicForSending(handle: SessionHandle): Promise<void> {
 function onMicSendingChanged(handle: SessionHandle, wasSending: boolean): void {
   const nowSending = isMicSending(handle);
   if (wasSending && !nowSending) {
-    // Flush the user's turn so the model responds promptly instead of
-    // waiting for more input after push-to-talk is released.
-    sendAudioStreamEnd(handle);
+    // Only flush the user's turn if they actually said something this press —
+    // otherwise a stray tap / tap-release makes the model reply "I didn't
+    // catch that" to silence.
+    if (handle.audioSentInCurrentTurn) {
+      sendAudioStreamEnd(handle);
+    }
     stopMicForSending(handle);
   } else if (!wasSending && nowSending) {
+    handle.audioSentInCurrentTurn = false;
     startMicForSending(handle).catch((e: any) => {
       console.warn("Failed to start microphone:", e);
       handle.options?.onError?.(e?.message || "Microphone unavailable");
@@ -1159,9 +1190,9 @@ export async function setLiveVoiceInputDevice(deviceId: string): Promise<boolean
   const wasSending = isMicSending(active);
   const oldStream = active.stream;
   try {
-    const newStream = await navigator.mediaDevices.getUserMedia({
-      audio: buildMicConstraints(deviceId),
-    });
+    // Use the same stale-device fallback path as initial acquisition so a
+    // headset that was unplugged between sessions doesn't dead-end the switch.
+    const newStream = await acquireMicWithFallback(deviceId);
     oldStream.getTracks().forEach((t) => t.stop());
     active.stream = newStream;
     await attachMicCapture(active);
