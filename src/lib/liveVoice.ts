@@ -913,7 +913,11 @@ async function connectSession(
         if (!content) return;
 
         if (content.interrupted) {
+          // The model's current turn was cut off (barge-in / user interrupt).
+          // Drop its partial output so the fragment doesn't get mixed into the
+          // next completed turn's transcript / chat-history entry.
           stopPlayback(handle);
+          handle.modelTranscript = "";
           return;
         }
 

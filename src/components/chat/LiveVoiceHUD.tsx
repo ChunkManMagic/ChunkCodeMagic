@@ -119,9 +119,10 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
     playOutputTest(outputDeviceId === 'default' ? undefined : outputDeviceId);
   };
 
-  // Auto-scroll transcripts when updated
+  // Auto-scroll transcripts when updated (block:'nearest' keeps the browser from
+// also scrolling the page / modal body around the transcript container).
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [liveVoice.userTranscript, liveVoice.modelTranscript, liveVoice.transcriptTurns]);
 
   // Global keyboard shortcuts while live voice is active
