@@ -6,6 +6,7 @@ import {
   setLiveVoiceMicMode,
   setLiveVoiceOutputDevice,
   setLiveVoiceInputDevice,
+  setLiveVoiceOutputVolume,
   toggleLiveVoiceMicMute,
   toggleLiveVoiceAiMute,
   interruptAiSpeech,
@@ -61,6 +62,7 @@ export function useLiveVoice() {
           ...options,
           micDeviceId: options.micDeviceId ?? settings.liveVoiceMicDeviceId ?? '',
           outputDeviceId: options.outputDeviceId ?? settings.liveVoiceOutputDeviceId ?? '',
+          outputVolume: options.outputVolume ?? settings.liveVoiceOutputVolume ?? 1,
           onUserTranscript: (text) => setUserTranscript(text),
           onModelTranscript: (text) => setModelTranscript(text),
           onStateChange: handleStateChange,
@@ -141,6 +143,14 @@ export function useLiveVoice() {
     return ok;
   }, []);
 
+  const setOutputVolume = useCallback((volume: number) => {
+    const ok = setLiveVoiceOutputVolume(volume);
+    if (ok) {
+      const settings = getSettings();
+      saveSettings({ ...settings, liveVoiceOutputVolume: volume });
+    }
+  }, []);
+
   const toggleMicMute = useCallback(() => {
     const isMuted = toggleLiveVoiceMicMute();
     if (isMuted) {
@@ -192,6 +202,7 @@ export function useLiveVoice() {
     setMicMode,
     setOutputDevice,
     setInputDevice,
+    setOutputVolume,
     toggleMicMute,
     toggleAiMute,
     interrupt,

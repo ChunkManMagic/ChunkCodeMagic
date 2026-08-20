@@ -23,6 +23,7 @@ import {
   AudioDeviceInfo,
   getAudioDevices,
   isAudioContextSinkSupported,
+  playOutputTest,
 } from '../../lib/liveVoice';
 
 interface LiveVoiceHUDProps {
@@ -39,6 +40,7 @@ interface LiveVoiceHUDProps {
     setMicMode: (mode: LiveVoiceMicMode) => void;
     setOutputDevice: (deviceId: string) => void;
     setInputDevice: (deviceId: string) => Promise<boolean>;
+    setOutputVolume: (volume: number) => void;
     toggleMicMute: () => void;
     toggleAiMute: () => void;
     interrupt: () => void;
@@ -110,6 +112,10 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
   const handleSelectOutput = (deviceId: string) => {
     liveVoice.setOutputDevice(deviceId);
     setOutputDeviceId(deviceId);
+  };
+
+  const handleTestSound = () => {
+    playOutputTest(outputDeviceId === 'default' ? undefined : outputDeviceId);
   };
 
   // Auto-scroll transcripts when updated
@@ -625,9 +631,18 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                     </div>
 
                     <div>
-                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5 mb-1.5">
-                        <Volume2 className="w-3 h-3 text-cyan-400" /> Speaker
-                      </label>
+                      <div className="flex items-center justify-between mb-1.5">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 flex items-center gap-1.5">
+                          <Volume2 className="w-3 h-3 text-cyan-400" /> Speaker
+                        </label>
+                        <button
+                          onClick={handleTestSound}
+                          className="px-2 py-0.5 rounded-lg bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/20 text-[10px] font-semibold flex items-center gap-1 transition-colors"
+                          title="Play a test tone through the selected speaker"
+                        >
+                          <Volume2 className="w-3 h-3" /> Test Sound
+                        </button>
+                      </div>
                       {isAudioContextSinkSupported() ? (
                         <>
                           <select
@@ -658,6 +673,25 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                           Speaker selection not supported in this browser.
                         </div>
                       )}
+                      <div className="mt-3">
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                            AI Voice Volume
+                          </label>
+                          <span className="text-[10px] text-zinc-500 font-mono tabular-nums">
+                            {Math.round((liveVoice.state.outputVolume ?? 1) * 100)}%
+                          </span>
+                        </div>
+                        <input
+                          type="range"
+                          min={0}
+                          max={100}
+                          value={Math.round((liveVoice.state.outputVolume ?? 1) * 100)}
+                          onChange={(e) => liveVoice.setOutputVolume(Number(e.target.value) / 100)}
+                          className="w-full accent-emerald-500"
+                          title="AI voice volume"
+                        />
+                      </div>
                     </div>
                   </div>
                 </motion.div>

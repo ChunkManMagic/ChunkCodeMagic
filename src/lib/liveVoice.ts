@@ -69,6 +69,7 @@ export interface LiveVoiceState {
   voiceName: string;
   inputLevel: number;
   outputLevel: number;
+  outputVolume: number;
   isReconnecting: boolean;
 }
 
@@ -80,6 +81,7 @@ export interface LiveVoiceOptions {
   micMode?: LiveVoiceMicMode;
   micDeviceId?: string;
   outputDeviceId?: string;
+  outputVolume?: number;
   contextTurns?: { role: string; text: string }[];
   onUserTranscript?: (text: string, final: boolean) => void;
   onModelTranscript?: (text: string, final: boolean) => void;
@@ -104,6 +106,7 @@ interface SessionHandle {
   inputAnalyser: AnalyserNode | null;
   outputAnalyser: AnalyserNode | null;
   outputGainNode: GainNode | null;
+  outputVolume: number;
   micDeviceId: string;
   outputDeviceId: string;
   appliedSinkId: string;
@@ -306,6 +309,25 @@ function buildConnectConfig(options: LiveVoiceOptions) {
   return config;
 }
 
+let contextReviverInstalled = false;
+function installContextReviver() {
+  if (contextReviverInstalled || typeof window === "undefined") return;
+  contextReviverInstalled = true;
+  // A suspended/interrupted AudioContext can only be resumed from a user
+  // gesture on some Android builds. Re-resume on any interaction or when the
+  // tab becomes visible again so the AI's next reply isn't silent.
+  const revive = () => {
+    const ctx = active?.audioContext;
+    if (ctx && ctx.state !== "running") {
+      ctx.resume().catch(() => {});
+    }
+  };
+  window.addEventListener("pointerdown", revive, { passive: true });
+  window.addEventListener("pointerup", revive, { passive: true });
+  window.addEventListener("keydown", revive, { passive: true });
+  document.addEventListener("visibilitychange", revive);
+}
+
 function setupAudioPlayback(handle: SessionHandle): AudioContext {
   if (!handle.audioContext || handle.audioContext.state === "closed") {
     // Use the device's native sample rate: requesting a non-native rate
@@ -320,6 +342,11 @@ function setupAudioPlayback(handle: SessionHandle): AudioContext {
     // taken away (e.g. a headset button or another app grabs the mic).
     handle.audioContext.onstatechange = () => {
       if (handle.audioContext && handle.audioContext.state !== "running") {
+        // Android fires "interrupted" when audio focus is taken (mic released,
+        // headset action, another app grabbing focus). Clear the jitter queue
+        // so the stale scheduled buffers don't all fire at once the moment the
+        // context comes back, then try to recover immediately.
+        stopPlayback(handle);
         handle.audioContext.resume().catch(() => {});
       }
     };
@@ -327,12 +354,14 @@ function setupAudioPlayback(handle: SessionHandle): AudioContext {
   if (handle.audioContext.state === "suspended" || (handle.audioContext.state as string) === "interrupted") {
     handle.audioContext.resume().catch(() => {});
   }
+  installContextReviver();
 
   if (!handle.outputGainNode && handle.audioContext) {
     const gain = handle.audioContext.createGain();
     const analyser = handle.audioContext.createAnalyser();
     analyser.fftSize = 256;
     analyser.smoothingTimeConstant = 0.8;
+    gain.gain.value = handle.isAiMuted ? 0 : handle.outputVolume;
     gain.connect(analyser);
     analyser.connect(handle.audioContext.destination);
     handle.outputGainNode = gain;
@@ -426,6 +455,12 @@ const TARGET_PLAYBACK_LATENCY = 0.22;
 
 function enqueuePcmAudio(handle: SessionHandle, base64: string) {
   const ctx = setupAudioPlayback(handle);
+  if (ctx.state !== "running") {
+    // Suspended/interrupted context: buffers scheduled now won't advance until
+    // it recovers, and they'd all burst at once on resume. Resume right away
+    // and let the next chunk resync the playback head.
+    ctx.resume().catch(() => {});
+  }
   const pcm = base64DecodeToPcm(base64);
   if (pcm.length === 0) return;
 
@@ -511,6 +546,7 @@ function emitState(handle: SessionHandle) {
     voiceName: handle.voiceName,
     inputLevel: handle.inputLevel,
     outputLevel: handle.outputLevel,
+    outputVolume: handle.outputVolume,
     isReconnecting,
   });
 }
@@ -703,6 +739,13 @@ async function attachMicCapture(handle: SessionHandle, forceProcessor = false) {
 
   const sendChunk = (base64: string) => {
     if (!isMicSending(handle) || !handle.session) return;
+    // Hands-Free: the open mic hears the AI's own voice through the speakers /
+    // headset. Feeding that back to the model makes the server's VAD treat it
+    // as user speech and barge in on itself, cutting the reply in and out.
+    // Suppress mic audio while the AI is speaking — tap/hold modes close the
+    // mic anyway, so this only affects Hands-Free. Barge-in still works via
+    // the Interrupt button (or a typed message).
+    if (handle.isSpeaking && handle.micMode === "handsFree") return;
     try {
       handle.session.sendRealtimeInput({
         audio: { data: base64, mimeType: "audio/pcm;rate=16000" },
@@ -836,6 +879,7 @@ async function connectSession(
     outputGainNode: null,
     micDeviceId: options.micDeviceId || "",
     outputDeviceId: options.outputDeviceId || "",
+    outputVolume: options.outputVolume ?? 1,
     appliedSinkId: "",
     disposed: false,
     pushToTalk: options.micMode === "handsFree",
@@ -1044,6 +1088,7 @@ async function reconnectNow(): Promise<void> {
         handle.micMode = stale.micMode;
         handle.isMicMuted = stale.isMicMuted;
         handle.isAiMuted = stale.isAiMuted;
+        handle.outputVolume = stale.outputVolume;
         handle.pushToTalk = stale.micMode === "handsFree" || isMicSending(stale);
       }
       try {
@@ -1053,8 +1098,8 @@ async function reconnectNow(): Promise<void> {
         micAttachError = attachErr;
         throw attachErr;
       }
-      if (stale?.isAiMuted && handle.outputGainNode) {
-        handle.outputGainNode.gain.value = 0;
+      if (handle.outputGainNode) {
+        handle.outputGainNode.gain.value = handle.isAiMuted ? 0 : handle.outputVolume;
       }
       if (!isMicSending(handle)) {
         stopMicForSending(handle);
@@ -1218,13 +1263,61 @@ export function toggleLiveVoiceAiMute(): boolean {
   if (!active) return false;
   active.isAiMuted = !active.isAiMuted;
   if (active.outputGainNode) {
-    active.outputGainNode.gain.value = active.isAiMuted ? 0 : 1;
+    active.outputGainNode.gain.value = active.isAiMuted ? 0 : active.outputVolume;
   }
   if (active.isAiMuted) {
     stopPlayback(active);
   }
   emitState(active);
   return active.isAiMuted;
+}
+
+export function setLiveVoiceOutputVolume(volume: number): boolean {
+  if (!active) return false;
+  active.outputVolume = Math.max(0, Math.min(1, volume));
+  if (active.outputGainNode) {
+    active.outputGainNode.gain.value = active.isAiMuted ? 0 : active.outputVolume;
+  }
+  emitState(active);
+  return true;
+}
+
+// Play a short two-tone chirp through a chosen output device (or the system
+// default) so the user can confirm speaker routing without waiting for the
+// AI to talk. Uses its own throwaway AudioContext so the live session's
+// graph and jitter buffer are never disturbed.
+export async function playOutputTest(deviceId?: string): Promise<void> {
+  try {
+    const Ctor = window.AudioContext || (window as any).webkitAudioContext;
+    const ctx = new Ctor();
+    if (deviceId && deviceId !== "default" && isAudioContextSinkSupported()) {
+      const present = await isOutputDevicePresent(deviceId);
+      if (present) {
+        const withSink = ctx as AudioContext & AudioContextWithSink;
+        try {
+          await withSink.setSinkId?.(deviceId);
+        } catch (e) {
+          console.warn("Test tone could not use requested device:", e);
+        }
+      }
+    }
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(880, ctx.currentTime);
+    osc.frequency.setValueAtTime(1320, ctx.currentTime + 0.18);
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.6);
+    osc.start();
+    osc.stop(ctx.currentTime + 0.62);
+    osc.onended = () => {
+      ctx.close().catch(() => {});
+    };
+  } catch (e) {
+    console.warn("Failed to play output test tone:", e);
+  }
 }
 
 export function interruptAiSpeech(): void {
@@ -1234,12 +1327,16 @@ export function interruptAiSpeech(): void {
 
 export function sendTextMessage(text: string): void {
   if (!active?.session) return;
+  // Ensure the audio context is running: the send button / Enter key counts as
+  // a user gesture, so this is the reliable place to recover an interrupted
+  // context (mic release in hold/tap mode makes Android pull audio focus).
+  setupAudioPlayback(active);
   active.userTranscript = text;
   active.options?.onUserTranscript?.(text, true);
-  active.session.sendClientContent({
-    turns: [{ role: "user", parts: [{ text }] }],
-    turnComplete: true,
-  });
+  // gemini-3.1-flash-live-preview only accepts live text through
+  // sendRealtimeInput. sendClientContent mid-conversation is documented as
+  // seed-only for that model and returns a text-only reply instead of speech.
+  active.session.sendRealtimeInput({ text });
 }
 
 export function stopLiveVoice(): void {
@@ -1264,6 +1361,7 @@ export function getLiveVoiceState(): LiveVoiceState {
       voiceName: "Kore",
       inputLevel: 0,
       outputLevel: 0,
+      outputVolume: 1,
       isReconnecting: false,
     };
   }
@@ -1278,6 +1376,7 @@ export function getLiveVoiceState(): LiveVoiceState {
     voiceName: active.voiceName,
     inputLevel: active.inputLevel,
     outputLevel: active.outputLevel,
+    outputVolume: active.outputVolume,
     isReconnecting,
   };
 }

@@ -155,6 +155,7 @@ export interface AppSettings {
   liveVoiceTemperature?: number;
   liveVoiceMicDeviceId?: string;
   liveVoiceOutputDeviceId?: string;
+  liveVoiceOutputVolume?: number;
   themeAccent?: ThemeAccent;
   fontFamily?: FontFamilyOption;
   chatDensity?: ChatDensityOption;
@@ -197,6 +198,7 @@ export const defaultSettings: AppSettings = {
   liveVoiceModel: 'gemini-3.1-flash-live-preview',
   liveVoiceName: 'Kore',
   liveVoiceTemperature: 1.0,
+  liveVoiceOutputVolume: 1,
   themeAccent: 'emerald',
   fontFamily: 'sans',
   chatDensity: 'comfy',
@@ -243,6 +245,9 @@ export function getSettings(): AppSettings {
       }
       if (parsed.liveVoiceTemperature === undefined) {
         parsed.liveVoiceTemperature = 1.0;
+      }
+      if (parsed.liveVoiceOutputVolume === undefined) {
+        parsed.liveVoiceOutputVolume = 1;
       }
       if (!parsed.themeAccent) {
         parsed.themeAccent = 'emerald';
