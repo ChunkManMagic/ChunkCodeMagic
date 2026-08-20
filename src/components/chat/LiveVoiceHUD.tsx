@@ -31,6 +31,7 @@ interface LiveVoiceHUDProps {
     state: LiveVoiceState;
     userTranscript: string;
     modelTranscript: string;
+    transcriptTurns: { user: string; model: string }[];
     inputLevel: number;
     outputLevel: number;
     start: (options: any) => Promise<void>;
@@ -121,7 +122,7 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
   // Auto-scroll transcripts when updated
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [liveVoice.userTranscript, liveVoice.modelTranscript]);
+  }, [liveVoice.userTranscript, liveVoice.modelTranscript, liveVoice.transcriptTurns]);
 
   // Global keyboard shortcuts while live voice is active
   useEffect(() => {
@@ -331,15 +332,34 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                 <span className="font-semibold text-amber-300">{profile.name}: </span>
                 {liveVoice.modelTranscript}
               </p>
-            ) : (
-              <p className="text-zinc-500 text-[11px] italic">
-                {liveVoice.state.micMode === 'hold'
-                  ? 'Hold button or Space to speak...'
-                  : liveVoice.state.micMode === 'handsFree'
-                  ? 'Open mic active. Speak freely...'
-                  : 'Tap mic button to speak...'}
-              </p>
-            )}
+            ) : (() => {
+              const last = liveVoice.transcriptTurns[liveVoice.transcriptTurns.length - 1];
+              if (last?.model) {
+                return (
+                  <p className="text-amber-200/80 line-clamp-2">
+                    <span className="font-semibold text-amber-300">{profile.name}: </span>
+                    {last.model}
+                  </p>
+                );
+              }
+              if (last?.user) {
+                return (
+                  <p className="text-blue-300/80 line-clamp-2">
+                    <span className="font-semibold text-blue-400">You: </span>
+                    {last.user}
+                  </p>
+                );
+              }
+              return (
+                <p className="text-zinc-500 text-[11px] italic">
+                  {liveVoice.state.micMode === 'hold'
+                    ? 'Hold button or Space to speak...'
+                    : liveVoice.state.micMode === 'handsFree'
+                    ? 'Open mic active. Speak freely...'
+                    : 'Tap mic button to speak...'}
+                </p>
+              );
+            })()}
             <div ref={transcriptEndRef} />
           </div>
 
@@ -780,27 +800,46 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
               </div>
 
               {/* Live Subtitle Transcript Stream */}
-              <div className="w-full max-w-xl bg-black/40 rounded-2xl border border-white/5 p-4 my-2 min-h-[100px] max-h-[140px] overflow-y-auto space-y-2">
+              <div className="w-full max-w-xl bg-black/40 rounded-2xl border border-white/5 p-4 my-2 min-h-[120px] max-h-[220px] overflow-y-auto space-y-2">
+                {liveVoice.transcriptTurns.map((turn, i) => (
+                  <div key={i} className="space-y-1.5">
+                    {turn.user && (
+                      <div className="text-xs text-blue-200/90 bg-blue-500/10 border border-blue-500/20 rounded-xl px-3 py-2">
+                        <span className="font-bold text-blue-400">You: </span>
+                        {turn.user}
+                      </div>
+                    )}
+                    {turn.model && (
+                      <div className="text-xs text-amber-100/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                        <span className="font-bold text-amber-300">{profile.name}: </span>
+                        {turn.model}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
                 {liveVoice.userTranscript && (
-                  <div className="text-xs text-blue-200/90 bg-blue-500/10 border border-blue-500/20 rounded-xl px-3 py-2">
+                  <div className="text-xs text-blue-200/90 bg-blue-500/10 border border-blue-500/30 rounded-xl px-3 py-2">
                     <span className="font-bold text-blue-400">You: </span>
                     {liveVoice.userTranscript}
                   </div>
                 )}
 
                 {liveVoice.modelTranscript && (
-                  <div className="text-xs text-amber-100/90 bg-amber-500/10 border border-amber-500/20 rounded-xl px-3 py-2">
+                  <div className="text-xs text-amber-100/90 bg-amber-500/10 border border-amber-500/30 rounded-xl px-3 py-2">
                     <span className="font-bold text-amber-300">{profile.name}: </span>
                     {liveVoice.modelTranscript}
                   </div>
                 )}
 
-                {!liveVoice.userTranscript && !liveVoice.modelTranscript && (
-                  <div className="text-center text-xs text-zinc-500 py-3">
-                    Start speaking with {profile.name} or type a prompt below. Responses will
-                    stream in real-time.
-                  </div>
-                )}
+                {liveVoice.transcriptTurns.length === 0 &&
+                  !liveVoice.userTranscript &&
+                  !liveVoice.modelTranscript && (
+                    <div className="text-center text-xs text-zinc-500 py-3">
+                      Start speaking with {profile.name} or type a prompt below. Responses will
+                      stream in real-time.
+                    </div>
+                  )}
                 <div ref={transcriptEndRef} />
               </div>
             </div>

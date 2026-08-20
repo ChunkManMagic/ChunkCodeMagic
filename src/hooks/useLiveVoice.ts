@@ -24,6 +24,7 @@ export function useLiveVoice() {
   const [state, setState] = useState<LiveVoiceState>(() => getLiveVoiceState());
   const [userTranscript, setUserTranscript] = useState('');
   const [modelTranscript, setModelTranscript] = useState('');
+  const [transcriptTurns, setTranscriptTurns] = useState<{ user: string; model: string }[]>([]);
   const [inputLevel, setInputLevel] = useState(0);
   const [outputLevel, setOutputLevel] = useState(0);
 
@@ -54,6 +55,7 @@ export function useLiveVoice() {
     ) => {
       setUserTranscript('');
       setModelTranscript('');
+      setTranscriptTurns([]);
       setInputLevel(0);
       setOutputLevel(0);
       try {
@@ -72,6 +74,9 @@ export function useLiveVoice() {
           },
           onTurnEnd: (userText, modelText) => {
             callbacksRef.current.onTurnEnd?.(userText, modelText);
+            if (userText || modelText) {
+              setTranscriptTurns((prev) => [...prev, { user: userText, model: modelText }]);
+            }
           },
         });
         if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
@@ -91,6 +96,7 @@ export function useLiveVoice() {
     setState(getLiveVoiceState());
     setUserTranscript('');
     setModelTranscript('');
+    setTranscriptTurns([]);
     setInputLevel(0);
     setOutputLevel(0);
   }, []);
@@ -193,6 +199,7 @@ export function useLiveVoice() {
     state,
     userTranscript,
     modelTranscript,
+    transcriptTurns,
     inputLevel,
     outputLevel,
     start,
