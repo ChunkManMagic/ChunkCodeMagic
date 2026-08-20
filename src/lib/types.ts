@@ -204,6 +204,7 @@ export interface AppSettings {
   writingToneEnabled?: boolean;
   writingTonePreset?: string;
   writingToneDims?: WritingToneDims;
+  enableAdultContent?: boolean;
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;
@@ -253,6 +254,7 @@ export const defaultSettings: AppSettings = {
   writingToneEnabled: true,
   writingTonePreset: 'cinematic',
   writingToneDims: DEFAULT_WRITING_TONE_DIMS,
+  enableAdultContent: false,
   premiumCustomVoices: true,
   premiumContextAnimations: true,
   premiumAutoAvatar: true,
@@ -328,6 +330,9 @@ export function getSettings(): AppSettings {
       }
       if (parsed.writingToneDims === undefined) {
         parsed.writingToneDims = DEFAULT_WRITING_TONE_DIMS;
+      }
+      if (parsed.enableAdultContent === undefined) {
+        parsed.enableAdultContent = false;
       }
       return { ...defaultSettings, ...parsed };
     }

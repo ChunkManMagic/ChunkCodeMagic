@@ -128,3 +128,34 @@ ${lines.join('\n')}
 export function tonePresetLabel(presetId?: string): string {
   return (presetId && TONE_PRESETS[presetId]?.label) || 'Custom';
 }
+
+// Mature-content directive, appended to prompts when the user has enabled
+// adult content. It permits mature, sensual, and erotic themes between adult
+// characters while keeping a firm "everyone is 18+" boundary.
+export function getMatureContentDirective(): string {
+  const s = getSettings();
+  if (!s.enableAdultContent) return '';
+  return `\nMATURE CONTENT DIRECTIVE:
+- Adult themes, sensual intimacy, and eroticism are permitted in this story when the player initiates or clearly welcomes them. Do not shy away from physicality, desire, or the body — write it vividly and tastefully, in keeping with the story's tone.
+- All characters who appear in any romantic or sexual context are adults (18+). Never depict or reference a minor in any romantic or sexual situation, in any medium.
+- Respect consent and the player's lead: escalate intimacy only as far as the player's own actions and words invite.
+`;
+}
+
+// Safety-filter relaxation, applied only while adult content is enabled. The
+// model provider still enforces its own hard limits; this simply lowers our
+// app's own filter thresholds so mature fiction isn't blocked at the API edge.
+export function getAdultSafetySettings():
+  | { safetySettings: { category: string; threshold: string }[] }
+  | undefined {
+  const s = getSettings();
+  if (!s.enableAdultContent) return undefined;
+  return {
+    safetySettings: [
+      { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+      { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+    ],
+  };
+}

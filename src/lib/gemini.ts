@@ -1,5 +1,5 @@
 import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings, getSettings } from "./types";
-import { getToneDirective } from "./tone";
+import { getToneDirective, getMatureContentDirective, getAdultSafetySettings } from "./tone";
 
 export { AppMode };
 export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
@@ -93,7 +93,7 @@ export function getGenAI() {
           const requestBody = {
             model,
             contents,
-            config
+            config: { ...config, ...(getAdultSafetySettings() || {}) }
           };
 
           const res = await fetch(typeof window !== 'undefined' ? '/api/gemini/generate' : 'http://localhost:3000/api/gemini/generate', {
@@ -197,7 +197,7 @@ export function getGenAI() {
           const requestBody = {
             model,
             contents,
-            config
+            config: { ...config, ...(getAdultSafetySettings() || {}) }
           };
 
           const res = await fetch("/api/gemini/generate/stream", {
@@ -402,6 +402,7 @@ function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEn
     : '';
 
   const toneDirective = getToneDirective();
+  const matureDirective = getMatureContentDirective();
 
   if (profile.mode === AppMode.ROLEPLAY) {
     const t = profile.traits;
@@ -436,7 +437,7 @@ ${traitDirectives}
 - Quirks: ${profile.quirks || 'None'} — Express these organically.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
-${styleInstruction}${toneDirective}
+${styleInstruction}${toneDirective}${matureDirective}
 
 ROLEPLAY RULES:
 - IMPORTANT: You provide the voice and actions for your character (${profile.name}) and any NPCs listed above.
@@ -499,7 +500,7 @@ NARRATOR RULES:
 - Wait for the player's input to advance their actions.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
-${styleInstruction}${toneDirective}
+${styleInstruction}${toneDirective}${matureDirective}
 If the player provides a [Director's Note: ...], use it to redirect the narrative. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
   }
 
@@ -553,7 +554,7 @@ DUNGEON MASTER RULES:
 - Wait for the player to declare their actions before resolving them.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
-${styleInstruction}${toneDirective}
+${styleInstruction}${toneDirective}${matureDirective}
 If the player provides a [Director's Note: ...], use it to adjust the session. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
 }
 function buildHistory(messages: any[]) {
@@ -973,7 +974,7 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
 - playerProfile: This is the profile for the USER'S character. Ensure it is distinct from the main character.
 - additionalCharacters: Generate a character for EVERY person the idea mentions or implies the player will meet (allies, rivals, companions, passersby, faction leaders, shopkeepers, monsters that talk, etc.). If the idea names specific people, each named person gets an entry. If it implies a crowd/group, generate 2-4 members of it. Minimum 0 if the idea is a solitary encounter, maximum 6. Each entry needs a name, a one-line description, a personality, and an appearance.
 
-${getToneDirective()}`;
+${getToneDirective()}${getMatureContentDirective()}`;
 
   let responseText = "{}";
 
@@ -1735,6 +1736,7 @@ export async function suggestNextAction(
     : '';
 
   const toneDirective = getToneDirective();
+  const matureDirective = getMatureContentDirective();
 
   const modeInstruction = profile.mode === AppMode.GAME
     ? `You are assisting a player in a tabletop RPG. Suggest one compelling next action for THEIR character. It must be written in the first person (or the player's preferred style) and be ready to send as a message. It should feel like a real game decision (attack, investigate, negotiate, use an item, cast a spell, etc.).`
@@ -1746,7 +1748,7 @@ export async function suggestNextAction(
 
   const systemInstruction = `${modeInstruction}
 ${guideInstruction}
-${styleInstruction}${toneDirective}
+${styleInstruction}${toneDirective}${matureDirective}
 ${buildPlayerBlock(profile)}
 
 They are interacting with / in the world of:
@@ -1806,6 +1808,7 @@ export async function refineInput(input: string, profile: CharacterProfile, hist
     : '';
 
   const toneDirective = getToneDirective();
+  const matureDirective = getMatureContentDirective();
 
   const systemInstruction = `You are an AI writing assistant. Your goal is to rewrite the player's draft to be higher quality while maintaining their intent and perspective.
 
@@ -1815,7 +1818,7 @@ The player is interacting with:
 Name: ${profile.name}
 Personality: ${profile.personality}
 Relationship: ${profile.relationship}
-${styleInstruction}${toneDirective}
+${styleInstruction}${toneDirective}${matureDirective}
 
 RULES:
 - You are writing FOR THE PLAYER. Use THEIR perspective (First person: "I walk", "I say").

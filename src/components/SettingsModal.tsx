@@ -88,6 +88,16 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
     }));
   };
 
+  const handleMatureToggle = (enabled: boolean) => {
+    if (enabled) {
+      const confirmed = window.confirm(
+        'This enables mature, adult-themed content (including erotic scenes) in your stories.\n\nBy enabling this you confirm you are an adult, 18 years or older. All romantic and sexual content is between adult characters only.\n\nEnable Mature Content?'
+      );
+      if (!confirmed) return;
+    }
+    setSettings((prev) => ({ ...prev, enableAdultContent: enabled }));
+  };
+
   const handleRefineInstructions = async (guidance?: string) => {
     if (isRefining) return;
     setIsRefining(true);
@@ -723,6 +733,38 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                       })}
                     </div>
                   </>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex justify-between items-center">
+                  <label className="text-sm font-medium text-gray-200">Mature Content</label>
+                  <button
+                    onClick={() => handleMatureToggle(!settings.enableAdultContent)}
+                    aria-label="Toggle Mature Content"
+                    className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${
+                      settings.enableAdultContent ? 'bg-rose-600' : 'bg-zinc-800'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block w-5 h-5 transform rounded-full bg-white transition-transform ${
+                        settings.enableAdultContent ? 'translate-x-5' : 'translate-x-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+                <p className="text-[11px] text-zinc-500">
+                  {settings.enableAdultContent
+                    ? 'On — mature, adult-themed and sensual content is allowed in this story (adults only, 18+).'
+                    : 'Off — stories stay clean and family-friendly. Enabling requires confirming you are 18 or older.'}
+                </p>
+                {settings.enableAdultContent && (
+                  <div className="mt-2 flex items-start gap-2 rounded-xl bg-rose-950/30 border border-rose-900/40 px-3 py-2">
+                    <span className="text-[11px] leading-relaxed text-rose-200/80">
+                      Adult content toggle. All characters in any romantic or sexual situation are adults (18+).
+                      The AI provider still enforces its own content limits.
+                    </span>
+                  </div>
                 )}
               </div>
 
