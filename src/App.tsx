@@ -1,16 +1,11 @@
-import { useState, useEffect, useMemo, useCallback, Component, ErrorInfo, ReactNode } from 'react';
+import { useState, useEffect, useMemo, useCallback, Component, ErrorInfo, ReactNode, lazy, Suspense } from 'react';
 import { get, set, del } from 'idb-keyval';
 import { motion, AnimatePresence } from 'motion/react';
-import { CharacterCreator } from './components/CharacterCreator';
-import { ChatInterface } from './components/ChatInterface';
-import { CharacterEditor } from './components/CharacterEditor';
-import { ScenarioLibrary } from './components/ScenarioLibrary';
 import { CharacterProfile, generateId } from './lib/gemini';
 import { Scenario, getSettings, Message, CodexEntry } from './lib/types';
 import { importStory, exportStory, downloadExport, PersonaForgeStoryExport } from './lib/transfer';
 import { Library, AlertCircle, CheckCircle2, Settings, LogIn, User as UserIcon } from 'lucide-react';
 import { STORAGE_KEYS } from './constants';
-import { SettingsModal } from './components/SettingsModal';
 import { useStaleDataCleanup } from './hooks/useStorage';
 import { ToastContainer } from './components/ToastContainer';
 import { OfflineBanner } from './components/OfflineBanner';
@@ -20,6 +15,31 @@ import { SyncConflictModal } from './components/SyncConflictModal';
 import { collection, getDocs } from 'firebase/firestore';
 import { db, auth } from './firebase';
 import { signInWithPopup, GoogleAuthProvider, signOut } from 'firebase/auth';
+
+// Heavy screens are code-split so the app shell loads fast; each screen only
+// downloads when it's actually opened. Components use named exports, so map
+// them to the default shape React.lazy expects.
+const CharacterCreator = lazy(() =>
+  import('./components/CharacterCreator').then((m) => ({ default: m.CharacterCreator }))
+);
+const CharacterEditor = lazy(() =>
+  import('./components/CharacterEditor').then((m) => ({ default: m.CharacterEditor }))
+);
+const ScenarioLibrary = lazy(() =>
+  import('./components/ScenarioLibrary').then((m) => ({ default: m.ScenarioLibrary }))
+);
+const ChatInterface = lazy(() =>
+  import('./components/ChatInterface').then((m) => ({ default: m.ChatInterface }))
+);
+const SettingsModal = lazy(() =>
+  import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal }))
+);
+
+const ScreenLoader = () => (
+  <div className="flex-1 flex items-center justify-center py-20">
+    <div className="w-9 h-9 border-2 border-emerald-500/30 border-t-emerald-400 rounded-full animate-spin" />
+  </div>
+);
 
 // Custom Confirmation Modal
 interface ConfirmationModalProps {
@@ -892,7 +912,11 @@ export default function App() {
         onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }))}
       />
 
-      {showSettings && <SettingsModal onClose={handleSettingsClose} />}
+      {showSettings && (
+        <Suspense fallback={null}>
+          <SettingsModal onClose={handleSettingsClose} />
+        </Suspense>
+      )}
 
       {conflict && (
         <SyncConflictModal 
@@ -905,57 +929,65 @@ export default function App() {
       <main className="flex-1 flex flex-col max-w-7xl mx-auto w-full relative z-10">
         {!currentScenarioId && !isCreating && !showDraft ? (
           <ErrorBoundary>
-            <ScenarioLibrary 
-              scenarios={Array.from(new Map(scenarios.map(s => [s.id, s])).values())} 
-              onSelect={handleSelectScenario} 
-              onEdit={handleEditScenario}
-              onDuplicate={handleDuplicateScenario}
-              onDelete={handleDeleteScenario} 
-              onNew={handleCreateNew} 
-              hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
-              onRestoreDraft={() => setShowDraft(true)}
-              onImport={handleImportScenario}
-              onExport={handleExportScenario}
-            />
+            <Suspense fallback={<ScreenLoader />}>
+              <ScenarioLibrary 
+                scenarios={Array.from(new Map(scenarios.map(s => [s.id, s])).values())} 
+                onSelect={handleSelectScenario} 
+                onEdit={handleEditScenario}
+                onDuplicate={handleDuplicateScenario}
+                onDelete={handleDeleteScenario} 
+                onNew={handleCreateNew} 
+                hasDraft={!!(localStorage.getItem(STORAGE_KEYS.DRAFT_DATA) || localStorage.getItem(STORAGE_KEYS.DRAFT_IDEA))}
+                onRestoreDraft={() => setShowDraft(true)}
+                onImport={handleImportScenario}
+                onExport={handleExportScenario}
+              />
+            </Suspense>
           </ErrorBoundary>
         ) : (isCreating || showDraft) && !currentScenarioId ? (
           <div className="flex-1 flex items-center justify-center py-10">
             <ErrorBoundary>
-              <CharacterCreator 
-                scenarios={scenarios}
-                onCharacterCreated={handleCharacterCreated} 
-                onCancel={() => {
-                  setIsCreating(false);
-                  setShowDraft(false);
-                }}
-              />
+              <Suspense fallback={<ScreenLoader />}>
+                <CharacterCreator 
+                  scenarios={scenarios}
+                  onCharacterCreated={handleCharacterCreated} 
+                  onCancel={() => {
+                    setIsCreating(false);
+                    setShowDraft(false);
+                  }}
+                />
+              </Suspense>
             </ErrorBoundary>
           </div>
         ) : isEditing && currentScenario ? (
           <div className="flex-1 flex items-center justify-center py-10">
             <ErrorBoundary>
-              <CharacterEditor
-                profile={currentScenario.profile}
-                avatarBase64={currentScenario.avatarBase64}
-                onSave={handleSaveEdit}
-                onCancel={() => setIsEditing(false)}
-                scenarios={scenarios}
-              />
+              <Suspense fallback={<ScreenLoader />}>
+                <CharacterEditor
+                  profile={currentScenario.profile}
+                  avatarBase64={currentScenario.avatarBase64}
+                  onSave={handleSaveEdit}
+                  onCancel={() => setIsEditing(false)}
+                  scenarios={scenarios}
+                />
+              </Suspense>
             </ErrorBoundary>
           </div>
         ) : currentScenario ? (
           <div className="flex-1 min-h-0">
             <ErrorBoundary>
-              <ChatInterface 
-                profile={currentScenario.profile} 
-                avatarBase64={currentScenario.avatarBase64} 
-                scenarioId={currentScenario.id}
-                onEditCharacter={() => setIsEditing(true)} 
-                onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
-                onUpdateProfile={handleUpdateProfile}
-                onUpdateAvatar={handleUpdateAvatar}
-                onBranchScenario={handleBranchScenario}
-              />
+              <Suspense fallback={<ScreenLoader />}>
+                <ChatInterface 
+                  profile={currentScenario.profile} 
+                  avatarBase64={currentScenario.avatarBase64} 
+                  scenarioId={currentScenario.id}
+                  onEditCharacter={() => setIsEditing(true)} 
+                  onCarryOver={() => handleCarryOver(currentScenario.profile, currentScenario.avatarBase64)}
+                  onUpdateProfile={handleUpdateProfile}
+                  onUpdateAvatar={handleUpdateAvatar}
+                  onBranchScenario={handleBranchScenario}
+                />
+              </Suspense>
             </ErrorBoundary>
           </div>
         ) : null}
