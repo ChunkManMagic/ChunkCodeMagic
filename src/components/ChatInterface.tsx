@@ -699,6 +699,20 @@ ${storySummary}
 `
       : '';
 
+    // Recent exchanges folded straight into the prompt: the Live API's
+    // sendClientContent history seeding isn't honored by gemini-3.1 without a
+    // config flag this SDK can't set, so putting the recent messages here
+    // guarantees the character remembers the conversation on any model.
+    const recentBlock = messages.length
+      ? `RECENT CONVERSATION (the most recent exchanges — stay consistent with them):
+${messages
+  .slice(-6)
+  .map((m) => `${m.role === 'user' ? 'Player' : profile.name}: ${m.text}`)
+  .join('\n')}
+
+`
+      : '';
+
     return `This is a LIVE, in-person experience — not a text chat. The moment is happening right now, and you narrate it as it happens, treating it like a scene you are physically present in.
 ${presence}
 
@@ -713,15 +727,14 @@ Speech pattern: ${profile.speechPattern || 'Natural'} — keep your spoken respo
 Current mood: ${profile.currentMood || 'Neutral'}
 World / atmosphere: ${profile.worldAtmosphere || 'Not specified'}
 ${profile.additionalCharacters?.length ? `NPCs present that you may voice: ${profile.additionalCharacters.map(c => c.name).join(', ')}` : ''}
-${summaryBlock}
-LIVE NARRATION RULES:
+${summaryBlock}${recentBlock}LIVE NARRATION RULES:
 - Treat the moment as if it is happening in person, inside the scene. React to the player as someone physically there with you.
 - NARRATE ACTIONS ALONGSIDE SPEAKING: describe physical actions, gestures, expressions, sounds, and environment details as they happen, then speak the dialogue. Blend narration and speech in every turn so it feels like the scene is unfolding live.
 - Format narrated actions in asterisks and keep spoken dialogue as plain text, e.g.: *She steps closer, her voice dropping low.* "I've been waiting for you."
 - Let the world react: weather, noises, light, other NPCs, and shifting tension should be narrated as they occur.
 - Keep turns tight and cinematic — a few sentences of narration plus the dialogue is enough; expand only when the moment truly demands more.
 - Never break character and never act for the player: do NOT decide their actions, speak their lines, or describe their inner thoughts. Narrate around them and react to what they do.`;
-  }, [profile, storySummary]);
+  }, [profile, storySummary, messages]);
 
   const startLiveVoiceSession = useCallback(async () => {
     if (liveVoice.isActive) {

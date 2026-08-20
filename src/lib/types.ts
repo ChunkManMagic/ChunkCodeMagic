@@ -156,6 +156,7 @@ export interface AppSettings {
   liveVoiceMicDeviceId?: string;
   liveVoiceOutputDeviceId?: string;
   liveVoiceOutputVolume?: number;
+  liveVoiceBargeIn?: boolean;
   themeAccent?: ThemeAccent;
   fontFamily?: FontFamilyOption;
   chatDensity?: ChatDensityOption;
@@ -199,6 +200,7 @@ export const defaultSettings: AppSettings = {
   liveVoiceName: 'Kore',
   liveVoiceTemperature: 1.0,
   liveVoiceOutputVolume: 1,
+  liveVoiceBargeIn: false,
   themeAccent: 'emerald',
   fontFamily: 'sans',
   chatDensity: 'comfy',
@@ -248,6 +250,9 @@ export function getSettings(): AppSettings {
       }
       if (parsed.liveVoiceOutputVolume === undefined) {
         parsed.liveVoiceOutputVolume = 1;
+      }
+      if (parsed.liveVoiceBargeIn === undefined) {
+        parsed.liveVoiceBargeIn = false;
       }
       if (!parsed.themeAccent) {
         parsed.themeAccent = 'emerald';

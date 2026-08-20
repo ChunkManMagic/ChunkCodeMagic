@@ -70,6 +70,7 @@ export interface LiveVoiceState {
   inputLevel: number;
   outputLevel: number;
   outputVolume: number;
+  bargeInEnabled: boolean;
   isReconnecting: boolean;
 }
 
@@ -82,6 +83,7 @@ export interface LiveVoiceOptions {
   micDeviceId?: string;
   outputDeviceId?: string;
   outputVolume?: number;
+  bargeInEnabled?: boolean;
   contextTurns?: { role: string; text: string }[];
   onUserTranscript?: (text: string, final: boolean) => void;
   onModelTranscript?: (text: string, final: boolean) => void;
@@ -115,6 +117,7 @@ interface SessionHandle {
   isMicMuted: boolean;
   isAiMuted: boolean;
   micMode: LiveVoiceMicMode;
+  bargeInEnabled: boolean;
   status: LiveVoiceStatus;
   isSpeaking: boolean;
   inputLevel: number;
@@ -547,6 +550,7 @@ function emitState(handle: SessionHandle) {
     inputLevel: handle.inputLevel,
     outputLevel: handle.outputLevel,
     outputVolume: handle.outputVolume,
+    bargeInEnabled: handle.bargeInEnabled,
     isReconnecting,
   });
 }
@@ -744,8 +748,10 @@ async function attachMicCapture(handle: SessionHandle, forceProcessor = false) {
     // as user speech and barge in on itself, cutting the reply in and out.
     // Suppress mic audio while the AI is speaking — tap/hold modes close the
     // mic anyway, so this only affects Hands-Free. Barge-in still works via
-    // the Interrupt button (or a typed message).
-    if (handle.isSpeaking && handle.micMode === "handsFree") return;
+    // the Interrupt button (or a typed message). When the user enables the
+    // barge-in toggle, let the voice through so the server's VAD can cut the
+    // AI off mid-sentence naturally.
+    if (handle.isSpeaking && handle.micMode === "handsFree" && !handle.bargeInEnabled) return;
     try {
       handle.session.sendRealtimeInput({
         audio: { data: base64, mimeType: "audio/pcm;rate=16000" },
@@ -886,6 +892,7 @@ async function connectSession(
     isMicMuted: false,
     isAiMuted: false,
     micMode: options.micMode || "hold",
+    bargeInEnabled: options.bargeInEnabled ?? false,
     status: "connecting",
     isSpeaking: false,
     inputLevel: 0,
@@ -1093,6 +1100,7 @@ async function reconnectNow(): Promise<void> {
         handle.isMicMuted = stale.isMicMuted;
         handle.isAiMuted = stale.isAiMuted;
         handle.outputVolume = stale.outputVolume;
+        handle.bargeInEnabled = stale.bargeInEnabled;
         handle.pushToTalk = stale.micMode === "handsFree" || isMicSending(stale);
       }
       try {
@@ -1286,6 +1294,18 @@ export function setLiveVoiceOutputVolume(volume: number): boolean {
   return true;
 }
 
+// Toggle Hands-Free voice barge-in. When enabled the open mic keeps streaming
+// while the AI speaks, so the server's VAD can cut it off naturally when you
+// talk over it (headsets may feed the AI's own voice back and self-barge-in).
+// When disabled the mic is gated while the AI speaks and the Interrupt button
+// or a typed message is the way to cut in.
+export function setLiveVoiceBargeIn(enabled: boolean): boolean {
+  if (!active) return false;
+  active.bargeInEnabled = enabled;
+  emitState(active);
+  return true;
+}
+
 // Play a short two-tone chirp through a chosen output device (or the system
 // default) so the user can confirm speaker routing without waiting for the
 // AI to talk. Uses its own throwaway AudioContext so the live session's
@@ -1366,6 +1386,7 @@ export function getLiveVoiceState(): LiveVoiceState {
       inputLevel: 0,
       outputLevel: 0,
       outputVolume: 1,
+      bargeInEnabled: false,
       isReconnecting: false,
     };
   }
@@ -1381,6 +1402,7 @@ export function getLiveVoiceState(): LiveVoiceState {
     inputLevel: active.inputLevel,
     outputLevel: active.outputLevel,
     outputVolume: active.outputVolume,
+    bargeInEnabled: active.bargeInEnabled,
     isReconnecting,
   };
 }

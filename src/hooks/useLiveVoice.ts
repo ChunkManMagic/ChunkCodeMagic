@@ -7,6 +7,7 @@ import {
   setLiveVoiceOutputDevice,
   setLiveVoiceInputDevice,
   setLiveVoiceOutputVolume,
+  setLiveVoiceBargeIn,
   toggleLiveVoiceMicMute,
   toggleLiveVoiceAiMute,
   interruptAiSpeech,
@@ -65,6 +66,7 @@ export function useLiveVoice() {
           micDeviceId: options.micDeviceId ?? settings.liveVoiceMicDeviceId ?? '',
           outputDeviceId: options.outputDeviceId ?? settings.liveVoiceOutputDeviceId ?? '',
           outputVolume: options.outputVolume ?? settings.liveVoiceOutputVolume ?? 1,
+          bargeInEnabled: options.bargeInEnabled ?? settings.liveVoiceBargeIn ?? false,
           onUserTranscript: (text) => setUserTranscript(text),
           onModelTranscript: (text) => setModelTranscript(text),
           onStateChange: handleStateChange,
@@ -157,6 +159,14 @@ export function useLiveVoice() {
     }
   }, []);
 
+  const setBargeIn = useCallback((enabled: boolean) => {
+    const ok = setLiveVoiceBargeIn(enabled);
+    if (ok) {
+      const settings = getSettings();
+      saveSettings({ ...settings, liveVoiceBargeIn: enabled });
+    }
+  }, []);
+
   const toggleMicMute = useCallback(() => {
     const isMuted = toggleLiveVoiceMicMute();
     if (isMuted) {
@@ -210,6 +220,7 @@ export function useLiveVoice() {
     setOutputDevice,
     setInputDevice,
     setOutputVolume,
+    setBargeIn,
     toggleMicMute,
     toggleAiMute,
     interrupt,

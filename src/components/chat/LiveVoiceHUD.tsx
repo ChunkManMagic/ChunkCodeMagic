@@ -13,6 +13,7 @@ import {
   Radio,
   Square,
   ChevronUp,
+  Zap,
 } from 'lucide-react';
 import { CharacterProfile, getSettings, saveSettings } from '../../lib/types';
 import {
@@ -42,6 +43,7 @@ interface LiveVoiceHUDProps {
     setOutputDevice: (deviceId: string) => void;
     setInputDevice: (deviceId: string) => Promise<boolean>;
     setOutputVolume: (volume: number) => void;
+    setBargeIn: (enabled: boolean) => void;
     toggleMicMute: () => void;
     toggleAiMute: () => void;
     interrupt: () => void;
@@ -886,6 +888,24 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
               {/* Utility Mute Controls */}
               <div className="flex items-center gap-2">
                 <button
+                  onClick={() => liveVoice.setBargeIn(!liveVoice.state.bargeInEnabled)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 border transition-all ${
+                    liveVoice.state.bargeInEnabled
+                      ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                      : 'bg-white/5 text-zinc-400 hover:text-white border-transparent'
+                  }`}
+                  title={
+                    liveVoice.state.bargeInEnabled
+                      ? 'Voice barge-in is ON: talking over the AI cuts it off mid-sentence. Headsets may feed its voice back and cause self-interruption.'
+                      : 'Voice barge-in is OFF: while the AI speaks, your mic is muted. Cut in with the Interrupt button or a typed message.'
+                  }
+                >
+                  <Zap className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Barge-In</span>{' '}
+                  {liveVoice.state.bargeInEnabled ? 'On' : 'Off'}
+                </button>
+
+                <button
                   onClick={liveVoice.toggleMicMute}
                   className={`px-3 py-1.5 rounded-xl text-xs font-semibold flex items-center gap-1.5 transition-all ${
                     liveVoice.state.isMicMuted
@@ -923,6 +943,14 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                   )}
                 </button>
               </div>
+
+              {liveVoice.state.micMode === 'handsFree' && !liveVoice.state.bargeInEnabled && (
+                <p className="w-full text-[10px] text-zinc-500 flex items-center gap-1 mt-0.5">
+                  <Zap className="w-3 h-3 text-amber-400/70" />
+                  Barge-in is off — use the <span className="text-amber-300 font-semibold">Interrupt</span>{' '}
+                  button or a typed message to cut in while {profile.name} is speaking.
+                </p>
+              )}
             </div>
 
             {/* In-Call Typed Note / Discreet Message Bar */}
