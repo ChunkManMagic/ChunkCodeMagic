@@ -7,6 +7,7 @@ import { importStory, exportStory, downloadExport, PersonaForgeStoryExport } fro
 import { Library, AlertCircle, CheckCircle2, Settings, LogIn, User as UserIcon } from 'lucide-react';
 import { STORAGE_KEYS } from './constants';
 import { useStaleDataCleanup } from './hooks/useStorage';
+import { tonePresetLabel } from './lib/tone';
 import { ToastContainer } from './components/ToastContainer';
 import { OfflineBanner } from './components/OfflineBanner';
 import { useToast } from './hooks/useToast';
@@ -165,6 +166,12 @@ export default function App() {
     type: 'delete' | 'reset' | 'rewind' | null;
     targetId: string | null;
   }>({ isOpen: false, title: '', message: '', type: null, targetId: null });
+
+  // Pending carry-over request awaiting the user's tone choice.
+  const [carryOverChoice, setCarryOverChoice] = useState<{
+    profile: CharacterProfile;
+    avatarBase64: string;
+  } | null>(null);
   
   useStaleDataCleanup(scenarios, isScenariosLoaded);
   
@@ -639,13 +646,27 @@ export default function App() {
   };
 
   const handleCarryOver = async (profile: CharacterProfile, avatarBase64: string) => {
+    // Ask the user what to do with the tone before duplicating the scenario
+    // (they can keep it, start fresh, or adopt the global Tone Studio).
+    setCarryOverChoice({ profile, avatarBase64 });
+  };
+
+  const carryOverWith = async (toneAction: 'keep' | 'fresh' | 'global') => {
+    if (!carryOverChoice) return;
+    const { profile, avatarBase64 } = carryOverChoice;
+    setCarryOverChoice(null);
     // Create a new scenario with the same character but new ID (empty messages)
     let newScenario: Scenario = {
       id: generateId(),
       profile: {
         ...profile,
         relationship: 'Strangers', // Reset relationship for new scenario
-        storyTone: 'Dramatic', // Reset tone
+        storyTone:
+          toneAction === 'fresh'
+            ? 'Dramatic'
+            : toneAction === 'global'
+            ? tonePresetLabel(getSettings().writingTonePreset)
+            : profile.storyTone, // keep
         currentMood: 'Neutral' // Reset mood
       },
       avatarBase64,
@@ -911,6 +932,50 @@ export default function App() {
         onConfirm={handleConfirmAction}
         onCancel={() => setConfirmModal(prev => ({ ...prev, isOpen: false, type: null, targetId: null }))}
       />
+
+      {carryOverChoice && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4">
+          <div
+            className="absolute inset-0 bg-black/80 backdrop-blur-sm"
+            onClick={() => setCarryOverChoice(null)}
+          />
+          <div className="relative w-full max-w-md bg-zinc-950 border border-white/10 rounded-3xl shadow-2xl shadow-black p-6">
+            <h3 className="text-lg font-bold text-white font-serif">Carry into a new scenario?</h3>
+            <p className="text-xs text-zinc-400 mt-1">
+              {carryOverChoice.profile.name} moves to a fresh story with a clean slate. What tone should the new story use?
+            </p>
+            <div className="space-y-2 mt-4">
+              <button
+                onClick={() => carryOverWith('keep')}
+                className="w-full text-left px-4 py-3 rounded-2xl bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 transition-colors"
+              >
+                <div className="text-sm font-bold text-emerald-300">Keep my tone</div>
+                <div className="text-[11px] text-zinc-400">"{carryOverChoice.profile.storyTone || 'Dramatic'}" carries over unchanged</div>
+              </button>
+              <button
+                onClick={() => carryOverWith('global')}
+                className="w-full text-left px-4 py-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              >
+                <div className="text-sm font-bold text-white">Use global Tone Studio</div>
+                <div className="text-[11px] text-zinc-400">"{tonePresetLabel(getSettings().writingTonePreset)}" from Settings → Writing Style</div>
+              </button>
+              <button
+                onClick={() => carryOverWith('fresh')}
+                className="w-full text-left px-4 py-3 rounded-2xl bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              >
+                <div className="text-sm font-bold text-white">Start fresh</div>
+                <div className="text-[11px] text-zinc-400">Reset to "Dramatic"</div>
+              </button>
+            </div>
+            <button
+              onClick={() => setCarryOverChoice(null)}
+              className="mt-4 w-full py-2 text-xs text-zinc-500 hover:text-zinc-300 transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {showSettings && (
         <Suspense fallback={null}>

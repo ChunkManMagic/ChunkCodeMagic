@@ -872,7 +872,14 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                   { label: 'Accessories', field: 'accessories' },
                   { label: 'Hair Style', field: 'hairStyle' },
                   { label: 'Hair Color', field: 'hairColor' },
-                  { label: 'Eye Color', field: 'eyeColor' }
+                  { label: 'Eye Color', field: 'eyeColor' },
+                  { label: 'Relationship to the World', field: 'relationship' },
+                  { label: 'Character Flaws', field: 'characterFlaws' },
+                  { label: 'Secret Motive', field: 'secretMotive' },
+                  { label: 'Speech Pattern', field: 'speechPattern' },
+                  { label: 'Likes & Dislikes', field: 'likesAndDislikes' },
+                  { label: 'Core Beliefs', field: 'coreBeliefs' },
+                  { label: 'Quirks', field: 'quirks' },
                 ].map(item => (
                   <div key={item.field}>
                     <div className="flex justify-between items-center mb-2">
@@ -891,6 +898,41 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                     />
                   </div>
                 ))}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                {[
+                  { label: 'Friendliness', key: 'friendliness' },
+                  { label: 'Assertiveness', key: 'assertiveness' },
+                  { label: 'Empathy', key: 'empathy' },
+                ].map((t) => {
+                  const pTraits = profile.playerProfile?.traits || {};
+                  const val = pTraits[t.key] ?? 50;
+                  return (
+                    <div key={t.key}>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{t.label}</label>
+                        <span className="text-[10px] text-zinc-500 font-mono tabular-nums">{val}/100</span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={val}
+                        onChange={(e) =>
+                          setProfile({
+                            ...profile,
+                            playerProfile: {
+                              ...(profile.playerProfile || {}),
+                              traits: { ...(profile.playerProfile?.traits || {}), [t.key]: Number(e.target.value) },
+                            },
+                          })
+                        }
+                        className="w-full accent-emerald-500"
+                      />
+                    </div>
+                  );
+                })}
               </div>
             </div>
           </div>

@@ -1,4 +1,5 @@
 import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings, getSettings } from "./types";
+import { getToneDirective } from "./tone";
 
 export { AppMode };
 export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
@@ -353,6 +354,22 @@ function buildPlayerBlock(profile: CharacterProfile): string {
     : '';
 
   const pp = profile.playerProfile;
+  const deepSheet = pp?.characterFlaws || pp?.secretMotive || pp?.speechPattern || pp?.likesAndDislikes || pp?.coreBeliefs || pp?.quirks || pp?.relationship
+    ? `\nDeep Character Sheet (the player's character is as fully realized as yours — respect it):
+${pp.characterFlaws ? `- Flaws: ${pp.characterFlaws}` : ''}
+${pp.secretMotive ? `- Secret Motive: ${pp.secretMotive}` : ''}
+${pp.speechPattern ? `- Speech Pattern: ${pp.speechPattern}` : ''}
+${pp.likesAndDislikes ? `- Likes/Dislikes: ${pp.likesAndDislikes}` : ''}
+${pp.coreBeliefs ? `- Core Beliefs: ${pp.coreBeliefs}` : ''}
+${pp.quirks ? `- Quirks: ${pp.quirks}` : ''}
+${pp.relationship ? `- Relationship to the world: ${pp.relationship}` : ''}
+`
+    : '';
+  const pTraits = pp?.traits;
+  const pTraitLine = pTraits && (pTraits.friendliness !== undefined || pTraits.assertiveness !== undefined || pTraits.empathy !== undefined)
+    ? `\nPlayer Personality Traits:\n- Friendliness: ${pTraits.friendliness ?? 50}/100\n- Assertiveness: ${pTraits.assertiveness ?? 50}/100\n- Empathy: ${pTraits.empathy ?? 50}/100\n`
+    : '';
+
   return `\nPLAYER CHARACTER:
 Name: ${pp?.name || 'The Protagonist'}
 Description: ${pp?.description || 'A mysterious traveler'}
@@ -364,7 +381,7 @@ Accessories: ${pp?.accessories || 'None'}
 Hair: ${pp?.hairStyle || 'Unknown'} ${pp?.hairColor || ''}
 Eyes: ${pp?.eyeColor || 'Unknown'}
 ${profile.mode === AppMode.GAME ? `Class: ${pp?.playerClass || 'Unknown'}\nRace: ${pp?.playerRace || 'Unknown'}\nHP: ${pp?.currentHP ?? '?'}/${pp?.maxHP ?? '?'}\nLevel: ${pp?.level ?? 1}\nXP: ${pp?.xp ?? 0}` : ''}
-${inventoryBlock}`;
+${deepSheet}${pTraitLine}${inventoryBlock}`;
 }
 
 function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEntry[], currentSummary: string, customInstructions?: string): string {
@@ -383,6 +400,8 @@ function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEn
   const styleInstruction = customInstructions
     ? `\nCUSTOM WRITING STYLE INSTRUCTIONS (Follow these strictly):\n${customInstructions}\n`
     : '';
+
+  const toneDirective = getToneDirective();
 
   if (profile.mode === AppMode.ROLEPLAY) {
     const t = profile.traits;
@@ -417,7 +436,7 @@ ${traitDirectives}
 - Quirks: ${profile.quirks || 'None'} — Express these organically.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
-${styleInstruction}
+${styleInstruction}${toneDirective}
 
 ROLEPLAY RULES:
 - IMPORTANT: You provide the voice and actions for your character (${profile.name}) and any NPCs listed above.
@@ -480,7 +499,7 @@ NARRATOR RULES:
 - Wait for the player's input to advance their actions.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
-${styleInstruction}
+${styleInstruction}${toneDirective}
 If the player provides a [Director's Note: ...], use it to redirect the narrative. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
   }
 
@@ -534,7 +553,7 @@ DUNGEON MASTER RULES:
 - Wait for the player to declare their actions before resolving them.
 ${playerBlock}${additionalChars}
 ${codexContext}${summaryContext}
-${styleInstruction}
+${styleInstruction}${toneDirective}
 If the player provides a [Director's Note: ...], use it to adjust the session. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
 }
 function buildHistory(messages: any[]) {
@@ -933,7 +952,9 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
        - The narrator's "personality" is the world's narrative voice.`
     : `This is a ROLEPLAY mode. Create a compelling single character for deep one-on-one interaction. 
        - Populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values.
-       - "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor" are all for the character.`;
+       - "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor" are all for the character.
+       - Build out the playerProfile (the USER's character) to the SAME depth as the main character: personality, backstory, appearance, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, traits (friendliness/assertiveness/empathy 0-100), and relationship to the main character. The player's character must be a fully-realized sheet, never thin.
+       - Generate additionalCharacters for every person the idea mentions or implies (see instructions).`;
 
   const contents = `Generate a detailed character profile based on this idea: "${idea}"
 
@@ -949,7 +970,10 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
 - worldAtmosphere: Describe the WORLD'S mood, environment, and general feel (e.g., "A dark, rainy cyberpunk city with neon lights and constant surveillance"). Do NOT describe a person.
 - keyLocations: List 3-4 specific, interesting locations in the WORLD.
 - gameSystem: Describe the rules or mechanics if in GAME mode (e.g., "D&D 5e", "Powered by the Apocalypse").
-- playerProfile: This is the profile for the USER'S character. Ensure it is distinct from the main character.`;
+- playerProfile: This is the profile for the USER'S character. Ensure it is distinct from the main character.
+- additionalCharacters: Generate a character for EVERY person the idea mentions or implies the player will meet (allies, rivals, companions, passersby, faction leaders, shopkeepers, monsters that talk, etc.). If the idea names specific people, each named person gets an entry. If it implies a crowd/group, generate 2-4 members of it. Minimum 0 if the idea is a solitary encounter, maximum 6. Each entry needs a name, a one-line description, a personality, and an appearance.
+
+${getToneDirective()}`;
 
   let responseText = "{}";
 
@@ -960,14 +984,15 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
     - worldAtmosphere: Describe the WORLD'S mood, environment, and general feel (e.g., "A dark, rainy cyberpunk city with neon lights and constant surveillance"). Do NOT describe a person.
     - keyLocations: List 3-4 specific, interesting locations in the WORLD.
     - gameSystem: Describe the rules or mechanics if in GAME mode (e.g., "D&D 5e", "Powered by the Apocalypse").
-    - playerProfile: This is the profile for the USER'S character. Ensure it is distinct from the main character.
+    - playerProfile: This is the profile for the USER'S character. Build it to the SAME depth as the main character: personality, backstory, appearance, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, traits (friendliness/assertiveness/empathy 0-100), and relationship.
+    - additionalCharacters: An array of characters for EVERY person the idea mentions or implies the player will meet (allies, rivals, companions, passersby, leaders, shopkeepers, monsters that talk, etc.). Each entry: name, description, personality, appearance. 0-6 entries based on what the idea implies.
     
-    Include all of these fields: name, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor, storyTone, relationship, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, incitingIncident, gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, currentCampaignArc, currentMood, and a playerProfile object with name, description, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor.`;
+    Include all of these fields: name, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor, storyTone, relationship, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, incitingIncident, gameSystem, questObjective, dungeonMasterStyle, rulesComplexity, difficultyLevel, partyComposition, startingEquipment, currentCampaignArc, currentMood, a playerProfile object with name, description, personality, backstory, appearance, clothing, accessories, hairStyle, hairColor, eyeColor, relationship, characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, quirks, traits (friendliness/assertiveness/empathy), and an additionalCharacters array with name, description, personality, appearance.`;
     responseText = await callOpenRouter([], systemPrompt, contents, settings);
   } else {
     const ai = getGenAI();
     const schemaConfig = {
-      maxOutputTokens: 8192,
+      maxOutputTokens: 12288,
       responseMimeType: "application/json",
       responseSchema: {
         type: Type.OBJECT,
@@ -1019,8 +1044,37 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
               hairStyle: { type: Type.STRING },
               hairColor: { type: Type.STRING },
               eyeColor: { type: Type.STRING },
+              relationship: { type: Type.STRING, description: "The player character's relationship to the main character / world." },
+              characterFlaws: { type: Type.STRING, description: "Detailed description of the player character's flaws." },
+              secretMotive: { type: Type.STRING, description: "Detailed description of the player character's secret motive." },
+              speechPattern: { type: Type.STRING, description: "Detailed description of how the player character talks." },
+              likesAndDislikes: { type: Type.STRING, description: "Detailed description of the player character's likes and dislikes." },
+              coreBeliefs: { type: Type.STRING, description: "Detailed description of the player character's core beliefs." },
+              quirks: { type: Type.STRING, description: "Detailed description of the player character's quirks." },
+              traits: {
+                type: Type.OBJECT,
+                properties: {
+                  friendliness: { type: Type.NUMBER, description: "0-100." },
+                  assertiveness: { type: Type.NUMBER, description: "0-100." },
+                  empathy: { type: Type.NUMBER, description: "0-100." }
+                },
+                required: ["friendliness", "assertiveness", "empathy"]
+              }
             },
-            required: ["name", "description", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor"]
+            required: ["name", "description", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor", "relationship", "characterFlaws", "secretMotive", "speechPattern", "likesAndDislikes", "coreBeliefs", "quirks", "traits"]
+          },
+          additionalCharacters: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.OBJECT,
+              properties: {
+                name: { type: Type.STRING },
+                description: { type: Type.STRING, description: "One-line description of who they are." },
+                personality: { type: Type.STRING, description: "Detailed description of their personality." },
+                appearance: { type: Type.STRING, description: "Detailed description of their appearance." }
+              },
+              required: ["name", "description", "personality", "appearance"]
+            }
           }
         },
         required: [
@@ -1028,7 +1082,7 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
           "storyTone", "relationship", "characterFlaws", "secretMotive", "speechPattern", "likesAndDislikes", "coreBeliefs", "quirks",
           "worldAtmosphere", "keyLocations", "scenarioStakes", "scenarioConflict", "timePeriod", "factions", "magicOrTechnologyLevel", "incitingIncident",
           "gameSystem", "questObjective", "dungeonMasterStyle", "rulesComplexity", "difficultyLevel", "partyComposition", "startingEquipment", "currentCampaignArc",
-          "currentMood", "playerProfile"
+          "currentMood", "playerProfile", "additionalCharacters"
         ]
       }
     };
@@ -1091,18 +1145,39 @@ CRITICAL INSTRUCTIONS FOR FIELDS:
     traits: defaultTraits,
     storyTone: data.storyTone || "Dramatic",
     relationship: data.relationship || "Strangers",
-    playerProfile: data.playerProfile || { 
-      name: "The Protagonist", 
-      description: "A mysterious traveler.",
-      personality: "Determined.",
-      backstory: "Seeking answers.",
-      appearance: "Average build.",
-      clothing: "Traveler's gear.",
-      accessories: "None.",
-      hairStyle: "Short.",
-      hairColor: "Brown.",
-      eyeColor: "Brown."
+    playerProfile: {
+      ...(data.playerProfile || { 
+        name: "The Protagonist", 
+        description: "A mysterious traveler.",
+        personality: "Determined.",
+        backstory: "Seeking answers.",
+        appearance: "Average build.",
+        clothing: "Traveler's gear.",
+        accessories: "None.",
+        hairStyle: "Short.",
+        hairColor: "Brown.",
+        eyeColor: "Brown."
+      }),
+      // The model fills the new full-sheet fields; fall back to defaults if it
+      // skipped them so the player character is never a bare shell.
+      relationship: data.playerProfile?.relationship || "Strangers",
+      characterFlaws: data.playerProfile?.characterFlaws || "None.",
+      secretMotive: data.playerProfile?.secretMotive || "None.",
+      speechPattern: data.playerProfile?.speechPattern || "Natural.",
+      likesAndDislikes: data.playerProfile?.likesAndDislikes || "None.",
+      coreBeliefs: data.playerProfile?.coreBeliefs || "None.",
+      quirks: data.playerProfile?.quirks || "None.",
+      traits: data.playerProfile?.traits || { friendliness: 50, assertiveness: 50, empathy: 50 }
     },
+    additionalCharacters: Array.isArray(data.additionalCharacters)
+      ? data.additionalCharacters.map((c: any, i: number) => ({
+          id: c.id || `npc-${Date.now()}-${i}`,
+          name: c.name || `Character ${i + 1}`,
+          description: c.description || "A person in the world.",
+          personality: c.personality || "Friendly.",
+          appearance: c.appearance || "Unremarkable.",
+        }))
+      : [],
     inventory: [],
     worldAtmosphere: data.worldAtmosphere || "Atmospheric.",
     keyLocations: data.keyLocations || "Vast lands.",
@@ -1659,6 +1734,8 @@ export async function suggestNextAction(
     ? `\nCustom Writing Style Instructions (Apply these to the suggestion):\n${customInstructions}\n`
     : '';
 
+  const toneDirective = getToneDirective();
+
   const modeInstruction = profile.mode === AppMode.GAME
     ? `You are assisting a player in a tabletop RPG. Suggest one compelling next action for THEIR character. It must be written in the first person (or the player's preferred style) and be ready to send as a message. It should feel like a real game decision (attack, investigate, negotiate, use an item, cast a spell, etc.).`
     : profile.mode === AppMode.SCENARIO
@@ -1669,7 +1746,7 @@ export async function suggestNextAction(
 
   const systemInstruction = `${modeInstruction}
 ${guideInstruction}
-${styleInstruction}
+${styleInstruction}${toneDirective}
 ${buildPlayerBlock(profile)}
 
 They are interacting with / in the world of:
@@ -1728,6 +1805,8 @@ export async function refineInput(input: string, profile: CharacterProfile, hist
     ? `\nCustom Writing Style Instructions:\n${customInstructions}\n`
     : '';
 
+  const toneDirective = getToneDirective();
+
   const systemInstruction = `You are an AI writing assistant. Your goal is to rewrite the player's draft to be higher quality while maintaining their intent and perspective.
 
 ${buildPlayerBlock(profile)}
@@ -1736,7 +1815,7 @@ The player is interacting with:
 Name: ${profile.name}
 Personality: ${profile.personality}
 Relationship: ${profile.relationship}
-${styleInstruction}
+${styleInstruction}${toneDirective}
 
 RULES:
 - You are writing FOR THE PLAYER. Use THEIR perspective (First person: "I walk", "I say").

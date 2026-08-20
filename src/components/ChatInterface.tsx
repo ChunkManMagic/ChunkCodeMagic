@@ -6,6 +6,7 @@ import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, Volu
 import { useVoice } from '../hooks/useVoice';
 import { useLiveVoice } from '../hooks/useLiveVoice';
 import { useAmbientSoundscape } from '../hooks/useAmbientSoundscape';
+import { getToneDirective } from '../lib/tone';
 import { useCodex } from '../hooks/useCodex';
 import { useInventory } from '../hooks/useInventory';
 import { useChatState } from '../hooks/useChatState';
@@ -732,7 +733,7 @@ Speech pattern: ${profile.speechPattern || 'Natural'} — keep your spoken respo
 Current mood: ${profile.currentMood || 'Neutral'}
 World / atmosphere: ${profile.worldAtmosphere || 'Not specified'}
 ${profile.additionalCharacters?.length ? `NPCs present that you may voice: ${profile.additionalCharacters.map(c => c.name).join(', ')}` : ''}
-${summaryBlock}${recentBlock}LIVE NARRATION RULES:
+${summaryBlock}${recentBlock}${getToneDirective()}LIVE NARRATION RULES:
 - Treat the moment as if it is happening in person, inside the scene. React to the player as someone physically there with you.
 - NARRATE ACTIONS ALONGSIDE SPEAKING: describe physical actions, gestures, expressions, sounds, and environment details as they happen, then speak the dialogue. Blend narration and speech in every turn so it feels like the scene is unfolding live.
 - Format narrated actions in asterisks and keep spoken dialogue as plain text, e.g.: *She steps closer, her voice dropping low.* "I've been waiting for you."

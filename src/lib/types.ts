@@ -26,6 +26,21 @@ export interface PlayerProfile {
   hairStyle?: string;
   hairColor?: string;
   eyeColor?: string;
+  // Full character-sheet depth (populated by quick-create / refined setup so the
+  // player's character is built out as richly as the AI character).
+  traits?: {
+    friendliness?: number;
+    assertiveness?: number;
+    empathy?: number;
+    [key: string]: number | undefined;
+  };
+  characterFlaws?: string;
+  secretMotive?: string;
+  speechPattern?: string;
+  likesAndDislikes?: string;
+  coreBeliefs?: string;
+  quirks?: string;
+  relationship?: string;
   // GAME MODE tracking (optional — only populated in Game mode sessions)
   currentHP?: number;
   maxHP?: number;
@@ -142,6 +157,28 @@ export type ThemeAccent = 'emerald' | 'amethyst' | 'cyan' | 'crimson' | 'amber' 
 export type FontFamilyOption = 'sans' | 'serif' | 'mono';
 export type ChatDensityOption = 'compact' | 'comfy' | 'cinematic';
 
+// Global writing-tone dimensions (0-100). Persisted and applied across the app
+// (main replies, suggestions, refinements, quick-create, live voice).
+export interface WritingToneDims {
+  prose: number;
+  humor: number;
+  romance: number;
+  darkness: number;
+  action: number;
+  formality: number;
+  pace: number;
+}
+
+export const DEFAULT_WRITING_TONE_DIMS: WritingToneDims = {
+  prose: 60,
+  humor: 40,
+  romance: 40,
+  darkness: 40,
+  action: 50,
+  formality: 40,
+  pace: 50,
+};
+
 export interface AppSettings {
   activeTextProvider: 'Google' | 'OpenRouter';
   activeModel: string;
@@ -164,6 +201,9 @@ export interface AppSettings {
   enableAmbientSoundscape?: boolean;
   ambientVolume?: number;
   ambientSoundscape?: string;
+  writingToneEnabled?: boolean;
+  writingTonePreset?: string;
+  writingToneDims?: WritingToneDims;
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;
@@ -210,6 +250,9 @@ export const defaultSettings: AppSettings = {
   enableAmbientGlow: true,
   enableAmbientSoundscape: true,
   ambientVolume: 0.15,
+  writingToneEnabled: true,
+  writingTonePreset: 'cinematic',
+  writingToneDims: DEFAULT_WRITING_TONE_DIMS,
   premiumCustomVoices: true,
   premiumContextAnimations: true,
   premiumAutoAvatar: true,
@@ -276,6 +319,15 @@ export function getSettings(): AppSettings {
       }
       if (parsed.ambientVolume === undefined) {
         parsed.ambientVolume = 0.15;
+      }
+      if (parsed.writingToneEnabled === undefined) {
+        parsed.writingToneEnabled = true;
+      }
+      if (parsed.writingTonePreset === undefined) {
+        parsed.writingTonePreset = 'cinematic';
+      }
+      if (parsed.writingToneDims === undefined) {
+        parsed.writingToneDims = DEFAULT_WRITING_TONE_DIMS;
       }
       return { ...defaultSettings, ...parsed };
     }

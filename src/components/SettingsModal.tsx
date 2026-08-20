@@ -24,11 +24,14 @@ import {
   ThemeAccent,
   FontFamilyOption,
   ChatDensityOption,
+  WritingToneDims,
+  DEFAULT_WRITING_TONE_DIMS,
 } from '../lib/types';
 import { refineText, fetchOpenRouterModels, validateOpenRouterKey } from '../lib/gemini';
 import { RefineButton } from './RefineButton';
 import { clear } from 'idb-keyval';
 import { AMBIENT_PRESETS } from '../lib/ambientPresets';
+import { TONE_PRESETS, TONE_DIM_LABELS, tonePresetLabel } from '../lib/tone';
 import { LIVE_VOICES, LIVE_VOICE_DESCRIPTIONS } from '../lib/liveVoice';
 
 interface SettingsModalProps {
@@ -64,6 +67,25 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
   const handleChange = (field: keyof AppSettings, value: any) => {
     setSettings((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleToneDim = (dim: keyof WritingToneDims, value: number) => {
+    setSettings((prev) => ({
+      ...prev,
+      writingToneDims: { ...(prev.writingToneDims || DEFAULT_WRITING_TONE_DIMS), [dim]: value },
+      // Any manual slider move means the tone is no longer exactly a preset.
+      writingTonePreset: 'custom',
+    }));
+  };
+
+  const handleTonePreset = (presetId: string) => {
+    const preset = TONE_PRESETS[presetId];
+    if (!preset) return;
+    setSettings((prev) => ({
+      ...prev,
+      writingTonePreset: presetId,
+      writingToneDims: { ...preset.dims },
+    }));
   };
 
   const handleRefineInstructions = async (guidance?: string) => {
@@ -626,6 +648,84 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
           {/* TAB 4: WRITING STYLE & PROMPTING */}
           {activeTab === 'style' && (
             <div className="space-y-4">
+              {/* Tone Studio */}
+              <div className="space-y-3 p-4 rounded-2xl bg-white/[0.02] border border-white/10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Tone Studio</h4>
+                    <p className="text-[11px] text-zinc-400">
+                      Shape the overall voice of the writing — applied to replies, suggestions, refinements, quick-create and live voice. Persists across scenarios.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleChange('writingToneEnabled', !settings.writingToneEnabled)}
+                    className={`w-10 h-5 rounded-full transition-colors relative shrink-0 ${
+                      settings.writingToneEnabled === false ? 'bg-zinc-800' : 'bg-emerald-600'
+                    }`}
+                    aria-label="Toggle Tone Studio"
+                  >
+                    <div
+                      className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${
+                        settings.writingToneEnabled === false ? 'left-1' : 'left-6'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {settings.writingToneEnabled !== false && (
+                  <>
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 block mb-1.5">
+                        Preset — {tonePresetLabel(settings.writingTonePreset)}
+                      </label>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                        {Object.entries(TONE_PRESETS).map(([id, p]) => {
+                          const isSelected = (settings.writingTonePreset || 'custom') === id;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => handleTonePreset(id)}
+                              className={`p-3 rounded-2xl text-left border transition-all ${
+                                isSelected
+                                  ? 'border-emerald-500/40 bg-emerald-500/15'
+                                  : 'border-white/5 bg-white/[0.02] hover:bg-white/5'
+                              }`}
+                            >
+                              <div className="text-xs font-bold text-white">{p.label}</div>
+                              <div className="text-[10px] text-zinc-400 mt-0.5 leading-snug">{p.description}</div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {(Object.keys(TONE_DIM_LABELS) as (keyof WritingToneDims)[]).map((dim) => {
+                        const dims = settings.writingToneDims || DEFAULT_WRITING_TONE_DIMS;
+                        return (
+                          <div key={dim}>
+                            <div className="flex items-center justify-between mb-1">
+                              <label className="text-[11px] font-medium text-gray-300">{TONE_DIM_LABELS[dim]}</label>
+                              <span className="text-[10px] text-zinc-500 font-mono tabular-nums">{dims[dim]}/100</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              value={dims[dim]}
+                              onChange={(e) => handleToneDim(dim, Number(e.target.value))}
+                              className="w-full accent-emerald-500"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
               <div className="space-y-2">
                 <div className="flex justify-between items-center">
                   <label className="text-sm font-medium text-gray-200">Global Writing Style Instructions</label>
