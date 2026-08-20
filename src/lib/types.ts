@@ -161,6 +161,9 @@ export interface AppSettings {
   fontFamily?: FontFamilyOption;
   chatDensity?: ChatDensityOption;
   enableAmbientGlow?: boolean;
+  enableAmbientSoundscape?: boolean;
+  ambientVolume?: number;
+  ambientSoundscape?: string;
   customRefineInstructions?: string;
   premiumCustomVoices?: boolean;
   premiumContextAnimations?: boolean;
@@ -205,6 +208,8 @@ export const defaultSettings: AppSettings = {
   fontFamily: 'sans',
   chatDensity: 'comfy',
   enableAmbientGlow: true,
+  enableAmbientSoundscape: true,
+  ambientVolume: 0.15,
   premiumCustomVoices: true,
   premiumContextAnimations: true,
   premiumAutoAvatar: true,
@@ -266,6 +271,12 @@ export function getSettings(): AppSettings {
       if (parsed.enableAmbientGlow === undefined) {
         parsed.enableAmbientGlow = true;
       }
+      if (parsed.enableAmbientSoundscape === undefined) {
+        parsed.enableAmbientSoundscape = true;
+      }
+      if (parsed.ambientVolume === undefined) {
+        parsed.ambientVolume = 0.15;
+      }
       return { ...defaultSettings, ...parsed };
     }
   } catch (e) {
@@ -277,6 +288,11 @@ export function getSettings(): AppSettings {
 export function saveSettings(settings: AppSettings): void {
   try {
     localStorage.setItem('personaforge_settings', JSON.stringify({ ...settings, schemaVersion: CURRENT_SCHEMA_VERSION }));
+    // Let live listeners (e.g. the ambient soundscape) pick up changes even if
+    // the calling component doesn't re-render.
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('personaforge:settings'));
+    }
   } catch (e) {
     console.error('Failed to save settings', e);
   }

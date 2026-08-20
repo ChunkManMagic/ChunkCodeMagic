@@ -5,6 +5,7 @@ import { useToast } from '../hooks/useToast';
 import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Package, User, Cloud, Download, Pin, Radio } from 'lucide-react';
 import { useVoice } from '../hooks/useVoice';
 import { useLiveVoice } from '../hooks/useLiveVoice';
+import { useAmbientSoundscape } from '../hooks/useAmbientSoundscape';
 import { useCodex } from '../hooks/useCodex';
 import { useInventory } from '../hooks/useInventory';
 import { useChatState } from '../hooks/useChatState';
@@ -218,6 +219,10 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   } = useVoice(profile.voiceName || 'Kore', profile.voiceSettings, profile.storyTone || '');
 
   const liveVoice = useLiveVoice();
+
+  // Procedural scene ambience matched to the atmosphere/tone, ducked while a
+  // live call runs so the mic doesn't pick it up.
+  useAmbientSoundscape(profile, liveVoice.isActive);
 
   const [error, setError] = useState<string | null>(null);
 

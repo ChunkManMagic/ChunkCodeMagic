@@ -28,6 +28,7 @@ import {
 import { refineText, fetchOpenRouterModels, validateOpenRouterKey } from '../lib/gemini';
 import { RefineButton } from './RefineButton';
 import { clear } from 'idb-keyval';
+import { AMBIENT_PRESETS } from '../lib/ambientPresets';
 import { LIVE_VOICES, LIVE_VOICE_DESCRIPTIONS } from '../lib/liveVoice';
 
 interface SettingsModalProps {
@@ -542,6 +543,82 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     }`}
                   />
                 </button>
+              </div>
+
+              {/* Ambient Soundscape Section */}
+              <div className="space-y-4 p-4 rounded-2xl bg-white/[0.02] border border-white/10">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="text-xs font-bold text-white">Ambient Soundscape</h4>
+                    <p className="text-[11px] text-zinc-400">
+                      Procedural scene ambience matched to the world's atmosphere (no audio files needed)
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleChange('enableAmbientSoundscape', !settings.enableAmbientSoundscape)}
+                    className={`w-10 h-5 rounded-full transition-colors relative ${
+                      settings.enableAmbientSoundscape ? 'bg-emerald-600' : 'bg-zinc-800'
+                    }`}
+                    aria-label="Toggle Ambient Soundscape"
+                  >
+                    <div
+                      className={`absolute top-1 w-3 h-3 rounded-full bg-white transition-all ${
+                        settings.enableAmbientSoundscape ? 'left-6' : 'left-1'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                {settings.enableAmbientSoundscape && (
+                  <>
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                          Ambience Volume
+                        </label>
+                        <span className="text-[10px] text-zinc-500 font-mono tabular-nums">
+                          {Math.round((settings.ambientVolume ?? 0.15) * 100)}%
+                        </span>
+                      </div>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={Math.round((settings.ambientVolume ?? 0.15) * 100)}
+                        onChange={(e) => handleChange('ambientVolume', Number(e.target.value) / 100)}
+                        className="w-full accent-emerald-500"
+                        title="Ambience volume"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 block mb-1.5">
+                        Soundscape
+                      </label>
+                      <select
+                        value={settings.ambientSoundscape || 'auto'}
+                        onChange={(e) =>
+                          handleChange(
+                            'ambientSoundscape',
+                            e.target.value === 'auto' ? undefined : e.target.value
+                          )
+                        }
+                        className="w-full bg-zinc-900 border border-white/10 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500/40"
+                      >
+                        <option value="auto">Auto — match the scene's atmosphere</option>
+                        {(Object.keys(AMBIENT_PRESETS) as (keyof typeof AMBIENT_PRESETS)[]).map((key) => (
+                          <option key={key} value={key}>
+                            {AMBIENT_PRESETS[key].label} — {AMBIENT_PRESETS[key].description}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[10px] text-zinc-600 mt-1">
+                        Automatic detection reads the character's world atmosphere & story tone.
+                      </p>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           )}
