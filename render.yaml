@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: personaforge
+    runtime: node
+    buildCommand: npm install && npm run build
+    startCommand: npm run start
+    envVars:
+      - key: GEMINI_API_KEY
+        generate: false
