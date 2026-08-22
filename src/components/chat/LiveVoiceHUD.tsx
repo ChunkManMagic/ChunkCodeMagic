@@ -14,6 +14,7 @@ import {
   Square,
   ChevronUp,
   Zap,
+  RotateCcw,
 } from 'lucide-react';
 import { CharacterProfile, getSettings, saveSettings } from '../../lib/types';
 import {
@@ -47,6 +48,7 @@ interface LiveVoiceHUDProps {
     toggleMicMute: () => void;
     toggleAiMute: () => void;
     interrupt: () => void;
+    rewind: (onRewind?: () => void) => void;
     sendText: (text: string) => void;
     isActive: boolean;
     isConnecting: boolean;
@@ -1090,7 +1092,17 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                   <Square className="w-3.5 h-3.5 fill-amber-400" /> Interrupt AI
                 </button>
               ) : (
-                <div className="w-20 hidden sm:block" />
+                <button
+                  onClick={() => liveVoice.rewind(() => {
+                    // The UI-level message list rewind happens via the onTurnEnd
+                    // callback cleanup in ChatInterface — we just need to clear
+                    // the HUD's transient transcript bars here.
+                  })}
+                  className="px-4 py-2 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                  title="Rewind conversation"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Rewind
+                </button>
               )}
             </div>
           </motion.div>

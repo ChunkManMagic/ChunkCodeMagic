@@ -125,6 +125,10 @@ interface SessionHandle {
   userTranscript: string;
   modelTranscript: string;
   audioSentInCurrentTurn: boolean;
+  // Persistent per-session turn history. This grows over the lifetime of the
+  // call so that text messages sent mid-session don't blow away the context
+  // that the model needs to stay in turn.
+  turnHistory: { user: string; model: string }[];
   playbackQueue: AudioBufferSourceNode[];
   nextPlaybackTime: number;
   animFrameId: number | null;
@@ -132,16 +136,6 @@ interface SessionHandle {
 }
 
 let active: SessionHandle | null = null;
-let debugLogger: ((msg: string) => void) | null = null;
-
-export function setDebugLogger(logger: (msg: string) => void) {
-  debugLogger = logger;
-}
-
-function logDebug(msg: string) {
-  console.log(msg);
-  debugLogger?.(msg);
-}
 
 // Auto-reconnect bookkeeping: when the WebSocket drops mid-call (network blip,
 // headset mode switch, server hiccup) we quietly rejoin instead of dumping the
@@ -695,7 +689,6 @@ function syncWorkletState(handle: SessionHandle) {
 }
 
 function detachMicCapture(handle: SessionHandle) {
-  logDebug("Detaching mic capture");
   try {
     handle.processor?.disconnect();
   } catch (e) {}
@@ -857,6 +850,11 @@ function finalizeTurn(handle: SessionHandle) {
   const userText = handle.userTranscript.trim();
   const modelText = handle.modelTranscript.trim();
   if (userText || modelText) {
+    handle.turnHistory.push({ user: userText, model: modelText });
+    // Keep the history bounded so the seed payload never gets unwieldy.
+    if (handle.turnHistory.length > 50) {
+      handle.turnHistory = handle.turnHistory.slice(-50);
+    }
     handle.options?.onTurnEnd?.(userText, modelText);
   }
   handle.userTranscript = "";
@@ -864,6 +862,10 @@ function finalizeTurn(handle: SessionHandle) {
 }
 
 function seedContext(handle: SessionHandle) {
+  // Seed with the *initial* contextTurns passed by the caller (the chat
+  // history the user had when they pressed "Live Voice"). This only runs once
+  // at connect time; subsequent message history is preserved by the model's
+  // own turn tracking, so we don't re-seed every reconnect.
   const context = handle.options.contextTurns;
   if (!context?.length) return;
   const turns = context.map((c) => ({
@@ -921,6 +923,7 @@ async function connectSession(
     userTranscript: "",
     modelTranscript: "",
     audioSentInCurrentTurn: false,
+    turnHistory: [],
     playbackQueue: [],
     nextPlaybackTime: 0,
     animFrameId: null,
@@ -1356,6 +1359,21 @@ export async function playOutputTest(deviceId?: string): Promise<void> {
 export function interruptAiSpeech(): void {
   if (!active) return;
   stopPlayback(active);
+}
+
+// Rewind the in-session conversation to the current point. Stops playback,
+// clears the active transcripts and turn history on the session handle (the
+// model's own context isn't rewound — that would need a fresh connect), and
+// fires callbacks so the UI can purge its visible transcript / message list.
+export function rewindLiveVoice(onRewind?: () => void): void {
+  if (!active) return;
+  stopPlayback(active);
+  active.userTranscript = "";
+  active.modelTranscript = "";
+  active.audioSentInCurrentTurn = false;
+  active.turnHistory = [];
+  emitState(active);
+  onRewind?.();
 }
 
 export function sendTextMessage(text: string): void {

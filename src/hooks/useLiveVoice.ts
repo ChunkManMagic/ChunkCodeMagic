@@ -11,12 +11,12 @@ import {
   toggleLiveVoiceMicMute,
   toggleLiveVoiceAiMute,
   interruptAiSpeech,
+  rewindLiveVoice,
   getLiveVoiceState,
   sendTextMessage,
   LiveVoiceOptions,
   LiveVoiceState,
   LiveVoiceMicMode,
-  setDebugLogger,
 } from '../lib/liveVoice';
 import { getSettings, saveSettings } from '../lib/types';
 import { useToast } from './useToast';
@@ -29,14 +29,7 @@ export function useLiveVoice() {
   const [transcriptTurns, setTranscriptTurns] = useState<{ user: string; model: string }[]>([]);
   const [inputLevel, setInputLevel] = useState(0);
   const [outputLevel, setOutputLevel] = useState(0);
-  const [debugLogs, setDebugLogs] = useState<string[]>([]);
 
-  // Initialize debug logger
-  useEffect(() => {
-    setDebugLogger((msg) => {
-      setDebugLogs((prev) => [...prev.slice(-10), `${new Date().toLocaleTimeString()}: ${msg}`]);
-    });
-  }, []);
 
   const stateRef = useRef<LiveVoiceState>(state);
   const callbacksRef = useRef<{
@@ -198,6 +191,10 @@ export function useLiveVoice() {
     interruptAiSpeech();
   }, []);
 
+  const rewind = useCallback((onRewind?: () => void) => {
+    rewindLiveVoice(onRewind);
+  }, []);
+
   const setOnTurnEnd = useCallback((cb: (userText: string, modelText: string) => void) => {
     callbacksRef.current.onTurnEnd = cb;
   }, []);
@@ -221,7 +218,6 @@ export function useLiveVoice() {
     transcriptTurns,
     inputLevel,
     outputLevel,
-    debugLogs,
     start,
     stop,
     holdToTalk,
@@ -234,6 +230,7 @@ export function useLiveVoice() {
     toggleMicMute,
     toggleAiMute,
     interrupt,
+    rewind,
     sendText,
     setOnTurnEnd,
     isActive: state.status === 'connected' || state.status === 'connecting',
