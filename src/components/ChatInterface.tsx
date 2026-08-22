@@ -763,7 +763,7 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
       temperature: 1.0,
       preferredModel: getSettings().liveVoiceModel,
       micMode: 'hold',
-      contextTurns: messages.slice(-12).map(m => ({ role: m.role, text: m.text })),
+      contextTurns: messages.slice(-30).map(m => ({ role: m.role, text: m.text })),
     });
   }, [liveVoice, buildLiveVoicePrompt, profile.voiceName, addMessage, messages]);
 

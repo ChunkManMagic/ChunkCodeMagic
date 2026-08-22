@@ -16,6 +16,7 @@ import {
   LiveVoiceOptions,
   LiveVoiceState,
   LiveVoiceMicMode,
+  setDebugLogger,
 } from '../lib/liveVoice';
 import { getSettings, saveSettings } from '../lib/types';
 import { useToast } from './useToast';
@@ -28,6 +29,14 @@ export function useLiveVoice() {
   const [transcriptTurns, setTranscriptTurns] = useState<{ user: string; model: string }[]>([]);
   const [inputLevel, setInputLevel] = useState(0);
   const [outputLevel, setOutputLevel] = useState(0);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+
+  // Initialize debug logger
+  useEffect(() => {
+    setDebugLogger((msg) => {
+      setDebugLogs((prev) => [...prev.slice(-10), `${new Date().toLocaleTimeString()}: ${msg}`]);
+    });
+  }, []);
 
   const stateRef = useRef<LiveVoiceState>(state);
   const callbacksRef = useRef<{
@@ -212,6 +221,7 @@ export function useLiveVoice() {
     transcriptTurns,
     inputLevel,
     outputLevel,
+    debugLogs,
     start,
     stop,
     holdToTalk,

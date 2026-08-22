@@ -132,6 +132,16 @@ interface SessionHandle {
 }
 
 let active: SessionHandle | null = null;
+let debugLogger: ((msg: string) => void) | null = null;
+
+export function setDebugLogger(logger: (msg: string) => void) {
+  debugLogger = logger;
+}
+
+function logDebug(msg: string) {
+  console.log(msg);
+  debugLogger?.(msg);
+}
 
 // Auto-reconnect bookkeeping: when the WebSocket drops mid-call (network blip,
 // headset mode switch, server hiccup) we quietly rejoin instead of dumping the
@@ -685,6 +695,7 @@ function syncWorkletState(handle: SessionHandle) {
 }
 
 function detachMicCapture(handle: SessionHandle) {
+  logDebug("Detaching mic capture");
   try {
     handle.processor?.disconnect();
   } catch (e) {}
@@ -734,12 +745,20 @@ async function attachMicCapture(handle: SessionHandle, forceProcessor = false) {
   if (!handle.stream) return;
   detachMicCapture(handle);
   const ctx = setupAudioPlayback(handle);
+  if (ctx.state !== "running") {
+    await ctx.resume().catch(() => {});
+  }
   const sourceNode = ctx.createMediaStreamSource(handle.stream);
 
   const inputAnalyser = ctx.createAnalyser();
   inputAnalyser.fftSize = 256;
   inputAnalyser.smoothingTimeConstant = 0.5;
   sourceNode.connect(inputAnalyser);
+
+  const sending = isMicSending(handle);
+  handle.stream.getAudioTracks().forEach((t) => {
+    t.enabled = sending;
+  });
 
   const sendChunk = (base64: string) => {
     if (!isMicSending(handle) || !handle.session) return;
@@ -835,8 +854,10 @@ async function attachMicCapture(handle: SessionHandle, forceProcessor = false) {
 }
 
 function finalizeTurn(handle: SessionHandle) {
-  if (handle.userTranscript.trim() || handle.modelTranscript.trim()) {
-    handle.options?.onTurnEnd?.(handle.userTranscript.trim(), handle.modelTranscript.trim());
+  const userText = handle.userTranscript.trim();
+  const modelText = handle.modelTranscript.trim();
+  if (userText || modelText) {
+    handle.options?.onTurnEnd?.(userText, modelText);
   }
   handle.userTranscript = "";
   handle.modelTranscript = "";
@@ -942,12 +963,12 @@ async function connectSession(
         }
 
         if (content.inputTranscription?.text) {
-          handle.userTranscript = content.inputTranscription.text;
+          handle.userTranscript += content.inputTranscription.text;
           handle.options?.onUserTranscript?.(handle.userTranscript, false);
         }
 
         if (content.outputTranscription?.text) {
-          handle.modelTranscript = content.outputTranscription.text;
+          handle.modelTranscript += content.outputTranscription.text;
           handle.options?.onModelTranscript?.(handle.modelTranscript, false);
         }
 
@@ -1024,11 +1045,7 @@ export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
         micAttachError = attachErr;
         throw attachErr;
       }
-      // Hold / Tap modes don't need the mic until the user actually talks —
-      // release it now so the phone doesn't sit in "call" mode the whole time.
-      if (!isMicSending(handle)) {
-        stopMicForSending(handle);
-      }
+      syncMicSendingState(handle);
       active = handle;
       handle.status = "connected";
       emitState(handle);
@@ -1113,9 +1130,7 @@ async function reconnectNow(): Promise<void> {
       if (handle.outputGainNode) {
         handle.outputGainNode.gain.value = handle.isAiMuted ? 0 : handle.outputVolume;
       }
-      if (!isMicSending(handle)) {
-        stopMicForSending(handle);
-      }
+      syncMicSendingState(handle);
       // Swap in the live session before tearing the stale one down so the
       // stale onclose doesn't clobber the fresh state.
       active = null;
@@ -1159,32 +1174,17 @@ function sendAudioStreamEnd(handle: SessionHandle): void {
 // "interrupted", and responses go silent (transcripts still stream). Release
 // the capture between sends and re-acquire on the next press; Hands-Free keeps
 // it continuous.
-function stopMicForSending(handle: SessionHandle) {
-  if (handle.micMode === "handsFree") return;
+function syncMicSendingState(handle: SessionHandle): void {
+  const sending = isMicSending(handle);
   if (handle.stream) {
-    handle.stream.getTracks().forEach((t) => t.stop());
-    detachMicCapture(handle);
-    handle.stream = null;
+    handle.stream.getAudioTracks().forEach((t) => {
+      t.enabled = sending;
+    });
   }
+  syncWorkletState(handle);
 }
 
-async function startMicForSending(handle: SessionHandle): Promise<void> {
-  if (handle.stream) return;
-  const stream = await acquireMicWithFallback(handle.micDeviceId);
-  if (handle.disposed) {
-    stream.getTracks().forEach((t) => t.stop());
-    return;
-  }
-  handle.stream = stream;
-  await attachMicCapture(handle);
-  // The user may have released the talk button (or muted) while we were
-  // acquiring — don't leave the mic captured if it's no longer needed.
-  if (!isMicSending(handle)) {
-    stopMicForSending(handle);
-  }
-}
-
-function onMicSendingChanged(handle: SessionHandle, wasSending: boolean): void {
+async function onMicSendingChanged(handle: SessionHandle, wasSending: boolean): Promise<void> {
   const nowSending = isMicSending(handle);
   if (wasSending && !nowSending) {
     // Only flush the user's turn if they actually said something this press —
@@ -1193,15 +1193,24 @@ function onMicSendingChanged(handle: SessionHandle, wasSending: boolean): void {
     if (handle.audioSentInCurrentTurn) {
       sendAudioStreamEnd(handle);
     }
-    stopMicForSending(handle);
   } else if (!wasSending && nowSending) {
     handle.audioSentInCurrentTurn = false;
-    startMicForSending(handle).catch((e: any) => {
-      console.warn("Failed to start microphone:", e);
-      handle.options?.onError?.(e?.message || "Microphone unavailable");
-    });
+    if (!handle.stream) {
+      try {
+        const stream = await acquireMicWithFallback(handle.micDeviceId);
+        if (!handle.disposed) {
+          handle.stream = stream;
+          await attachMicCapture(handle);
+        } else {
+          stream.getTracks().forEach((t) => t.stop());
+        }
+      } catch (e: any) {
+        console.warn("Failed to start microphone:", e);
+        handle.options?.onError?.(e?.message || "Microphone unavailable");
+      }
+    }
   }
-  syncWorkletState(handle);
+  syncMicSendingState(handle);
 }
 
 export function setPushToTalk(listening: boolean): void {
