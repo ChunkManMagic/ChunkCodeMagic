@@ -249,7 +249,7 @@ export const defaultSettings: AppSettings = {
   fontFamily: 'sans',
   chatDensity: 'comfy',
   enableAmbientGlow: true,
-  enableAmbientSoundscape: true,
+  enableAmbientSoundscape: false,
   ambientVolume: 0.15,
   writingToneEnabled: true,
   writingTonePreset: 'cinematic',
@@ -317,7 +317,7 @@ export function getSettings(): AppSettings {
         parsed.enableAmbientGlow = true;
       }
       if (parsed.enableAmbientSoundscape === undefined) {
-        parsed.enableAmbientSoundscape = true;
+        parsed.enableAmbientSoundscape = false;
       }
       if (parsed.ambientVolume === undefined) {
         parsed.ambientVolume = 0.15;

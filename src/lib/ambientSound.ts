@@ -498,6 +498,12 @@ function applyDuck() {
 export function startAmbientSoundscape(preset: AmbientPresetId): boolean {
   stopAmbientSoundscape();
   if (typeof window === 'undefined') return false;
+  // Hidden right now (or a re-render raced a background stop): park the
+  // preset instead of playing — handleVisibilityChange will start it on show.
+  if (typeof document !== 'undefined' && document.hidden) {
+    hiddenPausedPreset = preset;
+    return false;
+  }
   const Ctor = window.AudioContext || (window as any).webkitAudioContext;
   if (!Ctor) return false;
   try {
@@ -528,6 +534,31 @@ export function stopAmbientSoundscape(): void {
     ctx = null;
     master = null;
   }
+}
+
+// Android/Chrome often keep an AudioContext running when the tab or PWA goes
+// to the background, so ambience would keep chiming over other apps. Fully
+// stop the graph on hide and rebuild it on return — suspending alone isn't
+// enough because the one-shot loops (pings/chimes) keep scheduling events on
+// the frozen clock and burst-play them all at once on resume.
+let hiddenPausedPreset: AmbientPresetId | null = null;
+
+function handleVisibilityChange(): void {
+  if (typeof document === 'undefined') return;
+  if (document.hidden) {
+    if (activePreset) {
+      hiddenPausedPreset = activePreset;
+      stopAmbientSoundscape();
+    }
+  } else if (hiddenPausedPreset) {
+    const preset = hiddenPausedPreset;
+    hiddenPausedPreset = null;
+    startAmbientSoundscape(preset);
+  }
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', handleVisibilityChange);
 }
 
 // Autoplay policy: a freshly-created context may start suspended. Call this
