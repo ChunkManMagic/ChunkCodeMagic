@@ -1,6 +1,7 @@
 import express from "express";
 import fs from "fs";
 import path from "path";
+import { timingSafeEqual } from "crypto";
 import { createServer as createViteServer } from "vite";
 import { GoogleGenAI } from "@google/genai";
 
@@ -29,6 +30,106 @@ function loadEnvFile(filePath: string): void {
 }
 
 loadEnvFile(".env");
+
+// Models clients may request. Exact names cover everything the UI offers plus
+// legacy names still persisted in old settings; the patterns cover the
+// agent/research families and the omni/tts/live/native-audio variants that the
+// client routes by substring.
+const ALLOWED_MODELS = new Set([
+  "gemini-3-flash-preview",
+  "gemini-3.1-pro-preview",
+  "gemini-3.1-flash-lite",
+  "gemini-3.5-flash",
+  "gemini-3.5-flash-lite",
+  "gemini-3.6-flash",
+  "gemini-3.1-flash-live-preview",
+  "gemini-2.5-flash-native-audio-preview-12-2025",
+  "gemini-3.1-flash-tts-preview",
+  "gemini-pro-latest",
+  // Legacy models accepted for older cached clients
+  "gemini-1.5-flash",
+  "gemini-1.5-pro",
+  "gemini-2.0-flash-exp",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
+]);
+
+const ALLOWED_AGENT_PATTERN = /^(antigravity|deep-research)-[a-z0-9._-]+$/i;
+const ALLOWED_MODEL_PATTERNS = [
+  /^antigravity-[a-z0-9._-]+$/i,
+  /^deep-research-[a-z0-9._-]+$/i,
+  /^lyria-[a-z0-9._-]+$/i,
+  /^gemini-[a-z0-9.-]*(omni|tts|live|native-audio)[a-z0-9.-]*$/i,
+];
+
+function isAllowedModel(model: unknown): boolean {
+  if (typeof model !== "string") return false;
+  const m = model.trim();
+  if (!m || m.length > 128) return false;
+  return ALLOWED_MODELS.has(m) || ALLOWED_MODEL_PATTERNS.some((p) => p.test(m));
+}
+
+function isAllowedAgent(agent: unknown): boolean {
+  return typeof agent === "string" && agent.length <= 128 && ALLOWED_AGENT_PATTERN.test(agent.trim());
+}
+
+function safeTokenEqual(provided: string, required: string): boolean {
+  const a = Buffer.from(provided);
+  const b = Buffer.from(required);
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+}
+
+const RATE_LIMIT_WINDOW_MS = 60 * 1000;
+const RATE_LIMIT_MAX_REQUESTS = 40;
+const rateBuckets = new Map<string, { count: number; resetAt: number }>();
+
+function geminiGuard(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const requiredToken = (process.env.API_ACCESS_TOKEN || "").trim();
+  if (requiredToken) {
+    const provided =
+      String(req.headers["x-api-token"] || "").trim() ||
+      String(req.headers["authorization"] || "").replace(/^Bearer\s+/i, "").trim();
+    if (!provided || !safeTokenEqual(provided, requiredToken)) {
+      return res.status(401).json({ error: { message: "Unauthorized." } });
+    }
+  } else {
+    // No token configured: enforce same-origin so third-party websites can't
+    // drive this server's paid API from a visitor's browser (CSRF).
+    const origin = req.headers.origin;
+    const host = req.headers.host;
+    if (origin && host) {
+      try {
+        if (new URL(origin).host !== host) {
+          return res.status(403).json({ error: { message: "Cross-origin requests are not allowed." } });
+        }
+      } catch {
+        return res.status(403).json({ error: { message: "Invalid Origin header." } });
+      }
+    }
+  }
+
+  const key = req.ip || "unknown";
+  const now = Date.now();
+  let bucket = rateBuckets.get(key);
+  if (!bucket || bucket.resetAt <= now) {
+    bucket = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
+    rateBuckets.set(key, bucket);
+  }
+  bucket.count++;
+  if (rateBuckets.size > 5000) {
+    for (const [k, v] of rateBuckets) {
+      if (v.resetAt <= now) rateBuckets.delete(k);
+    }
+  }
+  if (bucket.count > RATE_LIMIT_MAX_REQUESTS) {
+    res.setHeader("Retry-After", Math.ceil((bucket.resetAt - now) / 1000));
+    return res.status(429).json({ error: { message: "Too many requests. Please slow down." } });
+  }
+
+  next();
+}
 
 function getFallbackModel(currentModel: string): string | null {
   if (currentModel === 'gemini-3.1-pro-preview') {
@@ -73,10 +174,21 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json({ limit: "50mb" }));
+  app.use(express.json({ limit: "2mb" }));
+
+  // Auth + rate limiting for every AI proxy endpoint. Applied before the
+  // routes so rejected requests never reach the Gemini SDK.
+  app.use("/api/gemini", geminiGuard);
+
+  const rejectModel = (res: express.Response, model: unknown, agent?: unknown) => {
+    if (isAllowedModel(model) || isAllowedAgent(agent)) return false;
+    res.status(400).json({ error: { message: `Model not allowed: ${String(model ?? agent)}` } });
+    return true;
+  };
 
   app.post("/api/gemini/generate", async (req, res) => {
     try {
+      if (rejectModel(res, req.body?.model)) return;
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(500).json({ error: { message: "GEMINI_API_KEY is not set on the server." } });
@@ -133,6 +245,7 @@ async function startServer() {
 
   app.post("/api/gemini/generate/stream", async (req, res) => {
     try {
+      if (rejectModel(res, req.body?.model)) return;
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         res.status(500).json({ error: { message: "GEMINI_API_KEY is not set on the server." } });
@@ -200,6 +313,7 @@ async function startServer() {
   // Replace old proxy with custom API routes that use the Interactions API
   app.post("/api/gemini/interact", async (req, res) => {
     try {
+      if (rejectModel(res, req.body?.model, req.body?.agent)) return;
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         return res.status(500).json({ error: { message: "GEMINI_API_KEY is not set on the server." } });
@@ -260,6 +374,7 @@ async function startServer() {
 
   app.post("/api/gemini/interact/stream", async (req, res) => {
     try {
+      if (rejectModel(res, req.body?.model, req.body?.agent)) return;
       const apiKey = process.env.GEMINI_API_KEY;
       if (!apiKey) {
         res.status(500).json({ error: { message: "GEMINI_API_KEY is not set on the server." } });
@@ -332,13 +447,22 @@ async function startServer() {
 
   // Mint a short-lived ephemeral token for the Gemini Live API (real-time voice).
   // The master GEMINI_LIVE_API_KEY stays server-side; the browser only ever holds
-  // this scoped, expiring token. Falls back to GEMINI_API_KEY when the dedicated
-  // key is not set.
+  // this scoped, expiring token. Falling back to the main GEMINI_API_KEY is
+  // opt-in (LIVE_ALLOW_MAIN_KEY_FALLBACK=true) so Live sessions can never
+  // silently burn the main text-model quota.
   app.post("/api/gemini/live/token", async (req, res) => {
     try {
-      const apiKey = process.env.GEMINI_LIVE_API_KEY || process.env.GEMINI_API_KEY;
+      if (rejectModel(res, req.body?.model)) return;
+      const dedicatedKey = (process.env.GEMINI_LIVE_API_KEY || "").trim();
+      const allowMainFallback = process.env.LIVE_ALLOW_MAIN_KEY_FALLBACK === "true";
+      const apiKey = dedicatedKey || (allowMainFallback ? process.env.GEMINI_API_KEY : undefined);
       if (!apiKey) {
-        return res.status(500).json({ error: { message: "GEMINI_LIVE_API_KEY is not set on the server." } });
+        return res.status(500).json({
+          error: {
+            message:
+              "GEMINI_LIVE_API_KEY is not set on the server. Set a dedicated Live key, or opt into sharing the main key's quota with LIVE_ALLOW_MAIN_KEY_FALLBACK=true.",
+          },
+        });
       }
 
       const ai = new GoogleGenAI({ apiKey });

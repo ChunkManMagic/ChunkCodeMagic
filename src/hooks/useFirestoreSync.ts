@@ -11,9 +11,11 @@ import {
   writeBatch
 } from 'firebase/firestore';
 import { onAuthStateChanged, User } from 'firebase/auth';
+import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { db, auth } from '../firebase';
 import { Scenario, Message, CodexEntry, InventoryItem } from '../lib/types';
 import { compressImage } from '../lib/utils';
+import { STORAGE_KEYS } from '../constants';
 
 export interface FirestoreErrorInfo {
   errorPath: string;
@@ -39,6 +41,22 @@ export function handleFirestoreError(
   
   console.error("Firestore Diagnostic Collection Error:", diagnosticInfo);
   return new Error("Couldn't save — check your connection and try again.");
+}
+
+// Keep the offline IndexedDB cache in sync at write time. Waiting for the
+// React state -> effect round-trip left a window where a crash/reload lost the
+// newest messages from the cache even though the cloud had them.
+async function persistMessagesToCache(scenarioId: string, incoming: Message[]) {
+  if (incoming.length === 0) return;
+  try {
+    const key = STORAGE_KEYS.SCENARIO_MESSAGES(scenarioId);
+    const existing = (await idbGet<Message[]>(key)) || [];
+    const byId = new Map(existing.map(m => [m.id, m]));
+    for (const m of incoming) byId.set(m.id, { ...byId.get(m.id), ...m });
+    await idbSet(key, Array.from(byId.values()));
+  } catch (e) {
+    console.warn("Failed to update local message cache", e);
+  }
 }
 
 export function useFirestoreSync() {
@@ -184,10 +202,13 @@ export function useFirestoreSync() {
     if (!user) return;
     startWrite();
     try {
-      await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', message.id), {
+      const finalMessage = {
         ...message,
         timestamp: message.timestamp || Date.now()
-      });
+      };
+      // Refresh the local cache immediately, before the network round-trip.
+      await persistMessagesToCache(scenarioId, [finalMessage]);
+      await setDoc(doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', finalMessage.id), finalMessage);
     } catch (error) {
       throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/messages/${message.id}`, 'write');
     } finally {
@@ -199,15 +220,15 @@ export function useFirestoreSync() {
     if (!user || messages.length === 0) return;
     startWrite();
     try {
+      const finalMessages = messages.map(m => ({ ...m, timestamp: m.timestamp || Date.now() }));
+      await persistMessagesToCache(scenarioId, finalMessages);
+
       let batch = writeBatch(db);
       let count = 0;
 
-      for (const message of messages) {
+      for (const message of finalMessages) {
         const ref = doc(db, 'users', user.uid, 'scenarios', scenarioId, 'messages', message.id);
-        batch.set(ref, {
-          ...message,
-          timestamp: message.timestamp || Date.now()
-        });
+        batch.set(ref, message);
         count++;
         if (count >= 500) {
           await batch.commit();

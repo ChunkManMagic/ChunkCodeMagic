@@ -15,6 +15,15 @@ export function sanitizeUserInput(input: string): string {
   return s;
 }
 
+// For secondary text that flows into prompts but isn't the primary chat
+// input: Director's Notes, reroll/refine guidance, custom style instructions,
+// and profile fields (personality/backstory). These bypass processUserInput,
+// so they need their own scrubbing to stay injection-safe.
+export function sanitizeInstruction(input: string | undefined | null): string {
+  if (!input) return '';
+  return sanitizeUserInput(input);
+}
+
 export function enforceInputLimit(input: string, maxChars = 2000): string {
   if (input.length <= maxChars) return input;
   return input.slice(0, maxChars) + '… [input truncated]';

@@ -1,5 +1,6 @@
 import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings, getSettings } from "./types";
 import { getToneDirective, getMatureContentDirective, getAdultSafetySettings } from "./tone";
+import { sanitizeUserInput } from "./sanitize";
 
 export { AppMode };
 export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
@@ -20,233 +21,248 @@ export const Type = {
  * This ensures we comply with the requirement to never call the Interactions API directly 
  * from the client, while avoiding a full rewrite of all functions in this file.
  */
+
+// The server can require a shared access token (API_ACCESS_TOKEN env var on
+// the backend); when the matching Vite var is present we attach it.
+function apiAccessHeaders(): Record<string, string> {
+  const token = (import.meta as any)?.env?.VITE_API_ACCESS_TOKEN;
+  return token ? { "x-api-token": String(token) } : {};
+}
+
+function jsonPostInit(body: unknown, signal?: AbortSignal): RequestInit {
+  return {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...apiAccessHeaders() },
+    body: JSON.stringify(body),
+    signal,
+  };
+}
+
 export function getGenAI() {
   return {
     models: {
       generateContent: async ({ model, contents, config }: any) => {
-        const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
-        const isOmni = model.includes('omni') || model.includes('lyria');
-        
-        if (isAgent || isOmni) {
-          // Route to interactions API
-          const requestBody = {
-            agent: isAgent ? model : undefined,
-            model: !isAgent ? model : undefined,
-            environment: isAgent ? 'remote' : undefined,
-            input: contents,
-            system_instruction: config?.systemInstruction,
-            response_format: config?.responseMimeType === "application/json" 
-              ? (config?.responseSchema ? config.responseSchema : { type: "object" })
-              : undefined,
-            generation_config: {
-              temperature: config?.temperature,
-              top_p: config?.topP,
-              max_output_tokens: config?.maxOutputTokens,
-            },
-            response_modalities: config?.responseModalities,
-          };
+        const controller = new AbortController();
+        try {
+          const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
+          const isOmni = model.includes('omni') || model.includes('lyria');
 
-          const res = await fetch(typeof window !== 'undefined' ? '/api/gemini/interact' : 'http://localhost:3000/api/gemini/interact', {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(requestBody)
-          });
-          
-          if (!res.ok) {
-            let errMsg = `Backend error ${res.status}`;
-            try {
-              const errData = await res.json();
-              if (errData.error?.message) errMsg = errData.error.message;
-            } catch (e) {}
-            throw new Error(errMsg);
-          }
+          if (isAgent || isOmni) {
+            // Route to interactions API
+            const requestBody = {
+              agent: isAgent ? model : undefined,
+              model: !isAgent ? model : undefined,
+              environment: isAgent ? 'remote' : undefined,
+              input: contents,
+              system_instruction: config?.systemInstruction,
+              response_format: config?.responseMimeType === "application/json"
+                ? (config?.responseSchema ? config.responseSchema : { type: "object" })
+                : undefined,
+              generation_config: {
+                temperature: config?.temperature,
+                top_p: config?.topP,
+                max_output_tokens: config?.maxOutputTokens,
+              },
+              response_modalities: config?.responseModalities,
+            };
 
-          const interaction = await res.json();
-          let fullOutput = "";
-          const imageCandidates: any[] = [];
-          const audioCandidates: any[] = [];
+            const res = await fetch(typeof window !== 'undefined' ? '/api/gemini/interact' : 'http://localhost:3000/api/gemini/interact', jsonPostInit(requestBody, controller.signal));
 
-          for (const step of interaction.steps || []) {
-            if (step.type === 'model_output') {
-              for (const c of step.content || []) {
-                if (c.type === 'text' && c.text) fullOutput += c.text;
-                else if (c.type === 'image') imageCandidates.push(c);
-                else if (c.type === 'audio') audioCandidates.push(c);
+            if (!res.ok) {
+              let errMsg = `Backend error ${res.status}`;
+              try {
+                const errData = await res.json();
+                if (errData.error?.message) errMsg = errData.error.message;
+              } catch (e) {}
+              throw new Error(errMsg);
+            }
+
+            const interaction = await res.json();
+            let fullOutput = "";
+            const imageCandidates: any[] = [];
+            const audioCandidates: any[] = [];
+
+            for (const step of interaction.steps || []) {
+              if (step.type === 'model_output') {
+                for (const c of step.content || []) {
+                  if (c.type === 'text' && c.text) fullOutput += c.text;
+                  else if (c.type === 'image') imageCandidates.push(c);
+                  else if (c.type === 'audio') audioCandidates.push(c);
+                }
               }
             }
-          }
 
-          return {
-            text: fullOutput,
-            candidates: [{
-              content: {
-                parts: [
-                  ...(fullOutput ? [{ text: fullOutput }] : []),
-                  ...imageCandidates.map(img => ({ inlineData: { data: img.data, mimeType: img.mime_type }})),
-                  ...audioCandidates.map(aud => ({ inlineData: { data: aud.data, mimeType: aud.mime_type }}))
-                ]
-              }
-            }]
-          };
-        } else {
-          // Route to standard generateContent
-          const requestBody = {
-            model,
-            contents,
-            config: { ...config, ...(getAdultSafetySettings() || {}) }
-          };
+            return {
+              text: fullOutput,
+              candidates: [{
+                content: {
+                  parts: [
+                    ...(fullOutput ? [{ text: fullOutput }] : []),
+                    ...imageCandidates.map(img => ({ inlineData: { data: img.data, mimeType: img.mime_type }})),
+                    ...audioCandidates.map(aud => ({ inlineData: { data: aud.data, mimeType: aud.mime_type }}))
+                  ]
+                }
+              }]
+            };
+          } else {
+            // Route to standard generateContent
+            const requestBody = {
+              model,
+              contents,
+              config: { ...config, ...(getAdultSafetySettings() || {}) }
+            };
 
-          const res = await fetch(typeof window !== 'undefined' ? '/api/gemini/generate' : 'http://localhost:3000/api/gemini/generate', {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(requestBody)
-          });
-          
-          if (!res.ok) {
-            let errMsg = `Backend error ${res.status}`;
-            try {
-              const errData = await res.json();
-              if (errData.error?.message) errMsg = errData.error.message;
-            } catch (e) {}
-            throw new Error(errMsg);
-          }
+            const res = await fetch(typeof window !== 'undefined' ? '/api/gemini/generate' : 'http://localhost:3000/api/gemini/generate', jsonPostInit(requestBody, controller.signal));
 
-          const rawResponse = await res.json();
-          if (!rawResponse.text && rawResponse.candidates && rawResponse.candidates[0]?.content?.parts?.[0]?.text) {
-             rawResponse.text = rawResponse.candidates[0].content.parts[0].text;
+            if (!res.ok) {
+              let errMsg = `Backend error ${res.status}`;
+              try {
+                const errData = await res.json();
+                if (errData.error?.message) errMsg = errData.error.message;
+              } catch (e) {}
+              throw new Error(errMsg);
+            }
+
+            const rawResponse = await res.json();
+            if (!rawResponse.text && rawResponse.candidates && rawResponse.candidates[0]?.content?.parts?.[0]?.text) {
+               rawResponse.text = rawResponse.candidates[0].content.parts[0].text;
+            }
+            return rawResponse;
           }
-          return rawResponse;
+        } finally {
+          // Harmless once the response is fully consumed; cancels the socket
+          // if the caller abandoned the request mid-flight.
+          controller.abort();
         }
       },
       
       generateContentStream: async function* ({ model, contents, config }: any) {
-        const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
-        const isOmni = model.includes('omni') || model.includes('lyria');
-        
-        if (isAgent || isOmni) {
-          // Route to interactions stream API
-          const requestBody = {
-            agent: isAgent ? model : undefined,
-            model: !isAgent ? model : undefined,
-            environment: isAgent ? 'remote' : undefined,
-            input: contents,
-            system_instruction: config?.systemInstruction,
-            response_format: config?.responseMimeType === "application/json" 
-              ? (config?.responseSchema ? config.responseSchema : { type: "object" })
-              : undefined,
-            generation_config: {
-              temperature: config?.temperature,
-              top_p: config?.topP,
-              max_output_tokens: config?.maxOutputTokens,
-            },
-            response_modalities: config?.responseModalities,
-          };
+        const controller = new AbortController();
+        try {
+          const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
+          const isOmni = model.includes('omni') || model.includes('lyria');
 
-          const res = await fetch("/api/gemini/interact/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(requestBody)
-          });
+          if (isAgent || isOmni) {
+            // Route to interactions stream API
+            const requestBody = {
+              agent: isAgent ? model : undefined,
+              model: !isAgent ? model : undefined,
+              environment: isAgent ? 'remote' : undefined,
+              input: contents,
+              system_instruction: config?.systemInstruction,
+              response_format: config?.responseMimeType === "application/json"
+                ? (config?.responseSchema ? config.responseSchema : { type: "object" })
+                : undefined,
+              generation_config: {
+                temperature: config?.temperature,
+                top_p: config?.topP,
+                max_output_tokens: config?.maxOutputTokens,
+              },
+              response_modalities: config?.responseModalities,
+            };
 
-          if (!res.ok) {
-            let errMsg = `Backend error ${res.status}`;
-            try {
-              const errData = await res.json();
-              if (errData.error?.message) errMsg = errData.error.message;
-            } catch (e) {}
-            throw new Error(errMsg);
-          }
-          
-          if (!res.body) throw new Error("No response body");
-          
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder("utf-8");
-          let buffer = "";
+            const res = await fetch("/api/gemini/interact/stream", jsonPostInit(requestBody, controller.signal));
 
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || "";
+            if (!res.ok) {
+              let errMsg = `Backend error ${res.status}`;
+              try {
+                const errData = await res.json();
+                if (errData.error?.message) errMsg = errData.error.message;
+              } catch (e) {}
+              throw new Error(errMsg);
+            }
 
-            for (const line of lines) {
-              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  if (data.error) {
-                    throw new Error(data.error);
+            if (!res.body) throw new Error("No response body");
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.error) {
+                      throw new Error(data.error);
+                    }
+                    if (data.event_type === "step.delta") {
+                       if (data.delta?.type === "text") {
+                         yield {
+                           text: data.delta.text,
+                           candidates: [{ content: { parts: [{ text: data.delta.text }] } }]
+                         };
+                       }
+                    }
+                  } catch (e) {
+                    // Ignore parse errors for incomplete chunks
                   }
-                  if (data.event_type === "step.delta") {
-                     if (data.delta?.type === "text") {
-                       yield {
-                         text: data.delta.text,
-                         candidates: [{ content: { parts: [{ text: data.delta.text }] } }]
-                       };
-                     }
+                }
+              }
+            }
+          } else {
+            // Route to standard generateContentStream
+            const requestBody = {
+              model,
+              contents,
+              config: { ...config, ...(getAdultSafetySettings() || {}) }
+            };
+
+            const res = await fetch("/api/gemini/generate/stream", jsonPostInit(requestBody, controller.signal));
+
+            if (!res.ok) {
+              let errMsg = `Backend error ${res.status}`;
+              try {
+                const errData = await res.json();
+                if (errData.error?.message) errMsg = errData.error.message;
+              } catch (e) {}
+              throw new Error(errMsg);
+            }
+
+            if (!res.body) throw new Error("No response body");
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
+
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || "";
+
+              for (const line of lines) {
+                if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                  try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.error) {
+                      throw new Error(data.error);
+                    }
+                    // the standard streaming chunk format:
+                    if (!data.text && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                      data.text = data.candidates[0].content.parts[0].text;
+                    }
+                    yield data;
+                  } catch (e) {
+                    // Ignore parse errors for incomplete chunks
                   }
-                } catch (e) {
-                  // Ignore parse errors for incomplete chunks
                 }
               }
             }
           }
-        } else {
-          // Route to standard generateContentStream
-          const requestBody = {
-            model,
-            contents,
-            config: { ...config, ...(getAdultSafetySettings() || {}) }
-          };
-
-          const res = await fetch("/api/gemini/generate/stream", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(requestBody)
-          });
-
-          if (!res.ok) {
-            let errMsg = `Backend error ${res.status}`;
-            try {
-              const errData = await res.json();
-              if (errData.error?.message) errMsg = errData.error.message;
-            } catch (e) {}
-            throw new Error(errMsg);
-          }
-          
-          if (!res.body) throw new Error("No response body");
-          
-          const reader = res.body.getReader();
-          const decoder = new TextDecoder("utf-8");
-          let buffer = "";
-
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || "";
-
-            for (const line of lines) {
-              if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-                try {
-                  const data = JSON.parse(line.slice(6));
-                  if (data.error) {
-                    throw new Error(data.error);
-                  }
-                  // the standard streaming chunk format:
-                  if (!data.text && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-                    data.text = data.candidates[0].content.parts[0].text;
-                  }
-                  yield data;
-                } catch (e) {
-                  // Ignore parse errors for incomplete chunks
-                }
-              }
-            }
-          }
+        } finally {
+          // Runs on completion, early break, or consumer error so an abandoned
+          // stream never leaves its socket open.
+          controller.abort();
         }
       }
 
@@ -354,6 +370,8 @@ function buildPlayerBlock(profile: CharacterProfile): string {
     : '';
 
   const pp = profile.playerProfile;
+  const ppPersonality = sanitizeUserInput(pp?.personality || 'Unknown');
+  const ppBackstory = sanitizeUserInput(pp?.backstory || 'Unknown');
   const deepSheet = pp?.characterFlaws || pp?.secretMotive || pp?.speechPattern || pp?.likesAndDislikes || pp?.coreBeliefs || pp?.quirks || pp?.relationship
     ? `\nDeep Character Sheet (the player's character is as fully realized as yours — respect it):
 ${pp.characterFlaws ? `- Flaws: ${pp.characterFlaws}` : ''}
@@ -373,8 +391,8 @@ ${pp.relationship ? `- Relationship to the world: ${pp.relationship}` : ''}
   return `\nPLAYER CHARACTER:
 Name: ${pp?.name || 'The Protagonist'}
 Description: ${pp?.description || 'A mysterious traveler'}
-Personality: ${pp?.personality || 'Unknown'}
-Backstory: ${pp?.backstory || 'Unknown'}
+Personality: ${ppPersonality}
+Backstory: ${ppBackstory}
 Appearance: ${pp?.appearance || 'Unknown'}
 Clothing: ${pp?.clothing || 'Unknown'}
 Accessories: ${pp?.accessories || 'None'}
@@ -384,10 +402,28 @@ ${profile.mode === AppMode.GAME ? `Class: ${pp?.playerClass || 'Unknown'}\nRace:
 ${deepSheet}${pTraitLine}${inventoryBlock}`;
 }
 
-function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEntry[], currentSummary: string, customInstructions?: string): string {
-  const codexContext = codexEntries.length > 0
+function buildCodexContext(codexEntries: CodexEntry[]): string {
+  return codexEntries.length > 0
     ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntries.slice(-15).map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
     : '';
+}
+
+function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEntry[], currentSummary: string, customInstructions?: string): string {
+  // Profile fields are user-authored and flow into the system prompt verbatim,
+  // so scrub injection attempts from the most abusable narrative fields.
+  profile = {
+    ...profile,
+    personality: sanitizeUserInput(profile.personality || ''),
+    backstory: sanitizeUserInput(profile.backstory || ''),
+    playerProfile: profile.playerProfile
+      ? {
+          ...profile.playerProfile,
+          personality: sanitizeUserInput(profile.playerProfile.personality || ''),
+          backstory: sanitizeUserInput(profile.playerProfile.backstory || '')
+        }
+      : profile.playerProfile
+  };
+  const codexContext = buildCodexContext(codexEntries);
 
   const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
 
@@ -558,11 +594,19 @@ ${styleInstruction}${toneDirective}${matureDirective}
 If the player provides a [Director's Note: ...], use it to adjust the session. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
 }
 function buildHistory(messages: any[]) {
+  // Keep every message that carries parts, even when a part's text is "".
+  // Filtering on text content here desyncs the alternating user/model roles
+  // the API expects (e.g. a streamed-but-empty model turn would be dropped,
+  // leaving two consecutive user turns and shifting the whole conversation).
   return messages
-    .filter(m => m.parts && m.parts.length > 0 && m.parts[0].text && m.parts[0].text.trim())
+    .filter(m => m && Array.isArray(m.parts) && m.parts.length > 0)
     .map(m => ({
       role: m.role,
-      parts: m.parts
+      parts: m.parts.map((p: any) =>
+        p && typeof p.text === 'string' && p.text.trim() === '' && !p.inlineData && !p.fileData
+          ? { ...p, text: '(no content)' }
+          : p
+      )
     }));
 }
 
@@ -655,11 +699,13 @@ function parseJsonWithRecovery(responseText: string): any {
 }
 
 function convertHistoryToOpenRouter(history: any[]) {
+  // Mirror buildHistory(): preserve one entry per message so user/model
+  // alternation stays aligned even when a turn's text is empty.
   return history
-    .filter(m => m.parts && m.parts[0] && m.parts[0].text && m.parts[0].text.trim())
+    .filter(m => m && m.parts && m.parts.length > 0)
     .map(m => ({
       role: m.role === 'model' ? 'assistant' : 'user',
-      content: m.parts[0].text
+      content: (m.parts[0]?.text || '').trim() === '' ? '(no content)' : m.parts[0].text
     }));
 }
 
@@ -670,6 +716,7 @@ async function callOpenRouter(history: any[], systemInstruction: string, userInp
 
   const apiKey = settings.openRouterApiKey.trim();
   const referer = "https://personaforge.app";
+  const controller = new AbortController();
 
   const messages = [
     { role: "system", content: systemInstruction },
@@ -677,45 +724,50 @@ async function callOpenRouter(history: any[], systemInstruction: string, userInp
     { role: "user", content: userInput }
   ].filter(m => m.content && m.content.trim());
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": referer,
-      "X-Title": "PersonaForge"
-    },
-    body: JSON.stringify({
-      model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
-      messages: messages,
-    })
-  });
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    let errorData = {};
-    try {
-      errorData = JSON.parse(errorText);
-    } catch {
-      // Ignore parse error if it's an HTML page
-      console.error("OpenRouter returned non-JSON error:", errorText.substring(0,200));
-    }
-    const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
-    if (response.status === 401) {
-      throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
-    }
-    throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
-  }
-
-  const rawText = await response.text();
-  let data;
   try {
-    data = JSON.parse(rawText);
-  } catch (e) {
-    console.error("OpenRouter returned invalid JSON. Raw response:", rawText.substring(0,200));
-    throw new Error(`OpenRouter returned an invalid response (not JSON). ` + rawText.substring(0, 100));
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": referer,
+        "X-Title": "PersonaForge"
+      },
+      body: JSON.stringify({
+        model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
+        messages: messages,
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData = {};
+      try {
+        errorData = JSON.parse(errorText);
+      } catch {
+        // Ignore parse error if it's an HTML page
+        console.error("OpenRouter returned non-JSON error:", errorText.substring(0,200));
+      }
+      const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
+      if (response.status === 401) {
+        throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
+      }
+      throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
+    }
+
+    const rawText = await response.text();
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (e) {
+      console.error("OpenRouter returned invalid JSON. Raw response:", rawText.substring(0,200));
+      throw new Error(`OpenRouter returned an invalid response (not JSON). ` + rawText.substring(0, 100));
+    }
+    return data.choices?.[0]?.message?.content || "";
+  } finally {
+    controller.abort();
   }
-  return data.choices?.[0]?.message?.content || "";
 }
 
 async function* generateOpenRouterStream(history: any[], systemInstruction: string, userInput: string, settings: any) {
@@ -725,6 +777,7 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
 
   const apiKey = settings.openRouterApiKey.trim();
   const referer = "https://personaforge.app";
+  const controller = new AbortController();
 
   const messages = [
     { role: "system", content: systemInstruction },
@@ -732,69 +785,78 @@ async function* generateOpenRouterStream(history: any[], systemInstruction: stri
     { role: "user", content: userInput }
   ].filter(m => m.content && m.content.trim());
 
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-      "HTTP-Referer": referer,
-      "X-Title": "PersonaForge"
-    },
-    body: JSON.stringify({
-      model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
-      messages: messages,
-      stream: true
-    })
-  });
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Authorization": `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": referer,
+        "X-Title": "PersonaForge"
+      },
+      body: JSON.stringify({
+        model: settings.openRouterModel || "meta-llama/llama-3-8b-instruct:free",
+        messages: messages,
+        stream: true
+      })
+    });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    let errorData = {};
-    try {
-      errorData = JSON.parse(errorText);
-    } catch {
-      console.error("OpenRouter Stream returned non-JSON error:", errorText.substring(0,200));
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorData = {};
+      try {
+        errorData = JSON.parse(errorText);
+      } catch {
+        console.error("OpenRouter Stream returned non-JSON error:", errorText.substring(0,200));
+      }
+      const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
+      if (response.status === 401) {
+        throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
+      }
+      throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
     }
-    const msg = (errorData as any).error?.message || response.statusText || 'Unknown OpenRouter Error';
-    if (response.status === 401) {
-      throw new Error(`OpenRouter Unauthorized (401): ${msg}. Please check if your API key is valid and if you have credits for paid models.`);
-    }
-    throw new Error(`OpenRouter Error: ${response.status} ${msg}`);
-  }
 
-  if (!response.body) throw new Error("No response body");
+    if (!response.body) throw new Error("No response body");
 
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder("utf-8");
-  let buffer = "";
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
 
-    for (const line of lines) {
-      if (line.startsWith('data: ') && line !== 'data: [DONE]') {
-        try {
-          const data = JSON.parse(line.slice(6));
-          const content = data.choices?.[0]?.delta?.content;
-          if (content) {
-            yield content;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() || "";
+
+      for (const line of lines) {
+        if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+          try {
+            const data = JSON.parse(line.slice(6));
+            const content = data.choices?.[0]?.delta?.content;
+            if (content) {
+              yield content;
+            }
+          } catch (e) {
+            // Ignore parse errors for incomplete chunks
           }
-        } catch (e) {
-          // Ignore parse errors for incomplete chunks
         }
       }
     }
+  } finally {
+    // Aborting a completed request is a no-op; abandoning one mid-stream
+    // closes the connection instead of leaking it.
+    controller.abort();
   }
 }
 
 export async function fetchOpenRouterModels(): Promise<any[]> {
+  const controller = new AbortController();
   try {
     const response = await fetch("https://openrouter.ai/api/v1/models", {
+      signal: controller.signal,
       headers: {
         "HTTP-Referer": window.location.origin,
         "X-Title": "PersonaForge"
@@ -806,13 +868,17 @@ export async function fetchOpenRouterModels(): Promise<any[]> {
   } catch (error) {
     console.error("Error fetching OpenRouter models:", error);
     return [];
+  } finally {
+    controller.abort();
   }
 }
 
 export async function validateOpenRouterKey(apiKey: string): Promise<boolean> {
   if (!apiKey) return false;
+  const controller = new AbortController();
   try {
     const response = await fetch("https://openrouter.ai/api/v1/auth/key", {
+      signal: controller.signal,
       headers: {
         "Authorization": `Bearer ${apiKey.trim()}`,
       }
@@ -821,6 +887,8 @@ export async function validateOpenRouterKey(apiKey: string): Promise<boolean> {
   } catch (error) {
     console.error("OpenRouter Key Validation Error:", error);
     return false;
+  } finally {
+    controller.abort();
   }
 }
 
@@ -1683,7 +1751,13 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
   const systemInstruction = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
 
   if (settings.activeTextProvider === 'OpenRouter') {
-    yield* generateOpenRouterStream(history, systemInstruction, userInput, settings);
+    // Guarantee the Codex context reaches OpenRouter even if the shared
+    // system-instruction builder changes: append the block when missing.
+    const openRouterSystemInstruction =
+      codexEntries.length > 0 && !systemInstruction.includes('WORLD CODEX')
+        ? systemInstruction + buildCodexContext(codexEntries)
+        : systemInstruction;
+    yield* generateOpenRouterStream(history, openRouterSystemInstruction, userInput, settings);
     return;
   }
 

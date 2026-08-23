@@ -19,6 +19,7 @@ import {
   LiveVoiceMicMode,
 } from '../lib/liveVoice';
 import { getSettings, saveSettings } from '../lib/types';
+import { sanitizeUserInput } from '../lib/sanitize';
 import { useToast } from './useToast';
 
 export function useLiveVoice() {
@@ -200,9 +201,10 @@ export function useLiveVoice() {
   }, []);
 
   const sendText = useCallback((text: string) => {
-    if (!text.trim()) return;
-    setUserTranscript(text.trim());
-    sendTextMessage(text.trim());
+    const safe = sanitizeUserInput(text).trim();
+    if (!safe) return;
+    setUserTranscript(safe);
+    sendTextMessage(safe);
   }, []);
 
   useEffect(() => {

@@ -19,7 +19,7 @@ import { LiveVoiceHUD } from './chat/LiveVoiceHUD';
 import { refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { getSettings, Message, CharacterProfile, CodexEntry } from '../lib/types';
-import { processUserInput } from '../lib/sanitize';
+import { processUserInput, sanitizeInstruction } from '../lib/sanitize';
 
 interface ChatInterfaceProps {
   profile: CharacterProfile;
@@ -234,9 +234,10 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
       const settings = getSettings();
-      const instructions = guidance 
-        ? `${settings.customRefineInstructions || ''}\nSpecific Guidance for this refinement: ${guidance}` 
-        : settings.customRefineInstructions;
+      const baseInstructions = sanitizeInstruction(settings.customRefineInstructions);
+      const instructions = guidance
+        ? `${baseInstructions}\nSpecific Guidance for this refinement: ${sanitizeInstruction(guidance)}`.trim()
+        : baseInstructions || undefined;
         
       const refined = await refineInput(input, profile, history, instructions);
       if (refined) {
@@ -269,8 +270,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         profile, 
         codexEntries, 
         storySummary, 
-        input.trim(), 
-        settings.customRefineInstructions
+        sanitizeInstruction(input.trim()), 
+        sanitizeInstruction(settings.customRefineInstructions) || undefined
       );
       if (suggestion) {
         setInput(suggestion);
@@ -499,7 +500,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         userInput, 
         codexEntries, 
         currentSummary,
-        settings.customRefineInstructions
+        sanitizeInstruction(settings.customRefineInstructions) || undefined
       );
       
       for await (const chunk of stream) {
@@ -614,8 +615,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     const lastUserMessage = historyUpToMessage[lastUserIndex];
     
     let userInput = lastUserMessage.text;
-    if (guidance.trim()) {
-      userInput += `\n\n[Director's Note for AI: ${guidance.trim()}]`;
+    const safeGuidance = sanitizeInstruction(guidance).trim();
+    if (safeGuidance) {
+      userInput += `\n\n[Director's Note for AI: ${safeGuidance}]`;
     }
 
     setRegeneratingMessageId(null);
@@ -626,11 +628,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const handleSendText = useCallback(async (overrideText?: string) => {
     let rawText = overrideText || input;
-    if (directorNote.trim()) {
+    const safeDirectorNote = sanitizeInstruction(directorNote).trim();
+    if (safeDirectorNote) {
       if (rawText.trim()) {
-        rawText += `\n\n[Director's Note: ${directorNote.trim()}]`;
+        rawText += `\n\n[Director's Note: ${safeDirectorNote}]`;
       } else {
-        rawText = `[Director's Note: ${directorNote.trim()}]`;
+        rawText = `[Director's Note: ${safeDirectorNote}]`;
       }
     }
     

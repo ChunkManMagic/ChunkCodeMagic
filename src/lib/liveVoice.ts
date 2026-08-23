@@ -238,9 +238,13 @@ async function acquireMicWithFallback(micDeviceId?: string): Promise<MediaStream
 
 async function fetchLiveToken(model: string, config: any): Promise<string> {
   const base = typeof window !== "undefined" ? "" : "http://localhost:3000";
+  const accessToken = (import.meta as any)?.env?.VITE_API_ACCESS_TOKEN;
   const res = await fetch(`${base}/api/gemini/live/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { "x-api-token": String(accessToken) } : {}),
+    },
     body: JSON.stringify({ model, config }),
   });
   if (!res.ok) {
@@ -676,6 +680,18 @@ function getWorkletUrl(): string {
   return workletUrl;
 }
 
+// Each createObjectURL pins the blob for the lifetime of the document; without
+// this, long-running apps that start/stop many voice sessions accumulate
+// blobs forever. Only safe to call while NO session is alive — a reconnecting
+// session's brand-new AudioContext still needs the same URL for addModule().
+function releaseWorkletUrl(): void {
+  if (!workletUrl) return;
+  try {
+    URL.revokeObjectURL(workletUrl);
+  } catch (e) {}
+  workletUrl = null;
+}
+
 function isWorkletSupported(ctx: AudioContext): boolean {
   return !!(ctx.audioWorklet && typeof AudioWorkletNode === "function");
 }
@@ -1063,6 +1079,7 @@ export async function startLiveVoice(options: LiveVoiceOptions): Promise<void> {
   }
 
   stream.getTracks().forEach((t) => t.stop());
+  releaseWorkletUrl();
   throw lastError || new Error("All Live voice models failed to connect.");
 }
 
@@ -1094,6 +1111,20 @@ async function reconnectNow(): Promise<void> {
   const options = lastOptions;
   const stale = active;
 
+  // A fresh Live session starts with an empty context window. Seed it ONCE
+  // with the initial snapshot PLUS every turn completed during the call so
+  // far. Re-seeding only the original contextTurns (what connectSession did
+  // before) duplicated pre-call history on every reconnect while dropping
+  // everything said mid-session.
+  const inCallTurns: { role: string; text: string }[] = [];
+  for (const turn of stale?.turnHistory || []) {
+    if (turn.user) inCallTurns.push({ role: "user", text: turn.user });
+    if (turn.model) inCallTurns.push({ role: "model", text: turn.model });
+  }
+  const reconnectOptions: LiveVoiceOptions = inCallTurns.length
+    ? { ...options, contextTurns: [...(options.contextTurns || []), ...inCallTurns].slice(-80) }
+    : options;
+
   const stream = await acquireMicWithFallback(options.micDeviceId);
   if (op !== operationId || manualStop || !lastOptions) {
     stream.getTracks().forEach((t) => t.stop());
@@ -1103,12 +1134,12 @@ async function reconnectNow(): Promise<void> {
 
   for (const model of buildModelChain(options.preferredModel)) {
     try {
-      const token = await fetchLiveToken(model, buildConnectConfig(options));
+      const token = await fetchLiveToken(model, buildConnectConfig(reconnectOptions));
       if (op !== operationId || manualStop || !lastOptions) {
         stream.getTracks().forEach((t) => t.stop());
         return;
       }
-      const handle = await connectSession(token, model, stream, options);
+      const handle = await connectSession(token, model, stream, reconnectOptions);
       if (op !== operationId || manualStop || !lastOptions) {
         stream.getTracks().forEach((t) => t.stop());
         teardownSession(handle);
@@ -1122,6 +1153,9 @@ async function reconnectNow(): Promise<void> {
         handle.outputVolume = stale.outputVolume;
         handle.bargeInEnabled = stale.bargeInEnabled;
         handle.pushToTalk = stale.micMode === "handsFree" || isMicSending(stale);
+        // Preserve the conversation record so future reconnects keep merging
+        // correctly instead of replaying from the original snapshot again.
+        handle.turnHistory = [...stale.turnHistory];
       }
       try {
         await attachMicCapture(handle);
@@ -1397,6 +1431,7 @@ export function stopLiveVoice(): void {
   clearReconnectTimer();
   teardownSession(active);
   active = null;
+  releaseWorkletUrl();
 }
 
 export function getLiveVoiceState(): LiveVoiceState {
