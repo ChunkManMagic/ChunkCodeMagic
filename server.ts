@@ -244,6 +244,13 @@ async function startServer() {
   });
 
   app.post("/api/gemini/generate/stream", async (req, res) => {
+    // Everything after this point speaks SSE — including errors — so commit to
+    // the stream headers up front and never fall back to JSON mid-flight.
+    let clientGone = false;
+    req.on("close", () => { clientGone = true; });
+    const sendEvent = (payload: unknown) => {
+      if (!clientGone && !res.destroyed) res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
     try {
       if (rejectModel(res, req.body?.model)) return;
       const apiKey = process.env.GEMINI_API_KEY;
@@ -251,6 +258,12 @@ async function startServer() {
         res.status(500).json({ error: { message: "GEMINI_API_KEY is not set on the server." } });
         return;
       }
+
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
 
       const ai = new GoogleGenAI({ apiKey });
       const { contents, config } = req.body;
@@ -262,6 +275,7 @@ async function startServer() {
       let delay = 1500;
 
       while (attempt < maxAttempts) {
+        if (clientGone) return;
         try {
           stream = await ai.models.generateContentStream({
             model,
@@ -287,25 +301,31 @@ async function startServer() {
             throw err;
           }
 
+          if (clientGone) return;
           const waitTime = delay + Math.random() * 1500;
           console.warn(`Retrying stream start in ${Math.round(waitTime)}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           delay *= 2;
         }
       }
+      if (clientGone) return;
       
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-
       for await (const chunk of stream) {
-        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        // Stop draining the paid upstream stream as soon as the client goes
+        // away (tab closed, navigation, aborted fetch) — otherwise the server
+        // keeps generating tokens nobody will ever read.
+        if (clientGone) break;
+        sendEvent(chunk);
       }
-      res.write(`data: [DONE]\n\n`);
-      res.end();
+      if (!clientGone) {
+        sendEvent("[DONE]");
+        res.end();
+      } else {
+        res.end();
+      }
     } catch (err: any) {
       console.error("Gemini generate stream final failure:", err);
-      res.write(`data: ${JSON.stringify({ error: err.message || String(err) })}\n\n`);
+      sendEvent({ error: err.message || String(err) });
       res.end();
     }
   });
@@ -373,6 +393,13 @@ async function startServer() {
   });
 
   app.post("/api/gemini/interact/stream", async (req, res) => {
+    // Same SSE contract as /generate/stream: headers up front, errors as data
+    // events, and upstream generation abandoned when the client disconnects.
+    let clientGone = false;
+    req.on("close", () => { clientGone = true; });
+    const sendEvent = (payload: unknown) => {
+      if (!clientGone && !res.destroyed) res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    };
     try {
       if (rejectModel(res, req.body?.model, req.body?.agent)) return;
       const apiKey = process.env.GEMINI_API_KEY;
@@ -380,6 +407,12 @@ async function startServer() {
         res.status(500).json({ error: { message: "GEMINI_API_KEY is not set on the server." } });
         return;
       }
+
+      res.status(200);
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.flushHeaders();
 
       const ai = new GoogleGenAI({ apiKey });
       const { input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id } = req.body;
@@ -391,6 +424,7 @@ async function startServer() {
       let delay = 1500;
 
       while (attempt < maxAttempts) {
+        if (clientGone) return;
         try {
           stream = await ai.interactions.create({
             model,
@@ -422,25 +456,26 @@ async function startServer() {
             throw err;
           }
 
+          if (clientGone) return;
           const waitTime = delay + Math.random() * 1500;
           console.warn(`Retrying interact stream start in ${Math.round(waitTime)}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           delay *= 2;
         }
       }
+      if (clientGone) return;
       
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-
       for await (const chunk of stream) {
-        res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+        if (clientGone) break;
+        sendEvent(chunk);
       }
-      res.write(`data: [DONE]\n\n`);
+      if (!clientGone) {
+        sendEvent("[DONE]");
+      }
       res.end();
     } catch (err: any) {
       console.error("Gemini interact stream final failure:", err);
-      res.write(`data: ${JSON.stringify({ error: err.message || String(err) })}\n\n`);
+      sendEvent({ error: err.message || String(err) });
       res.end();
     }
   });
