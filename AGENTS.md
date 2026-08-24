@@ -30,4 +30,4 @@ PersonaForge — an AI interactive-fiction app (ROLEPLAY / SCENARIO / GAME modes
 - ESLint turns off `@typescript-eslint/no-unused-vars`, `no-explicit-any`, and `no-empty` — `any` is used liberally; don't add unused-vars cleanup.
 - `tsconfig.json` sets `allowImportingTsExtensions` — imports use explicit `.ts`/`.tsx` extensions.
 - `Message.isPinned`, `Message.versions`/`activeVersionIndex` are persisted by spreading the whole message object in `useChatState`/`useFirestoreSync` — any new message fields propagate automatically.
-- Chat message rendering lives in `src/components/chat/MessageBubble.tsx`; `parseMessageContent` is exported from there and reused by `ChatInterface` and `PinnedMessagesPanel` — don't duplicate it.
+- Chat message rendering lives in `src/components/chat/MessageBubble.tsx`; `parseMessageContent` lives in `src/components/chat/messageContent.ts` and is reused by `ChatInterface` and `PinnedMessagesPanel` — don't duplicate it, and don't re-export it from a component file (breaks react-refresh).

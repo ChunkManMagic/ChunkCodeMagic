@@ -3,27 +3,7 @@ import { motion } from 'motion/react';
 import { RotateCcw, Edit2, Volume2, RefreshCw, GitBranch, Pin, PinOff, ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { AppMode, Message } from '../../lib/types';
-
-export const parseMessageContent = (text: string, role: string) => {
-  if (role === 'model') {
-    const oocMatch = text.match(/<ooc>([\s\S]*?)<\/ooc>/i);
-    if (oocMatch) {
-      return {
-        mainText: text.replace(/<ooc>[\s\S]*?<\/ooc>/i, '').trim(),
-        oocText: oocMatch[1].trim()
-      };
-    }
-  } else if (role === 'user') {
-    const noteMatch = text.match(/\[Director's Note: ([\s\S]*?)\]/i);
-    if (noteMatch) {
-      return {
-        mainText: text.replace(/\[Director's Note: [\s\S]*?\]/i, '').trim(),
-        oocText: noteMatch[1].trim()
-      };
-    }
-  }
-  return { mainText: text, oocText: null };
-};
+import { parseMessageContent } from './messageContent';
 
 function renderWithDiceRolls(text: string): React.ReactNode {
   if (!text.includes('[ROLL:')) return null;

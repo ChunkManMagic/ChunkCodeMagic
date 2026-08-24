@@ -1,7 +1,7 @@
 import { motion } from 'motion/react';
 import { Pin, PinOff, CornerDownRight, BookmarkX } from 'lucide-react';
 import { Message, AppMode } from '../../lib/types';
-import { parseMessageContent } from './MessageBubble';
+import { parseMessageContent } from './messageContent';
 
 interface PinnedMessagesPanelProps {
   messages: Message[];
