@@ -35,6 +35,7 @@ export function useLiveVoice() {
   const stateRef = useRef<LiveVoiceState>(state);
   const callbacksRef = useRef<{
     onTurnEnd?: (userText: string, modelText: string) => void;
+    onQuotaExhausted?: (message: string) => void;
   }>({});
 
   useEffect(() => {
@@ -76,6 +77,9 @@ export function useLiveVoice() {
           onAudioLevels: handleAudioLevels,
           onError: (message) => {
             toastError('Live Voice Error', message);
+            if (/quota|429|resource.?exhausted|all live voice models|failed to connect/i.test(message)) {
+              callbacksRef.current.onQuotaExhausted?.(message);
+            }
           },
           onTurnEnd: (userText, modelText) => {
             callbacksRef.current.onTurnEnd?.(userText, modelText);
@@ -200,6 +204,10 @@ export function useLiveVoice() {
     callbacksRef.current.onTurnEnd = cb;
   }, []);
 
+  const setOnQuotaExhausted = useCallback((cb: (message: string) => void) => {
+    callbacksRef.current.onQuotaExhausted = cb;
+  }, []);
+
   const sendText = useCallback((text: string) => {
     const safe = sanitizeUserInput(text).trim();
     if (!safe) return;
@@ -235,6 +243,7 @@ export function useLiveVoice() {
     rewind,
     sendText,
     setOnTurnEnd,
+    setOnQuotaExhausted,
     isActive: state.status === 'connected' || state.status === 'connecting',
     isConnecting: state.status === 'connecting',
     isConnected: state.status === 'connected',

@@ -761,6 +761,21 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
         await addMessage({ id: generateId(), role: 'model', text: modelText });
       }
     });
+    // If the live socket can't be had (quota/rate limits), seamlessly fall
+    // back to turn-by-turn voice: continuous speech-to-text sends + the
+    // persona TTS voice reads replies aloud.
+    liveVoice.setOnQuotaExhausted(() => {
+      if (!('SpeechRecognition' in window || 'webkitSpeechRecognition' in window)) return;
+      setIsAutoRead(true);
+      setIsLiveMode(true);
+      setIsMicActive(true);
+      try {
+        recognitionRef.current?.start();
+        toastSuccess("Live quota reached — switched to turn-by-turn voice. Replies will be spoken aloud.");
+      } catch {
+        toastSuccess("Turn-by-turn voice armed — tap the mic button to speak.");
+      }
+    });
     liveVoice.start({
       systemInstruction: buildLiveVoicePrompt(),
       voiceName: getSettings().liveVoiceName || profile.voiceName || 'Kore',
@@ -769,7 +784,7 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
       micMode: 'hold',
       contextTurns: messages.slice(-30).map(m => ({ role: m.role, text: m.text })),
     });
-  }, [liveVoice, buildLiveVoicePrompt, profile.voiceName, addMessage, messages]);
+  }, [liveVoice, buildLiveVoicePrompt, profile.voiceName, addMessage, messages, toastSuccess]);
 
   // Keyboard Shortcuts
   useEffect(() => {

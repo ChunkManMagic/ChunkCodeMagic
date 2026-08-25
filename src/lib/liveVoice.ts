@@ -91,6 +91,8 @@ export interface LiveVoiceOptions {
   onStateChange?: (state: LiveVoiceState) => void;
   onAudioLevels?: (inputLevel: number, outputLevel: number) => void;
   onError?: (message: string) => void;
+  /** Fired when the failure looks like quota/rate-limit exhaustion so callers can fall back to turn-by-turn voice. */
+  onQuotaExhausted?: (message: string) => void;
 }
 
 interface SessionHandle {
