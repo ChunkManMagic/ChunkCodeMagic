@@ -346,6 +346,22 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     loadDraft();
   }, []);
 
+  // Handoff deep link personaforge://forge / https://personaforge.app/forge?subjects=... (both apps as one)
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const subs = params.get('subjects');
+      if (subs) {
+        const picks = subs.split(',').map(s=> s.trim()).filter(Boolean).slice(0, SubjectMatters.maxFor(matureEnabledInForge));
+        if (picks.length>0) setSelectedSubjects(picks);
+      }
+      const m = params.get('mode');
+      if (m && Object.values(AppMode).includes(m as AppMode)) setAppMode(m as AppMode);
+      const mat = params.get('mature');
+      if (mat) setMatureEnabledInForge(mat==='1' || mat==='true');
+    } catch {}
+  }, []);
+
   // Auto-save basic draft
   useEffect(() => {
     // Skip the very first render if we are just initializing with defaults
@@ -734,6 +750,11 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                       Mature themes (18+)
                     </label>
                     <div className="flex gap-2">
+                      <button onClick={()=>{
+                        const link=`https://personaforge.app/forge?subjects=${encodeURIComponent(selectedSubjects.join(","))}&mode=${appMode}&mature=${matureEnabledInForge?1:0}`;
+                        if ((navigator as any).share) (navigator as any).share({title:"PersonaForge pack", text:link}).catch(()=>{});
+                        else { navigator.clipboard.writeText(link); toastSuccess("Link copied — open on phone or web (one entity)"); }
+                      }} className="text-[11px] text-sky-400 hover:text-white flex items-center gap-1">Share</button>
                       <button onClick={()=> { const pool=[...SubjectMatters.STANDARD_POOL, ...(matureEnabledInForge? SubjectMatters.MATURE_POOL as unknown as string[]:[])]; const sh=pool.sort(()=>Math.random()-0.5).slice(0, matureEnabledInForge?4:3); setSelectedSubjects(sh); if(sh.length>0) generateDynamicSubjects(sh); }} className="text-[11px] text-emerald-400 hover:text-white">Shuffle</button>
                       <button onClick={()=> { setSelectedSubjects([]); setDynamicSubjects([]); setSuggestedStarters([]); }} className="text-[11px] text-zinc-500 hover:text-white">Clear</button>
                     </div>
