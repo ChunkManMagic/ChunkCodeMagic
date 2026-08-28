@@ -8,6 +8,7 @@ import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { RefineButton } from './RefineButton';
 import { Scenario } from '../lib/types';
 
+import { SubjectMatters } from '../lib/subjectMatters';
 import { STORAGE_KEYS } from '../constants';
 
 interface CharacterCreatorProps {
@@ -125,6 +126,14 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
   const { toastSuccess, toastError } = useToast();
   const [idea, setIdea] = useState('');
   const [detailedProfile, setDetailedProfile] = useState<CharacterProfile>(DEFAULT_PROFILE);
+  // Subject chooser (5+2 mature, dynamic, quota-safe)
+  const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
+  const [matureEnabledInForge, setMatureEnabledInForge] = useState(false);
+  const [dynamicSubjects, setDynamicSubjects] = useState<string[]>([]);
+  const [suggestedStarters, setSuggestedStarters] = useState<string[]>([]);
+  const [isGeneratingStarters, setIsGeneratingStarters] = useState(false);
+  const [isGeneratingDynamic, setIsGeneratingDynamic] = useState(false);
+  const [showMatureConfirm, setShowMatureConfirm] = useState(false);
 
   const firstCharacter = scenarios.length > 0 ? scenarios[0] : null;
 
@@ -138,6 +147,70 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     });
     setStep('profile');
     toastSuccess(`Using ${scenario.profile.name} as template`);
+  };
+
+  // ── Subject chooser helpers ──
+  const toggleSubject = (s: string) => {
+    const max = SubjectMatters.maxFor(matureEnabledInForge);
+    setSelectedSubjects(prev => {
+      const next = prev.includes(s) ? prev.filter(x=> x!==s) : (prev.length < max ? [...prev, s] : prev);
+      if (next.length>0 && next.length!==prev.length) generateDynamicSubjects(next);
+      else if (next.length===0) setDynamicSubjects([]);
+      return next;
+    });
+  };
+  const setMature = (on: boolean) => {
+    if (on) setShowMatureConfirm(true);
+    else {
+      const filtered = selectedSubjects.filter(x=> !(SubjectMatters.MATURE_POOL as unknown as string[]).includes(x));
+      setSelectedSubjects(filtered.slice(0, SubjectMatters.MAX_STANDARD));
+      setMatureEnabledInForge(false);
+    }
+  };
+  const generateDynamicSubjects = async (picks: string[] = selectedSubjects) => {
+    if (picks.length===0) { setDynamicSubjects([]); return; }
+    setIsGeneratingDynamic(true);
+    try {
+      // Try Gemini flash-lite with fallback to offline
+      const prompt = `Given subjects: ${picks.join(", ")} and mode ${appMode}. Suggest 6 more distinct subject matters (single words or 2-word phrases) not in [${picks.join(", ")}], tailored to mode. Return ONLY JSON array of strings.`;
+      const res = await fetch('/api/gemini/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model: 'gemini-3.1-flash-lite-preview', contents: [{ role:'user', parts:[{text: prompt}]} ], generationConfig:{ responseMimeType:'application/json', responseSchema:{ type:'ARRAY', items:{type:'STRING'}}}})});
+      if (res.ok) {
+        const data = await res.json();
+        const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (txt) { try { const arr = JSON.parse(txt); if (Array.isArray(arr)) { setDynamicSubjects(arr.filter((x:string)=> !picks.includes(x)).slice(0,6)); return; } } catch {}
+          try { const arr2 = JSON.parse(txt); if (Array.isArray(arr2)) { setDynamicSubjects(arr2.slice(0,6)); return; } } catch {}
+        }
+      }
+      throw new Error('fallback');
+    } catch {
+      setDynamicSubjects(SubjectMatters.dynamicFor(picks, matureEnabledInForge));
+    } finally { setIsGeneratingDynamic(false); }
+  };
+  const generateSuggestedStarters = async () => {
+    if (selectedSubjects.length===0) { toastError("Pick at least one subject"); return; }
+    setIsGeneratingStarters(true);
+    setSuggestedStarters([]);
+    try {
+      const count = matureEnabledInForge ? 7 : 5;
+      const prompt = `You are a story-starter generator for PersonaForge. Mode=${appMode}. Subjects=${selectedSubjects.join(", ")}. Mature=${matureEnabledInForge}. Generate ${count} distinct one-sentence story starter prompts (1-2 lines each) tailored to mode: ROLEPLAY→ character relationship hooks, SCENARIO→ crisis/world hooks, GAME→ quest hooks. ${matureEnabledInForge ? "May include mature sensual/obsessive themes between consenting adults, never involving minors." : "Keep PG-13."} Return ONLY JSON array of strings.`;
+      const tryModel = async (m:string) => {
+        const r = await fetch('/api/gemini/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model:m, contents:[{role:'user', parts:[{text:prompt}]}], generationConfig:{responseMimeType:'application/json', responseSchema:{type:'ARRAY', items:{type:'STRING'}}}})});
+        if (!r.ok) throw new Error(`${r.status}`);
+        const d = await r.json();
+        const t = d.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (!t) throw new Error('no text');
+        return JSON.parse(t) as string[];
+      };
+      let starters: string[] | null = null;
+      try { starters = await tryModel('gemini-3.1-flash-lite-preview'); }
+      catch { try { starters = await tryModel('gemma-3-4b-it'); } catch {} }
+      if (starters && starters.length>0) setSuggestedStarters(starters.slice(0, count));
+      else throw new Error('offline');
+    } catch {
+      const count = matureEnabledInForge ? 7 : 5;
+      setSuggestedStarters(SubjectMatters.offlineSuggestionsFor(selectedSubjects, appMode, matureEnabledInForge, count));
+      toastSuccess("Using offline starters (quota fallback)");
+    } finally { setIsGeneratingStarters(false); }
   };
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -640,6 +713,68 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                 <div className="flex justify-between items-center">
                   <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Your Idea</h3>
                 </div>
+                {/* ── Subject Matter Chooser (5+2 mature, dynamic, quota-safe) ── */}
+                <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h4 className="text-xs font-bold text-white uppercase tracking-widest">Pick subject matters</h4>
+                    <span className={`text-[10px] px-2 py-1 rounded-full border ${selectedSubjects.length >= SubjectMatters.maxFor(matureEnabledInForge) ? 'bg-red-500/20 border-red-500/30 text-red-300' : 'bg-white/5 border-white/10 text-zinc-500'}`}>{selectedSubjects.length}/{SubjectMatters.maxFor(matureEnabledInForge)}</span>
+                  </div>
+                  <p className="text-[11px] text-zinc-500">Choose up to {matureEnabledInForge ? '7 (5 +2 mature)' : '5'} — tap to toggle. Suggestions adapt to picks & mode.</p>
+                  <div className="flex flex-wrap gap-2">
+                    {[...new Set([...SubjectMatters.STANDARD_INITIAL, ...dynamicSubjects])].slice(0,18).map(s=>{
+                      const sel = selectedSubjects.includes(s);
+                      const atCap = selectedSubjects.length >= SubjectMatters.maxFor(matureEnabledInForge) && !sel;
+                      return <button key={s} onClick={()=> toggleSubject(s)} disabled={atCap} className={`px-3 py-1 rounded-full text-[11px] border transition-all ${sel ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white/5 border-white/10 text-zinc-400 hover:border-emerald-500/30 hover:text-white'} ${atCap?'opacity-30':''}`}>{s}</button>
+                    })}
+                    {isGeneratingDynamic && <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-zinc-500">…</span>}
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <label className="flex items-center gap-2 text-xs text-zinc-400">
+                      <input type="checkbox" checked={matureEnabledInForge} onChange={e=> setMature(e.target.checked)} className="accent-red-500" />
+                      Mature themes (18+)
+                    </label>
+                    <div className="flex gap-2">
+                      <button onClick={()=> { const pool=[...SubjectMatters.STANDARD_POOL, ...(matureEnabledInForge? SubjectMatters.MATURE_POOL as unknown as string[]:[])]; const sh=pool.sort(()=>Math.random()-0.5).slice(0, matureEnabledInForge?4:3); setSelectedSubjects(sh); if(sh.length>0) generateDynamicSubjects(sh); }} className="text-[11px] text-emerald-400 hover:text-white">Shuffle</button>
+                      <button onClick={()=> { setSelectedSubjects([]); setDynamicSubjects([]); setSuggestedStarters([]); }} className="text-[11px] text-zinc-500 hover:text-white">Clear</button>
+                    </div>
+                  </div>
+                  {matureEnabledInForge && (
+                    <div className="flex flex-wrap gap-2">
+                      {(SubjectMatters.MATURE_POOL as unknown as string[]).map(s=>{
+                        const sel = selectedSubjects.includes(s);
+                        const atCap = selectedSubjects.length >= SubjectMatters.MAX_TOTAL && !sel;
+                        return <button key={s} onClick={()=> toggleSubject(s)} disabled={atCap} className={`px-3 py-1 rounded-full text-[11px] border ${sel ? 'bg-red-500 text-white border-red-500' : 'bg-white/5 border-white/10 text-zinc-400 hover:border-red-500/30'} ${atCap?'opacity-30':''}`}>{s}</button>
+                      })}
+                    </div>
+                  )}
+                  {matureEnabledInForge && <p className="text-[10px] text-red-300">Mature adds 2 extra slots (up to 7 total). 18+ only, consenting adults.</p>}
+                  <button onClick={generateSuggestedStarters} disabled={selectedSubjects.length===0 || isGeneratingStarters} className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-sm font-bold flex items-center justify-center gap-2">
+                    {isGeneratingStarters ? <><Loader2 className="w-4 h-4 animate-spin"/> Generating…</> : `✨ Get suggestions for ${selectedSubjects.length || 0} subjects`}
+                  </button>
+                  {suggestedStarters.length>0 && (
+                    <div className="space-y-2">
+                      {suggestedStarters.map((s,i)=> (
+                        <div key={i} className="p-3 rounded-xl bg-white/5 border border-white/10 flex justify-between items-start gap-3">
+                          <p className="text-sm text-zinc-300 flex-1">{s}</p>
+                          <button onClick={()=> setIdea(s)} className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-bold shrink-0">Use this</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {selectedSubjects.length>0 && <p className="text-[10px] text-zinc-500">Picks become part of story — they pre-fill your prompt (you can edit). Dynamic chips change as you pick.</p>}
+                </div>
+                {showMatureConfirm && (
+                  <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={()=> setShowMatureConfirm(false)}>
+                    <div className="glass-panel p-6 rounded-2xl max-w-sm w-full space-y-4" onClick={e=> e.stopPropagation()}>
+                      <h3 className="text-lg font-bold text-white">Are you 18 or older?</h3>
+                      <p className="text-sm text-zinc-400">Mature cards add sensual themes between consenting adults. Content involving minors is never permitted.</p>
+                      <div className="flex justify-end gap-3">
+                        <button onClick={()=> setShowMatureConfirm(false)} className="px-4 py-2 rounded-xl bg-white/5 text-zinc-400">Cancel</button>
+                        <button onClick={()=> { setMatureEnabledInForge(true); const filtered = selectedSubjects.slice(0, SubjectMatters.MAX_TOTAL); setSelectedSubjects(filtered); setShowMatureConfirm(false); }} className="px-4 py-2 rounded-xl bg-red-600 text-white font-bold">Yes, I'm 18+</button>
+                      </div>
+                    </div>
+                  </div>
+                )}
                 <div className="relative group">
                   <div className="absolute -top-10 right-0">
                     <RefineButton 
