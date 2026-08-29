@@ -891,15 +891,15 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
 
   return (
     <div className="flex flex-col h-full max-w-6xl mx-auto glass-panel rounded-[2rem] overflow-hidden shadow-2xl border border-white/5">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 sm:px-8 sm:py-5 border-b border-white/5 bg-black/20 backdrop-blur-xl">
-        <div className="flex items-center gap-2 sm:gap-5">
+      {/* Header - fixed: LIVE VOICE cut off on mobile due to overflow-hidden + flex no-wrap */}
+      <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-3 sm:px-8 sm:py-5 border-b border-white/5 bg-black/20 backdrop-blur-xl min-w-0">
+        <div className="flex items-center gap-2 sm:gap-5 min-w-0 flex-1">
           <div className="relative w-10 h-10 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl overflow-hidden border border-white/10 shadow-lg">
             <img src={avatarBase64} alt={profile.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-sm sm:text-xl font-bold text-white font-serif tracking-tight leading-tight">{profile.name}</h3>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2 min-w-0">
+              <h3 className="text-sm sm:text-xl font-bold text-white font-serif tracking-tight leading-tight truncate min-w-0">{profile.name}</h3>
               <div className={`px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 flex items-center gap-1 ${
                 profile.mode === AppMode.SCENARIO ? 'border-blue-500/20 bg-blue-500/10' :
                 profile.mode === AppMode.GAME ? 'border-purple-500/20 bg-purple-500/10' :
@@ -928,7 +928,7 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
                 )}
               </div>
               
-              <div className="flex items-center gap-3 bg-white/5 px-3 py-1.5 rounded-xl border border-white/5 w-fit">
+              <div className="hidden sm:flex items-center gap-3 bg-white/5 px-3 py-1.5 rounded-xl border border-white/5 w-fit">
                 <div className="flex flex-col">
                   <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">
                     {profile.mode === AppMode.SCENARIO ? "Protagonist's Role" : profile.mode === AppMode.GAME ? "Party's Reputation" : "Relationship"}
@@ -957,8 +957,8 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1 sm:gap-3">
-          <div className="hidden sm:flex items-center gap-3 mr-2">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-2 shrink-0 justify-end max-w-full">
+          <div className="hidden sm:flex items-center gap-3 mr-2 shrink-0">
             <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-black/30 border border-white/5" title="Estimated Context Tokens">
               <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider">Tokens</span>
               <span className="text-xs font-mono text-zinc-300">{estimateTokens.toLocaleString()}</span>
@@ -1092,13 +1092,6 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
             </AnimatePresence>
           </div>
           <button
-            onClick={() => setShowAddCharacter(true)}
-            className="p-2 rounded-xl text-zinc-500 hover:text-emerald-400 hover:bg-white/5 transition-all"
-            title="Add Character/NPC"
-          >
-            <User className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
-          <button
             onClick={onCarryOver}
             className="p-2 rounded-xl text-zinc-500 hover:text-blue-400 hover:bg-white/5 transition-all"
             title="Carry over to new scenario"
@@ -1124,7 +1117,7 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
           </button>
           <button
             onClick={startLiveVoiceSession}
-            className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 transition-all ${
+            className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
               liveVoice.isActive
                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
                 : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
