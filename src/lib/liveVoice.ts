@@ -752,13 +752,22 @@ function detachMicCapture(handle: SessionHandle) {
 // error anywhere. When the mic should be sending but the worklet has delivered
 // nothing after a grace period, tear it down and re-attach using the
 // ScriptProcessor fallback so speech keeps flowing.
+// Fix #3: When the mic is currently off, reschedule the check for 1 s from
+// now. When the mic opens later this pending timer fires and correctly
+// detects a dead worklet. A boolean flag `watchdogArmed` prevents stacking
+// multiple parallel timers on the same handle.
 function scheduleWorkletWatchdog(handle: SessionHandle) {
+  if ((handle as any)._watchdogArmed) return;
+  (handle as any)._watchdogArmed = true;
   const check = () => {
+    (handle as any)._watchdogArmed = false;
     if (!handle.workletNode || handle.disposed || handle.workletDelivered) return;
     if (isMicSending(handle)) {
       console.warn("AudioWorklet produced no mic audio; falling back to ScriptProcessor.");
       attachMicCapture(handle, true).catch(() => {});
     } else {
+      // Mic is off right now — re-arm so we catch when it opens next.
+      (handle as any)._watchdogArmed = true;
       setTimeout(check, 1000);
     }
   };
@@ -881,6 +890,7 @@ function finalizeTurn(handle: SessionHandle) {
   const rawUserText = handle.userTranscript.trim();
   const userText = sanitizeUserInput(rawUserText).trim();
   const modelText = handle.modelTranscript.trim();
+  const turnEndMs = Date.now();
   if (userText || modelText) {
     handle.turnHistory.push({ user: userText, model: modelText });
     // Keep the history bounded so the seed payload never gets unwieldy.
@@ -888,12 +898,20 @@ function finalizeTurn(handle: SessionHandle) {
       handle.turnHistory = handle.turnHistory.slice(-50);
     }
     handle.options?.onTurnEnd?.(userText, modelText);
+    // #13: Turn latency log (user stopped speaking → model finished responding).
+    const turnStartMs = (handle as any)._turnStartMs as number | undefined;
+    if (turnStartMs && turnStartMs > 0) {
+      const latencyMs = turnEndMs - turnStartMs;
+      console.log(`[LiveVoice] Turn latency: ${(latencyMs / 1000).toFixed(2)}s`);
+      (handle as any)._turnStartMs = 0;
+    }
   }
   handle.userTranscript = "";
   handle.modelTranscript = "";
   handle.turnCancelled = false;
-  handle.options?.onUserTranscript?.("", false);
-  handle.options?.onModelTranscript?.("", false);
+  // Pass final=true so callers can distinguish a committed transcript from a live partial.
+  handle.options?.onUserTranscript?.("", true);
+  handle.options?.onModelTranscript?.("", true);
   emitState(handle);
 }
 
@@ -1024,6 +1042,10 @@ async function connectSession(
         if (content.inputTranscription?.text) {
           handle.userTranscript += content.inputTranscription.text;
           handle.options?.onUserTranscript?.(handle.userTranscript, false);
+          // Stamp when we first receive user speech so we can compute latency at turn end.
+          if (!(handle as any)._turnStartMs) {
+            (handle as any)._turnStartMs = Date.now();
+          }
         }
 
         if (!handle.turnCancelled && content.outputTranscription?.text) {
@@ -1165,8 +1187,19 @@ async function reconnectNow(): Promise<void> {
     if (turn.user) inCallTurns.push({ role: "user", text: turn.user });
     if (turn.model) inCallTurns.push({ role: "model", text: turn.model });
   }
-  const reconnectOptions: LiveVoiceOptions = inCallTurns.length
-    ? { ...options, contextTurns: [...(options.contextTurns || []), ...inCallTurns].slice(-80) }
+  let combinedTurns = [...(options.contextTurns || []), ...inCallTurns].slice(-80);
+
+  // #9: Secondary guard — trim oldest turns until total character count is under 15,000
+  // to prevent oversized reconnect payloads that can cause 400/413 errors.
+  const MAX_CONTEXT_CHARS = 15000;
+  let totalChars = combinedTurns.reduce((sum, t) => sum + t.text.length, 0);
+  while (totalChars > MAX_CONTEXT_CHARS && combinedTurns.length > 1) {
+    const removed = combinedTurns.shift()!;
+    totalChars -= removed.text.length;
+  }
+
+  const reconnectOptions: LiveVoiceOptions = combinedTurns.length
+    ? { ...options, contextTurns: combinedTurns }
     : options;
 
   const stream = await acquireMicWithFallback(options.micDeviceId);

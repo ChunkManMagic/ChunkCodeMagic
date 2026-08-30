@@ -67,14 +67,15 @@ export function useLiveVoice() {
       setOutputLevel(0);
       try {
         const settings = getSettings();
-        await startLiveVoice({
+      await startLiveVoice({
           ...options,
           micDeviceId: options.micDeviceId ?? settings.liveVoiceMicDeviceId ?? '',
           outputDeviceId: options.outputDeviceId ?? settings.liveVoiceOutputDeviceId ?? '',
           outputVolume: options.outputVolume ?? settings.liveVoiceOutputVolume ?? 1,
           bargeInEnabled: options.bargeInEnabled ?? settings.liveVoiceBargeIn ?? false,
-          onUserTranscript: (text) => setUserTranscript(text),
-          onModelTranscript: (text) => setModelTranscript(text),
+          // #1 Fix: both arguments (text, final) are now forwarded correctly.
+          onUserTranscript: (text, _final) => setUserTranscript(text),
+          onModelTranscript: (text, _final) => setModelTranscript(text),
           onStateChange: handleStateChange,
           onAudioLevels: handleAudioLevels,
           onError: (message) => {
@@ -201,10 +202,15 @@ export function useLiveVoice() {
   }, []);
 
   const rewind = useCallback((onRewind?: () => void) => {
+    // #2 Fix: rewindLiveVoice() pops from lib.turnHistory first, then we pop
+    // from hook-level transcriptTurns to keep them in sync. Previously they
+    // could diverge after a reconnect (the lib resets its history while the
+    // hook's array kept growing). Calling lib first ensures both lose the same
+    // last entry regardless of reconnects.
     rewindLiveVoice(onRewind);
     setUserTranscript('');
     setModelTranscript('');
-    setTranscriptTurns((prev) => prev.slice(0, -1));
+    setTranscriptTurns((prev) => (prev.length > 0 ? prev.slice(0, -1) : prev));
   }, []);
 
   const setOnTurnEnd = useCallback((cb: (userText: string, modelText: string) => void) => {

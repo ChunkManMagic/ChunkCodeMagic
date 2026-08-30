@@ -110,7 +110,16 @@ function geminiGuard(req: express.Request, res: express.Response, next: express.
     }
   }
 
-  const key = req.ip || "unknown";
+  // #7 Fix: req.ip is the proxy's own IP when behind Render's reverse proxy.
+  // Use the X-Forwarded-For header (first IP = real client) so different users
+  // aren't all rate-limited as the same IP, and one user can't burn another's quota.
+  const xForwardedFor = req.headers["x-forwarded-for"];
+  const clientIp = (typeof xForwardedFor === "string"
+    ? xForwardedFor.split(",")[0].trim()
+    : Array.isArray(xForwardedFor)
+    ? xForwardedFor[0].trim()
+    : null) || req.ip || "unknown";
+  const key = clientIp;
   const now = Date.now();
   let bucket = rateBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
@@ -505,7 +514,9 @@ async function startServer() {
 
       const token = await ai.authTokens.create({
         config: {
-          uses: 10,
+          // #8 Fix: raised from 10 → 25 so users on flaky networks (up to 25
+          // reconnects per token) don't hit a cryptic 401/auth error mid-call.
+          uses: 25,
           expireTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           newSessionExpireTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
           liveConnectConstraints: {
