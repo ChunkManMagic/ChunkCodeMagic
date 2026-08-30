@@ -50,6 +50,7 @@ interface LiveVoiceHUDProps {
     interrupt: () => void;
     rewind: (onRewind?: () => void) => void;
     sendText: (text: string) => void;
+    forceReply: () => void;
     isActive: boolean;
     isConnecting: boolean;
     isConnected: boolean;
@@ -59,6 +60,7 @@ interface LiveVoiceHUDProps {
   onUpdateProfile?: (updates: Partial<CharacterProfile>) => void;
   onRewind?: () => void;
 }
+
 
 export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
   liveVoice,
@@ -390,6 +392,16 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                 )}
               </button>
 
+              {/* Force Reply — always visible so the user can kick Gemini into
+                  replying immediately without waiting for silence detection */}
+              <button
+                onClick={liveVoice.forceReply}
+                className="px-2.5 py-1.5 rounded-xl bg-emerald-500/15 text-emerald-400 hover:bg-emerald-500/25 border border-emerald-500/25 text-[10px] font-bold flex items-center gap-1 transition-all"
+                title="Force Gemini to reply right now"
+              >
+                <Zap className="w-2.5 h-2.5 fill-emerald-400" /> Reply Now
+              </button>
+
               {liveVoice.state.isSpeaking && (
                 <button
                   onClick={liveVoice.interrupt}
@@ -400,6 +412,7 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                 </button>
               )}
             </div>
+
 
             {/* Central Talk Button */}
             {liveVoice.state.micMode === 'hold' ? (
@@ -1086,22 +1099,35 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                 )}
               </div>
 
-              {liveVoice.state.isSpeaking ? (
+              {/* Right-side action buttons: Force Reply always, Interrupt/Rewind conditionally */}
+              <div className="flex items-center gap-2">
+                {/* Force Reply: always shown — sends audioStreamEnd + turnComplete
+                    so Gemini replies immediately without waiting for VAD */}
                 <button
-                  onClick={liveVoice.interrupt}
-                  className="px-4 py-2 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition-all"
+                  onClick={liveVoice.forceReply}
+                  className="px-4 py-2 rounded-xl bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/25 text-xs font-bold flex items-center gap-1.5 transition-all"
+                  title="Force Gemini to reply right now"
                 >
-                  <Square className="w-3.5 h-3.5 fill-amber-400" /> Interrupt AI
+                  <Zap className="w-3.5 h-3.5 fill-emerald-400" /> Reply Now
                 </button>
-              ) : (
-                <button
-                  onClick={() => liveVoice.rewind(onRewind)}
-                  className="px-4 py-2 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all"
-                  title="Rewind last live turn"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" /> Rewind
-                </button>
-              )}
+
+                {liveVoice.state.isSpeaking ? (
+                  <button
+                    onClick={liveVoice.interrupt}
+                    className="px-4 py-2 rounded-xl bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 border border-amber-500/30 text-xs font-bold flex items-center gap-1.5 transition-all"
+                  >
+                    <Square className="w-3.5 h-3.5 fill-amber-400" /> Interrupt AI
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => liveVoice.rewind(onRewind)}
+                    className="px-4 py-2 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                    title="Rewind last live turn"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Rewind
+                  </button>
+                )}
+              </div>
             </div>
           </motion.div>
         </div>
@@ -1109,3 +1135,4 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
     </AnimatePresence>
   );
 };
+

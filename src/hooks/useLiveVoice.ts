@@ -14,10 +14,12 @@ import {
   rewindLiveVoice,
   getLiveVoiceState,
   sendTextMessage,
+  forceSendTurn,
   LiveVoiceOptions,
   LiveVoiceState,
   LiveVoiceMicMode,
 } from '../lib/liveVoice';
+
 import { getSettings, saveSettings } from '../lib/types';
 import { sanitizeUserInput } from '../lib/sanitize';
 import { useToast } from './useToast';
@@ -220,6 +222,10 @@ export function useLiveVoice() {
     sendTextMessage(safe);
   }, []);
 
+  const forceReply = useCallback(() => {
+    forceSendTurn();
+  }, []);
+
   useEffect(() => {
     return () => {
       stopLiveVoice();
@@ -247,6 +253,7 @@ export function useLiveVoice() {
     interrupt,
     rewind,
     sendText,
+    forceReply,
     setOnTurnEnd,
     setOnQuotaExhausted,
     isActive: state.status === 'connected' || state.status === 'connecting',

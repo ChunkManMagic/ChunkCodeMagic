@@ -1236,7 +1236,22 @@ function sendAudioStreamEnd(handle: SessionHandle): void {
   } catch (e) {
     console.warn("Failed to send audioStreamEnd:", e);
   }
+  // Explicitly signal turn completion so Gemini starts replying immediately,
+  // bypassing server-side silence (VAD) detection. Without this the model
+  // keeps waiting for a silence window even though the user already let go.
+  sendTurnComplete(handle);
 }
+
+function sendTurnComplete(handle: SessionHandle): void {
+  if (!handle.session) return;
+  try {
+    handle.session.sendClientContent({ turns: [], turnComplete: true });
+  } catch (e) {
+    console.warn("Failed to send turnComplete:", e);
+  }
+}
+
+
 
 // In Hold / Tap-to-Talk modes the mic only needs to be captured while the user
 // is actually talking. Holding it open the whole session is what makes Android
@@ -1474,6 +1489,28 @@ export function stopLiveVoice(): void {
   active = null;
   releaseWorkletUrl();
 }
+
+/**
+ * Force Gemini to reply immediately: stops mic capture, sends audioStreamEnd,
+ * then sends clientContent { turnComplete: true } so the model doesn't keep
+ * waiting for VAD silence detection. Equivalent to Android's forceSendTurn().
+ */
+export function forceSendTurn(): void {
+  if (!active) return;
+  const wasSending = isMicSending(active);
+  // Stop mic so we don't keep streaming while Gemini is generating
+  active.pushToTalk = false;
+  syncMicSendingState(active);
+  if (wasSending && active.audioSentInCurrentTurn) {
+    sendAudioStreamEnd(active); // also calls sendTurnComplete internally
+  } else {
+    // Even if no audio was sent, force-signal the turn end
+    sendTurnComplete(active);
+  }
+  emitState(active);
+}
+
+
 
 export function getLiveVoiceState(): LiveVoiceState {
   if (!active) {
