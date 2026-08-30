@@ -57,6 +57,7 @@ interface LiveVoiceHUDProps {
   profile: CharacterProfile;
   avatarBase64: string;
   onUpdateProfile?: (updates: Partial<CharacterProfile>) => void;
+  onRewind?: () => void;
 }
 
 export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
@@ -64,6 +65,7 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
   profile,
   avatarBase64,
   onUpdateProfile,
+  onRewind,
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showVoicePicker, setShowVoicePicker] = useState(false);
@@ -1093,13 +1095,9 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                 </button>
               ) : (
                 <button
-                  onClick={() => liveVoice.rewind(() => {
-                    // The UI-level message list rewind happens via the onTurnEnd
-                    // callback cleanup in ChatInterface — we just need to clear
-                    // the HUD's transient transcript bars here.
-                  })}
+                  onClick={() => liveVoice.rewind(onRewind)}
                   className="px-4 py-2 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all"
-                  title="Rewind conversation"
+                  title="Rewind last live turn"
                 >
                   <RotateCcw className="w-3.5 h-3.5" /> Rewind
                 </button>

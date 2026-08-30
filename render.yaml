@@ -7,3 +7,9 @@ services:
     envVars:
       - key: GEMINI_API_KEY
         generate: false
+      - key: GEMINI_LIVE_API_KEY
+        generate: false
+      - key: LIVE_ALLOW_MAIN_KEY_FALLBACK
+        value: "false"
+      - key: API_ACCESS_TOKEN
+        generate: false

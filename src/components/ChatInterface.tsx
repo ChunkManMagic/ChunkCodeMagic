@@ -34,7 +34,8 @@ interface ChatInterfaceProps {
 }
 
 export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onUpdateAvatar, onBranchScenario }: ChatInterfaceProps) {
-  const { messages, setMessages, addMessage, updateMessage, updateMessages, rewindToMessage, resetMessages, storySummary, updateSummary, isLoaded, isSaving } = useChatState(scenarioId);
+  const { messages, setMessages, addMessage, updateMessage, updateMessages, deleteMessage, rewindToMessage, resetMessages, storySummary, updateSummary, isLoaded, isSaving } = useChatState(scenarioId);
+  const liveTurnMessageIds = useRef<string[]>([]);
   const [showCodex, setShowCodex] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
@@ -746,20 +747,43 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
 - Never break character and never act for the player: do NOT decide their actions, speak their lines, or describe their inner thoughts. Narrate around them and react to what they do.`;
   }, [profile, storySummary, messages]);
 
+  const handleLiveRewind = useCallback(async () => {
+    const ids = liveTurnMessageIds.current;
+    if (ids.length === 0) {
+      toastSuccess("No live call turns to rewind.");
+      return;
+    }
+    // Remove the messages corresponding to the last completed live turn
+    const toRemove: string[] = [];
+    if (ids.length > 0) toRemove.push(ids.pop()!);
+    if (ids.length > 0) toRemove.push(ids.pop()!);
+
+    for (const id of toRemove) {
+      await deleteMessage(id);
+    }
+    toastSuccess("Rewound last live turn.");
+  }, [deleteMessage, toastSuccess]);
+
   const startLiveVoiceSession = useCallback(async () => {
     if (liveVoice.isActive) {
       liveVoice.stop();
       return;
     }
+    liveTurnMessageIds.current = [];
     liveVoice.setOnTurnEnd(async (userText, modelText) => {
       if (!userText && !modelText) return;
-      const userMsgId = generateId();
+      const turnIds: string[] = [];
       if (userText) {
+        const userMsgId = generateId();
+        turnIds.push(userMsgId);
         await addMessage({ id: userMsgId, role: 'user', text: userText });
       }
       if (modelText) {
-        await addMessage({ id: generateId(), role: 'model', text: modelText });
+        const modelMsgId = generateId();
+        turnIds.push(modelMsgId);
+        await addMessage({ id: modelMsgId, role: 'model', text: modelText });
       }
+      liveTurnMessageIds.current.push(...turnIds);
     });
     // If the live socket can't be had (quota/rate limits), seamlessly fall
     // back to turn-by-turn voice: continuous speech-to-text sends + the
@@ -1834,6 +1858,7 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
         profile={profile}
         avatarBase64={avatarBase64}
         onUpdateProfile={handleUpdateVoice}
+        onRewind={handleLiveRewind}
       />
 
       {/* Confirmation Modal */}

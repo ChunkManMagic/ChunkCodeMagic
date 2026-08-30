@@ -77,7 +77,7 @@ export function useLiveVoice() {
           onAudioLevels: handleAudioLevels,
           onError: (message) => {
             toastError('Live Voice Error', message);
-            if (/quota|429|resource.?exhausted|all live voice models|failed to connect/i.test(message)) {
+            if (/(?:quota|429|resource.?exhausted|RESOURCE_EXHAUSTED)/i.test(message)) {
               callbacksRef.current.onQuotaExhausted?.(message);
             }
           },
@@ -86,6 +86,8 @@ export function useLiveVoice() {
             if (userText || modelText) {
               setTranscriptTurns((prev) => [...prev, { user: userText, model: modelText }]);
             }
+            setUserTranscript('');
+            setModelTranscript('');
           },
         });
         if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {
@@ -198,6 +200,9 @@ export function useLiveVoice() {
 
   const rewind = useCallback((onRewind?: () => void) => {
     rewindLiveVoice(onRewind);
+    setUserTranscript('');
+    setModelTranscript('');
+    setTranscriptTurns((prev) => prev.slice(0, -1));
   }, []);
 
   const setOnTurnEnd = useCallback((cb: (userText: string, modelText: string) => void) => {

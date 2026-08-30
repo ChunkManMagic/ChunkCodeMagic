@@ -401,8 +401,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500"
                   >
                     <option value="gemini-3.1-flash-tts-preview">Gemini 3.1 TTS Preview (Recommended)</option>
-                    <option value="lyria-3-clip-preview">Lyria 3 Clip Preview (Atmospheric)</option>
-                    <option value="lyria-3-pro-preview">Lyria 3 Pro Preview</option>
                     <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
                     <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
                   </select>

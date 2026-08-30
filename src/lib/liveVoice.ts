@@ -1,4 +1,5 @@
 import { GoogleGenAI } from "@google/genai";
+import { sanitizeUserInput } from "./sanitize";
 
 export const LIVE_MODELS = [
   "gemini-3.1-flash-live-preview",
@@ -122,6 +123,7 @@ interface SessionHandle {
   bargeInEnabled: boolean;
   status: LiveVoiceStatus;
   isSpeaking: boolean;
+  turnCancelled: boolean;
   inputLevel: number;
   outputLevel: number;
   userTranscript: string;
@@ -865,7 +867,8 @@ async function attachMicCapture(handle: SessionHandle, forceProcessor = false) {
 }
 
 function finalizeTurn(handle: SessionHandle) {
-  const userText = handle.userTranscript.trim();
+  const rawUserText = handle.userTranscript.trim();
+  const userText = sanitizeUserInput(rawUserText).trim();
   const modelText = handle.modelTranscript.trim();
   if (userText || modelText) {
     handle.turnHistory.push({ user: userText, model: modelText });
@@ -877,6 +880,10 @@ function finalizeTurn(handle: SessionHandle) {
   }
   handle.userTranscript = "";
   handle.modelTranscript = "";
+  handle.turnCancelled = false;
+  handle.options?.onUserTranscript?.("", false);
+  handle.options?.onModelTranscript?.("", false);
+  emitState(handle);
 }
 
 function seedContext(handle: SessionHandle) {
@@ -936,6 +943,7 @@ async function connectSession(
     bargeInEnabled: options.bargeInEnabled ?? false,
     status: "connecting",
     isSpeaking: false,
+    turnCancelled: false,
     inputLevel: 0,
     outputLevel: 0,
     userTranscript: "",
@@ -963,14 +971,33 @@ async function connectSession(
 
         if (content.interrupted) {
           // The model's current turn was cut off (barge-in / user interrupt).
-          // Drop its partial output so the fragment doesn't get mixed into the
-          // next completed turn's transcript / chat-history entry.
+          // Stop playback and preserve the partial turn in history rather than
+          // silently dropping the user's question.
           stopPlayback(handle);
+          const rawUserText = handle.userTranscript.trim();
+          const userText = sanitizeUserInput(rawUserText).trim();
+          const rawModelText = handle.modelTranscript.trim();
+          const modelText = rawModelText ? `${rawModelText} … [interrupted]` : "";
+          if (userText || modelText) {
+            handle.turnHistory.push({ user: userText, model: modelText });
+            if (handle.turnHistory.length > 50) {
+              handle.turnHistory = handle.turnHistory.slice(-50);
+            }
+            handle.options?.onTurnEnd?.(userText, modelText);
+          }
+          handle.userTranscript = "";
           handle.modelTranscript = "";
+          handle.turnCancelled = false;
+          handle.options?.onUserTranscript?.("", false);
+          handle.options?.onModelTranscript?.("", false);
+          emitState(handle);
           return;
         }
 
-        if (content.modelTurn?.parts) {
+        if (handle.turnCancelled) {
+          // User triggered "Interrupt AI" — drop incoming server model chunks
+          // for the cancelled turn so the AI does not start speaking again.
+        } else if (content.modelTurn?.parts) {
           for (const part of content.modelTurn.parts) {
             if (part.inlineData?.data) {
               if (!handle.isAiMuted) {
@@ -988,7 +1015,7 @@ async function connectSession(
           handle.options?.onUserTranscript?.(handle.userTranscript, false);
         }
 
-        if (content.outputTranscription?.text) {
+        if (!handle.turnCancelled && content.outputTranscription?.text) {
           handle.modelTranscript += content.outputTranscription.text;
           handle.options?.onModelTranscript?.(handle.modelTranscript, false);
         }
@@ -998,7 +1025,11 @@ async function connectSession(
         }
       },
       onerror: (e: any) => {
-        handle.options?.onError?.(e?.message || "Live voice error");
+        const msg = e?.message || "Live voice error";
+        handle.options?.onError?.(msg);
+        if (/(?:quota|429|resource.?exhausted|RESOURCE_EXHAUSTED)/i.test(msg)) {
+          handle.options?.onQuotaExhausted?.(msg);
+        }
       },
       onclose: () => {
         if (handle.disposed) return;
@@ -1394,12 +1425,15 @@ export async function playOutputTest(deviceId?: string): Promise<void> {
 
 export function interruptAiSpeech(): void {
   if (!active) return;
+  active.turnCancelled = true;
   stopPlayback(active);
+  active.modelTranscript = "";
+  active.options?.onModelTranscript?.("", false);
+  emitState(active);
 }
 
 // Rewind the in-session conversation to the current point. Stops playback,
-// clears the active transcripts and turn history on the session handle (the
-// model's own context isn't rewound — that would need a fresh connect), and
+// clears active transcripts and pops the last turn from the turn history, and
 // fires callbacks so the UI can purge its visible transcript / message list.
 export function rewindLiveVoice(onRewind?: () => void): void {
   if (!active) return;
@@ -1407,7 +1441,12 @@ export function rewindLiveVoice(onRewind?: () => void): void {
   active.userTranscript = "";
   active.modelTranscript = "";
   active.audioSentInCurrentTurn = false;
-  active.turnHistory = [];
+  active.turnCancelled = false;
+  if (active.turnHistory.length > 0) {
+    active.turnHistory.pop();
+  }
+  active.options?.onUserTranscript?.("", false);
+  active.options?.onModelTranscript?.("", false);
   emitState(active);
   onRewind?.();
 }
