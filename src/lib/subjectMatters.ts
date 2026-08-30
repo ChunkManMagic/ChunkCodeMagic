@@ -48,7 +48,47 @@ export const SubjectMatters = {
     "Sensual Romance": ["Power Dynamics","Seduction","Forbidden Love"],
     "Power Dynamics": ["Obsession","Taboo","Seduction"],
   } as Record<string,string[]>,
+  SUB_THEMES_MAP: {
+    "Romance": ["Enemies to Lovers", "Slow Burn", "Fake Relationship", "Soulmates", "Second Chance", "Forbidden Affair", "Royalty & Guard"],
+    "Horror": ["Haunted Relic", "Psychological Dread", "Body Horror", "Cursed Town", "Isolation", "Demonic Pact", "Creature Feature"],
+    "Cyberpunk": ["Rogue AI", "Corporate Heist", "Memory Hack", "Neon Underworld", "Cybernetic Glitch", "Black Market Tech", "Rebel Grid"],
+    "Fantasy": ["Lost Bloodline", "Ancient Prophecy", "Forgotten Gods", "Wild Magic", "Draconic Bond", "Arcane Academy", "Fae Bargains"],
+    "Mystery": ["Locked Room", "Cold Case", "Unreliable Witness", "Secret Society", "Dead Man's Will", "Double Identity", "Framed Innocent"],
+    "Sci-Fi": ["Derelict Station", "First Contact", "Dyson Sphere", "Time Loop", "Clone Dissonance", "Wormhole Drift", "Alien Hive"],
+    "Noir": ["Femme Fatale", "Corrupt Police", "Midnight Rendezvous", "Missing Heiress", "Rain-Slick Alley", "Blackmail Ledger", "Smoky Lounge"],
+    "Adventure": ["Sunken Ruins", "Cursed Expedition", "Treasure Map", "Sky Pirates", "Uncharted Island", "Bounty Hunt", "Jungle Tomb"],
+    "Gothic": ["Crumbling Manor", "Ancestral Curse", "Bloodlines", "Ghostly Apparition", "Moonlit Crypt", "Obsessive Love", "Madness"],
+    "Post-Apocalyptic": ["Scavenger Oasis", "Dust Storms", "Mutant Factions", "Last Radio Station", "Resource War", "Bunker Secrets", "Lost Tech"],
+    "Steampunk": ["Clockwork Automaton", "Airship Armada", "Aether Engine", "Victorian Intrigue", "Guild Conspiracy", "Steam Powered Labs"],
+    "Historical": ["Courtly Espionage", "Warring Dynasties", "Siege Defense", "Rebellion", "Royal Decree", "Trade Caravan", "Knights Templar"],
+    "Comedy": ["Mistaken Identity", "Chaos Magic", "Snarky Companion", "Catastrophic Luck", "Absurd Bet", "Awkward Dates", "Bumbling Villains"],
+    "Tragedy": ["Inevitable Doom", "Broken Oath", "Fateful Sacrifice", "Betrayed Trust", "Fading Memory", "Bitter Requiem", "Lost Glory"],
+    "Intrigue": ["Masquerade Secrets", "Poisoner's Ring", "Shadow Council", "Double Agent", "Coup D'état", "Stolen Dossier", "Court Whispers"],
+    "Survival": ["Bitter Winter", "Hostile Wilderness", "Starvation", "Predator Stalking", "Shelter Defense", "Emergency Beacon", "Last Match"],
+    "Heist": ["The Inside Job", "Master Safe-Cracker", "Getaway Driver", "Vault Blueprint", "Laser Grid", "Switcheroo", "Betrayal at Split"],
+    "Political": ["Puppet Monarch", "Electoral Rigging", "Treaty Negotiations", "Embargo", "Popular Uprising", "Corrupt Oligarchs", "Propaganda"],
+    "Military": ["Behind Enemy Lines", "Trenches", "Veteran Squad", "Tactical Ambush", "Chain of Command", "Siege Warfare", "Honor Code"],
+    "Slice of Life": ["Late Night Diner", "Neighborhood Secrets", "Rainy Afternoon", "Art Studio", "Rooftop Talks", "Warm Tea & Hearth", "Old Records"],
+    "Eldritch": ["Cosmic Madness", "Non-Euclidean Geometry", "Whispering Stars", "Tome of Forbidden Lore", "Deep Sea Chasm", "Void Cult"],
+    "Space Opera": ["Galactic Empire", "Starfighter Dogfight", "Alien Syndicate", "Hyperspace Jump", "Emperor's Guard", "Planetary Blockade"],
+    "Wuxia": ["Martial Arts Sect", "Qi Cultivation", "Secret Manual", "Vengeance Oath", "Bamboo Forest Duel", "Immortal Master", "Tea House Feud"],
+    "Urban Fantasy": ["Hidden Arcane Alley", "Vampire Syndicate", "Modern Witchcraft", "Werewolf Turf War", "Magic Underground", "Detective Mage"],
+    "Western": ["Dusty High Noon", "Saloon Showdown", "Train Robbery", "Corrupt Sheriff", "Ghost Town", "Gold Rush", "Lone Drifter"],
+    "Sensual Romance": ["Whispered Confessions", "Silk & Candlelight", "Intense Glances", "Slow Undressing", "Irresistible Pull", "Midnight Embrace"],
+    "Dark Erotica": ["Sweet Torment", "Dangerous Liaisons", "Velvet Restraints", "Shadowed Desires", "Forbidden Obsession", "Clandestine Touch"],
+    "Power Dynamics": ["Dominance & Surrender", "Commanding Presence", "Subtle Submission", "Collared Heart", "Control Games", "Unspoken Authority"],
+    "Forbidden Love": ["Stolen Midnight Kisses", "Opposite Factions", "Secret Marriage", "Taboo Touch", "Guarded Hearts", "Exile Together"],
+    "Obsession": ["Unwavering Gaze", "Collected Souvenirs", "Possessive Claim", "Haunted Thoughts", "Every Waking Breath", "No Escape"],
+    "Seduction": ["Luring Smile", "Poisoned Honey", "Velvet Words", "Irresistible Trap", "Slow Temptation", "Playing with Fire"],
+    "Taboo": ["Unforgivable Passion", "Breaking Sacred Vows", "Guilty Pleasure", "Secret Room", "Society's Condemnation", "Crossed Lines"]
+  } as Record<string,string[]>,
   maxFor(mature: boolean){ return mature ? this.MAX_TOTAL : this.MAX_STANDARD },
+  offlineLevelTwoFor(picks: string[], mature: boolean): string[] {
+    if (picks.length === 0) return ["Rival Alliance", "Ancient Mystery", "Dangerous Bargain", "Hidden Truth", "Midnight Encounter", "Final Stand"];
+    const themes = [...new Set(picks.flatMap(k => this.SUB_THEMES_MAP[k] || []))];
+    const pool = themes.length >= 8 ? themes : [...new Set([...themes, "Rival Alliance", "Ancient Mystery", "Dangerous Bargain", "Hidden Truth", "Midnight Encounter", "Final Stand"])];
+    return pool.sort(() => Math.random() - 0.5).slice(0, 8);
+  },
   offlineSuggestionsFor(picks: string[], mode: string, mature: boolean, count = mature ? 7 : 5){
     if (picks.length===0) return this.GENERIC_OFFLINE.slice(0,count)
     const pooled = picks.flatMap(k=> this.OFFLINE_STARTERS[k] || this.GENERIC_OFFLINE)

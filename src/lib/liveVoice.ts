@@ -357,11 +357,10 @@ function setupAudioPlayback(handle: SessionHandle): AudioContext {
     // taken away (e.g. a headset button or another app grabs the mic).
     handle.audioContext.onstatechange = () => {
       if (handle.audioContext && handle.audioContext.state !== "running") {
-        // Android fires "interrupted" when audio focus is taken (mic released,
-        // headset action, another app grabbing focus). Clear the jitter queue
-        // so the stale scheduled buffers don't all fire at once the moment the
-        // context comes back, then try to recover immediately.
-        stopPlayback(handle);
+        // The context was suspended (screen lock, power management, audio
+        // focus change). DO NOT call stopPlayback() here — that throws away
+        // all queued audio, causing the "text pops up silently" bug on long
+        // sessions. Just resume so scheduled buffers play when it's running.
         handle.audioContext.resume().catch(() => {});
       }
     };
@@ -470,12 +469,24 @@ const TARGET_PLAYBACK_LATENCY = 0.22;
 
 function enqueuePcmAudio(handle: SessionHandle, base64: string) {
   const ctx = setupAudioPlayback(handle);
+
+  // If the context isn't running, kick a resume. We do NOT schedule audio into
+  // a suspended context — it would burst all at once on resume, which is the
+  // "whole reply appears silent then pops in as text" bug after long sessions.
   if (ctx.state !== "running") {
-    // Suspended/interrupted context: buffers scheduled now won't advance until
-    // it recovers, and they'd all burst at once on resume. Resume right away
-    // and let the next chunk resync the playback head.
     ctx.resume().catch(() => {});
+    // Cast to string: TypeScript narrows ctx.state to never inside the outer
+    // if-block otherwise and flags the inner check as unreachable.
+    if ((ctx.state as string) !== "running") {
+      // Still not running after resume() — genuinely suspended. Mark as
+      // speaking so the UI stays active; onstatechange will call resume()
+      // again when the context recovers.
+      handle.isSpeaking = true;
+      emitState(handle);
+      return;
+    }
   }
+
   const pcm = base64DecodeToPcm(base64);
   if (pcm.length === 0) return;
 

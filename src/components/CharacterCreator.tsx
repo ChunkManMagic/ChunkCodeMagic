@@ -149,11 +149,78 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     toastSuccess(`Using ${scenario.profile.name} as template`);
   };
 
+  // Quick Create Wizard Level
+  const [wizardLevel, setWizardLevel] = useState<'topics' | 'subthemes' | 'questions'>('topics');
+  const [levelTwoSubThemes, setLevelTwoSubThemes] = useState<string[]>([]);
+  const [selectedSubThemes, setSelectedSubThemes] = useState<string[]>([]);
+  const [isGeneratingLevelTwo, setIsGeneratingLevelTwo] = useState(false);
+
+  const toggleSubTheme = (st: string) => {
+    setSelectedSubThemes(prev => {
+      const next = prev.includes(st) ? prev.filter(x => x !== st) : (prev.length < 5 ? [...prev, st] : prev);
+      updateIdeaFromWizard(selectedSubjects, next);
+      return next;
+    });
+  };
+
+  const updateIdeaFromWizard = (s1: string[], s2: string[]) => {
+    if (s1.length === 0 && s2.length === 0) return;
+    const summary = `A story exploring themes of ${s1.join(", ")}${s2.length > 0 ? `, featuring ${s2.join(", ")}` : ''}.`;
+    setIdea(prev => (!prev || prev.startsWith("A story exploring themes of")) ? summary : prev);
+  };
+
+  const advanceToLevelTwo = async () => {
+    if (selectedSubjects.length === 0) return;
+    setWizardLevel('subthemes');
+    generateLevelTwoSubThemes(selectedSubjects);
+  };
+
+  const advanceToLevelThree = () => {
+    setWizardLevel('questions');
+    generateCustomizationQuestions();
+  };
+
+  const generateLevelTwoSubThemes = async (picks: string[] = selectedSubjects) => {
+    if (picks.length === 0) return;
+    setIsGeneratingLevelTwo(true);
+    try {
+      const prompt = `The user selected these high-level story topics: [${picks.join(", ")}] for mode ${appMode} (mature=${matureEnabledInForge}). Generate 8 highly exciting, specific sub-themes, tropes, or story hooks (each 2 to 4 words, e.g. 'Enemies to Lovers', 'Corporate Rogue AI', 'Ancient Fae Bargain', 'Haunted Relic', 'Neon Rain Heist'). Return ONLY a JSON array of strings.`;
+      const res = await fetch('/api/gemini/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gemini-3.1-flash-lite-preview',
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { responseMimeType: 'application/json', responseSchema: { type: 'ARRAY', items: { type: 'STRING' } } }
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (txt) {
+          try {
+            const arr = JSON.parse(txt);
+            if (Array.isArray(arr) && arr.length > 0) {
+              setLevelTwoSubThemes(arr.slice(0, 8));
+              return;
+            }
+          } catch {}
+        }
+      }
+      throw new Error('fallback');
+    } catch {
+      setLevelTwoSubThemes(SubjectMatters.offlineLevelTwoFor(picks, matureEnabledInForge));
+    } finally {
+      setIsGeneratingLevelTwo(false);
+    }
+  };
+
   // ── Subject chooser helpers ──
   const toggleSubject = (s: string) => {
     const max = SubjectMatters.maxFor(matureEnabledInForge);
     setSelectedSubjects(prev => {
       const next = prev.includes(s) ? prev.filter(x=> x!==s) : (prev.length < max ? [...prev, s] : prev);
+      updateIdeaFromWizard(next, selectedSubThemes);
       if (next.length>0 && next.length!==prev.length) generateDynamicSubjects(next);
       else if (next.length===0) setDynamicSubjects([]);
       return next;
@@ -210,7 +277,78 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
       const count = matureEnabledInForge ? 7 : 5;
       setSuggestedStarters(SubjectMatters.offlineSuggestionsFor(selectedSubjects, appMode, matureEnabledInForge, count));
       toastSuccess("Using offline starters (quota fallback)");
-    } finally { setIsGeneratingStarters(false); }
+    } finally {
+      setIsGeneratingStarters(false);
+    }
+  };
+
+  // 5 Optional Quick-Customize Questions
+  const [quickQuestions, setQuickQuestions] = useState<{ id: string; question: string; options: string[] }[]>([]);
+  const [userQuestionAnswers, setUserQuestionAnswers] = useState<Record<string, string>>({});
+  const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
+
+  const generateCustomizationQuestions = async () => {
+    const topic = idea.trim() || selectedSubjects.join(", ");
+    if (!topic) return;
+    setIsGeneratingQuestions(true);
+    try {
+      const prompt = `You are a creative narrative and character architect. Given the story topic/concept: "${topic}" (Game Mode: ${appMode}), generate exactly 5 thoughtful, multiple-choice customizing questions to help the player tailor this story to their exact taste. Each question should have 3-4 short, punchy option answers. Return ONLY a JSON array of objects, where each object has: "id" (string like "q1", "q2"), "question" (string), and "options" (array of strings).`;
+      const res = await fetch('/api/gemini/generate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'gemini-3.1-flash-lite-preview',
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: 'ARRAY',
+              items: {
+                type: 'OBJECT',
+                properties: {
+                  id: { type: 'STRING' },
+                  question: { type: 'STRING' },
+                  options: { type: 'ARRAY', items: { type: 'STRING' } }
+                },
+                required: ['id', 'question', 'options']
+              }
+            }
+          }
+        })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (txt) {
+          const parsed = JSON.parse(txt);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            setQuickQuestions(parsed.slice(0, 5));
+            return;
+          }
+        }
+      }
+      throw new Error('fallback');
+    } catch {
+      // High quality fallback questions
+      setQuickQuestions([
+        { id: 'q1', question: 'What is your primary relationship or initial dynamic with the character?', options: ['Rivals forced together', 'Close allies / old friends', 'Complete strangers with a common goal', 'Mentor & Apprentice'] },
+        { id: 'q2', question: 'What is the primary narrative atmosphere of the adventure?', options: ['Dark & gritty', 'Mysterious & atmospheric', 'Lighthearted & whimsical', 'High-stakes & cinematic'] },
+        { id: 'q3', question: 'What role should your protagonist play?', options: ['Reluctant hero caught in events', 'Skilled specialist / veteran', 'Outsider discovering this world', 'Mastermind or director'] },
+        { id: 'q4', question: 'How prominent should danger and conflict be?', options: ['Slow burn, focus on dialogue', 'Constant peril and fast action', 'Intellectual intrigue and puzzles', 'Balanced exploration'] },
+        { id: 'q5', question: 'What is the central mystery or stakes?', options: ['Uncovering a hidden betrayal', 'Preventing an impending disaster', 'Unearthing forgotten relics / lore', 'Surviving against all odds'] }
+      ]);
+    } finally {
+      setIsGeneratingQuestions(false);
+    }
+  };
+
+  const toggleQuestionOption = (qId: string, opt: string) => {
+    setUserQuestionAnswers(prev => {
+      const next = { ...prev };
+      if (next[qId] === opt) delete next[qId];
+      else next[qId] = opt;
+      return next;
+    });
   };
 
   const [isGenerating, setIsGenerating] = useState(false);
@@ -423,7 +561,14 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     try {
       setStep('profile');
       console.log("Quick Forge: Generating profile...");
-      const profile = await generateCharacterProfile(idea, appMode);
+      const answersList = Object.entries(userQuestionAnswers).map(([qId, ans]) => {
+        const qText = quickQuestions.find(q => q.id === qId)?.question || qId;
+        return `- ${qText}: ${ans}`;
+      }).join("\n");
+      const fullIdea = answersList
+        ? `${idea}\n\nPLAYER CUSTOM CHOICES:\n${answersList}`
+        : idea;
+      const profile = await generateCharacterProfile(fullIdea, appMode);
       console.log("Quick Forge: Profile generated.");
       setDraftProfile(profile);
       toastSuccess("Character profile generated!");
@@ -729,60 +874,247 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                 <div className="flex justify-between items-center">
                   <h3 className="text-sm font-bold text-zinc-500 uppercase tracking-widest">Your Idea</h3>
                 </div>
-                {/* ── Subject Matter Chooser (5+2 mature, dynamic, quota-safe) ── */}
-                <div className="glass-panel p-4 rounded-2xl border border-white/5 space-y-3">
+                {/* ── Multi-Level Quick Create Wizard (Cards & Dynamic Tropes & Questions) ── */}
+                <div className="glass-panel p-5 rounded-3xl border border-emerald-500/20 space-y-4">
+                  {/* Wizard Header & Level Switcher */}
                   <div className="flex justify-between items-center">
-                    <h4 className="text-xs font-bold text-white uppercase tracking-widest">Pick subject matters</h4>
-                    <span className={`text-[10px] px-2 py-1 rounded-full border ${selectedSubjects.length >= SubjectMatters.maxFor(matureEnabledInForge) ? 'bg-red-500/20 border-red-500/30 text-red-300' : 'bg-white/5 border-white/10 text-zinc-500'}`}>{selectedSubjects.length}/{SubjectMatters.maxFor(matureEnabledInForge)}</span>
-                  </div>
-                  <p className="text-[11px] text-zinc-500">Choose up to {matureEnabledInForge ? '7 (5 +2 mature)' : '5'} — tap to toggle. Suggestions adapt to picks & mode.</p>
-                  <div className="flex flex-wrap gap-2">
-                    {[...new Set([...SubjectMatters.STANDARD_INITIAL, ...dynamicSubjects])].slice(0,18).map(s=>{
-                      const sel = selectedSubjects.includes(s);
-                      const atCap = selectedSubjects.length >= SubjectMatters.maxFor(matureEnabledInForge) && !sel;
-                      return <button key={s} onClick={()=> toggleSubject(s)} disabled={atCap} className={`px-3 py-1 rounded-full text-[11px] border transition-all ${sel ? 'bg-emerald-500 text-white border-emerald-500' : 'bg-white/5 border-white/10 text-zinc-400 hover:border-emerald-500/30 hover:text-white'} ${atCap?'opacity-30':''}`}>{s}</button>
-                    })}
-                    {isGeneratingDynamic && <span className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[11px] text-zinc-500">…</span>}
-                  </div>
-                  <div className="flex justify-between items-center">
-                    <label className="flex items-center gap-2 text-xs text-zinc-400">
-                      <input type="checkbox" checked={matureEnabledInForge} onChange={e=> setMature(e.target.checked)} className="accent-red-500" />
-                      Mature themes (18+)
-                    </label>
-                    <div className="flex gap-2">
-                      <button onClick={()=>{
-                        const link=`https://personaforge.app/forge?subjects=${encodeURIComponent(selectedSubjects.join(","))}&mode=${appMode}&mature=${matureEnabledInForge?1:0}`;
-                        if ((navigator as any).share) (navigator as any).share({title:"PersonaForge pack", text:link}).catch(()=>{});
-                        else { navigator.clipboard.writeText(link); toastSuccess("Link copied — open on phone or web (one entity)"); }
-                      }} className="text-[11px] text-sky-400 hover:text-white flex items-center gap-1">Share</button>
-                      <button onClick={()=> { const pool=[...SubjectMatters.STANDARD_POOL, ...(matureEnabledInForge? SubjectMatters.MATURE_POOL as unknown as string[]:[])]; const sh=pool.sort(()=>Math.random()-0.5).slice(0, matureEnabledInForge?4:3); setSelectedSubjects(sh); if(sh.length>0) generateDynamicSubjects(sh); }} className="text-[11px] text-emerald-400 hover:text-white">Shuffle</button>
-                      <button onClick={()=> { setSelectedSubjects([]); setDynamicSubjects([]); setSuggestedStarters([]); }} className="text-[11px] text-zinc-500 hover:text-white">Clear</button>
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-emerald-400" />
+                      <h4 className="text-sm font-bold text-white uppercase tracking-widest">Quick Create Wizard</h4>
                     </div>
+                    <button 
+                      onClick={() => { setSelectedSubjects([]); setDynamicSubjects([]); setSuggestedStarters([]); setLevelTwoSubThemes([]); setSelectedSubThemes([]); setWizardLevel('topics'); }} 
+                      className="text-xs text-zinc-500 hover:text-zinc-300"
+                    >
+                      Reset
+                    </button>
                   </div>
-                  {matureEnabledInForge && (
-                    <div className="flex flex-wrap gap-2">
-                      {(SubjectMatters.MATURE_POOL as unknown as string[]).map(s=>{
-                        const sel = selectedSubjects.includes(s);
-                        const atCap = selectedSubjects.length >= SubjectMatters.MAX_TOTAL && !sel;
-                        return <button key={s} onClick={()=> toggleSubject(s)} disabled={atCap} className={`px-3 py-1 rounded-full text-[11px] border ${sel ? 'bg-red-500 text-white border-red-500' : 'bg-white/5 border-white/10 text-zinc-400 hover:border-red-500/30'} ${atCap?'opacity-30':''}`}>{s}</button>
-                      })}
-                    </div>
-                  )}
-                  {matureEnabledInForge && <p className="text-[10px] text-red-300">Mature adds 2 extra slots (up to 7 total). 18+ only, consenting adults.</p>}
-                  <button onClick={generateSuggestedStarters} disabled={selectedSubjects.length===0 || isGeneratingStarters} className="w-full py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-sm font-bold flex items-center justify-center gap-2">
-                    {isGeneratingStarters ? <><Loader2 className="w-4 h-4 animate-spin"/> Generating…</> : `✨ Get suggestions for ${selectedSubjects.length || 0} subjects`}
-                  </button>
-                  {suggestedStarters.length>0 && (
-                    <div className="space-y-2">
-                      {suggestedStarters.map((s,i)=> (
-                        <div key={i} className="p-3 rounded-xl bg-white/5 border border-white/10 flex justify-between items-start gap-3">
-                          <p className="text-sm text-zinc-300 flex-1">{s}</p>
-                          <button onClick={()=> setIdea(s)} className="px-3 py-1 rounded-full bg-emerald-500 text-white text-xs font-bold shrink-0">Use this</button>
+
+                  {/* Level Tabs */}
+                  <div className="grid grid-cols-3 gap-2">
+                    <button
+                      onClick={() => setWizardLevel('topics')}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                        wizardLevel === 'topics'
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-zinc-400 hover:border-white/20'
+                      }`}
+                    >
+                      1. Topics ({selectedSubjects.length})
+                    </button>
+                    <button
+                      onClick={() => { if (selectedSubjects.length > 0) advanceToLevelTwo(); }}
+                      disabled={selectedSubjects.length === 0}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                        wizardLevel === 'subthemes'
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-zinc-400 hover:border-white/20 disabled:opacity-40'
+                      }`}
+                    >
+                      2. Sub-Themes ({selectedSubThemes.length})
+                    </button>
+                    <button
+                      onClick={() => { if (selectedSubjects.length > 0 || idea.trim()) advanceToLevelThree(); }}
+                      disabled={selectedSubjects.length === 0 && !idea.trim()}
+                      className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
+                        wizardLevel === 'questions'
+                          ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
+                          : 'bg-white/5 border-white/10 text-zinc-400 hover:border-white/20 disabled:opacity-40'
+                      }`}
+                    >
+                      3. Questions ({Object.keys(userQuestionAnswers).length})
+                    </button>
+                  </div>
+
+                  {/* LEVEL 1: FOUNDATION TOPICS */}
+                  {wizardLevel === 'topics' && (
+                    <div className="space-y-3 pt-1">
+                      <div className="flex justify-between items-center">
+                        <span className="text-xs font-semibold text-zinc-300">Pick up to {matureEnabledInForge ? '7 (5 +2 mature)' : '5'} foundation cards:</span>
+                        <span className={`text-[10px] px-2 py-0.5 rounded-full border ${selectedSubjects.length >= SubjectMatters.maxFor(matureEnabledInForge) ? 'bg-red-500/20 border-red-500/30 text-red-300' : 'bg-white/5 border-white/10 text-zinc-500'}`}>{selectedSubjects.length}/{SubjectMatters.maxFor(matureEnabledInForge)}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {[...new Set([...SubjectMatters.STANDARD_INITIAL, ...dynamicSubjects])].slice(0, 20).map(s => {
+                          const sel = selectedSubjects.includes(s);
+                          const atCap = selectedSubjects.length >= SubjectMatters.maxFor(matureEnabledInForge) && !sel;
+                          return (
+                            <button key={s} onClick={() => toggleSubject(s)} disabled={atCap} className={`px-3 py-1.5 rounded-xl text-xs border transition-all ${sel ? 'bg-emerald-500 text-white border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.3)] font-semibold' : 'bg-white/5 border-white/10 text-zinc-400 hover:border-emerald-500/30 hover:text-white'} ${atCap ? 'opacity-30' : ''}`}>
+                              {sel ? '✓ ' : ''}{s}
+                            </button>
+                          );
+                        })}
+                        {isGeneratingDynamic && <span className="px-3 py-1.5 rounded-xl bg-white/5 border border-white/10 text-xs text-zinc-500 animate-pulse">…</span>}
+                      </div>
+
+                      <div className="flex justify-between items-center pt-2">
+                        <label className="flex items-center gap-2 text-xs text-zinc-400">
+                          <input type="checkbox" checked={matureEnabledInForge} onChange={e => setMature(e.target.checked)} className="accent-red-500" />
+                          Mature themes (18+)
+                        </label>
+                        <div className="flex gap-2">
+                          <button onClick={() => { const pool = [...SubjectMatters.STANDARD_POOL, ...(matureEnabledInForge ? SubjectMatters.MATURE_POOL as unknown as string[] : [])]; const sh = pool.sort(() => Math.random() - 0.5).slice(0, matureEnabledInForge ? 4 : 3); setSelectedSubjects(sh); updateIdeaFromWizard(sh, selectedSubThemes); if (sh.length > 0) generateDynamicSubjects(sh); }} className="text-xs text-emerald-400 hover:text-white">Shuffle</button>
                         </div>
-                      ))}
+                      </div>
+
+                      {matureEnabledInForge && (
+                        <div className="flex flex-wrap gap-2 pt-1">
+                          {(SubjectMatters.MATURE_POOL as unknown as string[]).map(s => {
+                            const sel = selectedSubjects.includes(s);
+                            const atCap = selectedSubjects.length >= SubjectMatters.MAX_TOTAL && !sel;
+                            return (
+                              <button key={s} onClick={() => toggleSubject(s)} disabled={atCap} className={`px-3 py-1.5 rounded-xl text-xs border ${sel ? 'bg-red-500 text-white border-red-500 font-semibold' : 'bg-white/5 border-white/10 text-zinc-400 hover:border-red-500/30'} ${atCap ? 'opacity-30' : ''}`}>
+                                {sel ? '✓ ' : ''}{s}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <button
+                        onClick={advanceToLevelTwo}
+                        disabled={selectedSubjects.length === 0}
+                        className="w-full mt-2 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(16,185,129,0.2)]"
+                      >
+                        <ArrowRight className="w-4 h-4" />
+                        Lock {selectedSubjects.length} Topics & Level Up to Sub-Themes
+                      </button>
                     </div>
                   )}
-                  {selectedSubjects.length>0 && <p className="text-[10px] text-zinc-500">Picks become part of story — they pre-fill your prompt (you can edit). Dynamic chips change as you pick.</p>}
+
+                  {/* LEVEL 2: DYNAMIC EVOLVED SUB-THEMES */}
+                  {wizardLevel === 'subthemes' && (
+                    <div className="space-y-3 pt-1">
+                      <div className="flex justify-between items-center">
+                        <div>
+                          <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Level 2: Evolved Sub-Themes</p>
+                          <p className="text-[11px] text-zinc-400">Picks: {selectedSubjects.join(", ")}</p>
+                        </div>
+                        <button
+                          onClick={() => generateLevelTwoSubThemes()}
+                          disabled={isGeneratingLevelTwo}
+                          className="text-xs text-emerald-400 hover:text-white flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Reroll
+                        </button>
+                      </div>
+
+                      {isGeneratingLevelTwo ? (
+                        <div className="py-6 flex items-center justify-center gap-2 text-xs text-zinc-400">
+                          <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                          <span>Generating tailored sub-themes…</span>
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-2">
+                          {(levelTwoSubThemes.length > 0 ? levelTwoSubThemes : SubjectMatters.offlineLevelTwoFor(selectedSubjects, matureEnabledInForge)).map(st => {
+                            const sel = selectedSubThemes.includes(st);
+                            return (
+                              <button
+                                key={st}
+                                onClick={() => toggleSubTheme(st)}
+                                className={`px-3 py-1.5 rounded-xl text-xs border transition-all ${
+                                  sel
+                                    ? 'bg-emerald-500 text-white border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.3)] font-semibold'
+                                    : 'bg-white/5 border-white/10 text-zinc-400 hover:border-emerald-500/30 hover:text-white'
+                                }`}
+                              >
+                                {sel ? '✓ ' : ''}{st}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={() => setWizardLevel('topics')}
+                          className="px-4 py-3 rounded-2xl bg-white/5 hover:bg-white/10 text-zinc-400 text-xs font-bold transition-all"
+                        >
+                          Back
+                        </button>
+                        <button
+                          onClick={advanceToLevelThree}
+                          className="flex-1 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all"
+                        >
+                          Next: Tailor Story with 5 Questions
+                          <ArrowRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* LEVEL 3: 5 QUESTIONS */}
+                  {wizardLevel === 'questions' && (
+                    <div className="space-y-3 pt-1">
+                      <div className="flex justify-between items-center">
+                        <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Level 3: 5 Tailoring Questions</p>
+                        <button
+                          onClick={generateCustomizationQuestions}
+                          disabled={isGeneratingQuestions}
+                          className="text-xs text-emerald-400 hover:text-white flex items-center gap-1"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Refresh
+                        </button>
+                      </div>
+
+                      {isGeneratingQuestions ? (
+                        <div className="py-6 flex items-center justify-center gap-2 text-xs text-zinc-400">
+                          <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+                          <span>Generating tailored questions…</span>
+                        </div>
+                      ) : quickQuestions.length > 0 ? (
+                        <div className="space-y-3">
+                          {quickQuestions.map((q, idx) => (
+                            <div key={q.id} className="space-y-1.5">
+                              <p className="text-xs font-semibold text-zinc-300">{idx + 1}. {q.question}</p>
+                              <div className="flex flex-wrap gap-1.5">
+                                {q.options.map(opt => {
+                                  const sel = userQuestionAnswers[q.id] === opt;
+                                  return (
+                                    <button
+                                      key={opt}
+                                      onClick={() => toggleQuestionOption(q.id, opt)}
+                                      className={`px-3 py-1 rounded-lg text-xs transition-all border ${
+                                        sel
+                                          ? 'bg-emerald-500 text-white border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                                          : 'bg-white/5 border-white/10 text-zinc-400 hover:border-emerald-500/30 hover:text-white'
+                                      }`}
+                                    >
+                                      {sel ? '✓ ' : ''}{opt}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <button
+                          onClick={generateCustomizationQuestions}
+                          className="w-full py-3 rounded-2xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-bold flex items-center justify-center gap-2"
+                        >
+                          <Sparkles className="w-4 h-4 text-emerald-400" />
+                          Generate 5 Customization Questions
+                        </button>
+                      )}
+
+                      <div className="flex gap-2 pt-2">
+                        <button
+                          onClick={() => setWizardLevel('subthemes')}
+                          className="px-4 py-3 rounded-2xl bg-white/5 hover:bg-white/10 text-zinc-400 text-xs font-bold transition-all"
+                        >
+                          Back
+                        </button>
+                        <button
+                          onClick={handleQuickGenerate}
+                          disabled={!idea.trim() || isGenerating}
+                          className="flex-1 py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-500 text-white text-xs font-bold flex items-center justify-center gap-2 transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]"
+                        >
+                          {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
+                          ⚡ Forge Narrative Now
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {showMatureConfirm && (
                   <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={()=> setShowMatureConfirm(false)}>
@@ -841,6 +1173,63 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                     </button>
                   </div>
                 </div>
+
+                {/* ── 5 Optional Quick Customization Questions ── */}
+                <div className="flex justify-between items-center px-1">
+                  <button
+                    onClick={generateCustomizationQuestions}
+                    disabled={(!idea.trim() && selectedSubjects.length === 0) || isGeneratingQuestions}
+                    className="px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-40"
+                  >
+                    {isGeneratingQuestions ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                    {quickQuestions.length === 0 ? "✨ Generate 5 Customization Questions" : "Refresh 5 Questions"}
+                  </button>
+                  {Object.keys(userQuestionAnswers).length > 0 && (
+                    <button
+                      onClick={() => setUserQuestionAnswers({})}
+                      className="text-xs text-zinc-500 hover:text-zinc-300"
+                    >
+                      Clear Choices ({Object.keys(userQuestionAnswers).length})
+                    </button>
+                  )}
+                </div>
+
+                {quickQuestions.length > 0 && (
+                  <div className="glass-panel p-5 rounded-2xl border border-emerald-500/20 space-y-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="w-4 h-4 text-emerald-400" />
+                        <h4 className="text-xs font-bold text-white uppercase tracking-widest">Tailor Your Story (5 Optional Questions)</h4>
+                      </div>
+                      <span className="text-[10px] text-zinc-500">Pick any to guide the AI</span>
+                    </div>
+                    <div className="space-y-3">
+                      {quickQuestions.map((q, idx) => (
+                        <div key={q.id} className="space-y-1.5">
+                          <p className="text-xs font-semibold text-zinc-300">{idx + 1}. {q.question}</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {q.options.map(opt => {
+                              const sel = userQuestionAnswers[q.id] === opt;
+                              return (
+                                <button
+                                  key={opt}
+                                  onClick={() => toggleQuestionOption(q.id, opt)}
+                                  className={`px-3 py-1 rounded-lg text-xs transition-all border ${
+                                    sel
+                                      ? 'bg-emerald-500 text-white border-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]'
+                                      : 'bg-white/5 border-white/10 text-zinc-400 hover:border-emerald-500/30 hover:text-white'
+                                  }`}
+                                >
+                                  {sel ? '✓ ' : ''}{opt}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {firstCharacter && (
                   <motion.div 

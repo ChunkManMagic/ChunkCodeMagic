@@ -79,6 +79,7 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
   const [micDeviceId, setMicDeviceId] = useState(() => getSettings().liveVoiceMicDeviceId || 'default');
   const [outputDeviceId, setOutputDeviceId] = useState(() => getSettings().liveVoiceOutputDeviceId || 'default');
   const [isSwitchingMic, setIsSwitchingMic] = useState(false);
+  const [liveVoiceTemp, setLiveVoiceTemp] = useState(() => getSettings().liveVoiceTemperature ?? 1.0);
   const transcriptEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -620,6 +621,80 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                         </button>
                       );
                     })}
+                  </div>
+
+                  {/* Tone Preset Quick Picker */}
+                  <div className="mt-4 pt-3 border-t border-white/10">
+                    <div className="flex items-center justify-between mb-2">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                        Tone & Personality Preset
+                      </label>
+                      <span className="text-[10px] text-zinc-500">
+                        Shapes speech style, vocabulary & mood
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[
+                        { id: 'cinematic', label: '🎬 Cinematic' },
+                        { id: 'cozy', label: '☕ Cozy' },
+                        { id: 'gritty', label: '🗡️ Gritty' },
+                        { id: 'whimsical', label: '✨ Whimsical' },
+                        { id: 'poetic', label: '📜 Poetic' },
+                        { id: 'snappy', label: '⚡ Snappy' },
+                        { id: 'literary', label: '📖 Literary' },
+                        { id: 'noir', label: '🌧️ Noir' }
+                      ].map((tPreset) => {
+                        const curSettings = getSettings();
+                        const isSelected = curSettings.writingTonePreset === tPreset.id;
+                        return (
+                          <button
+                            key={tPreset.id}
+                            onClick={() => {
+                              const s = getSettings();
+                              saveSettings({ ...s, writingTonePreset: tPreset.id });
+                            }}
+                            className={`px-2.5 py-1 rounded-xl text-xs font-semibold border transition-all ${
+                              isSelected
+                                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm'
+                                : 'bg-white/5 text-zinc-400 hover:text-white border-white/5 hover:border-white/20'
+                            }`}
+                          >
+                            {tPreset.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Temperature / Spontaneity Slider */}
+                  <div className="mt-3 pt-3 border-t border-white/10">
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+                        Spontaneity & Creativity (Temperature: {liveVoiceTemp.toFixed(1)})
+                      </label>
+                      <span className="text-[10px] text-zinc-500 font-mono">
+                        {liveVoiceTemp < 0.7 ? 'Focused & Precise' : liveVoiceTemp > 1.2 ? 'Wild & Inventive' : 'Balanced & Natural'}
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min={0.2}
+                      max={1.8}
+                      step={0.1}
+                      value={liveVoiceTemp}
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value);
+                        setLiveVoiceTemp(val);
+                        const s = getSettings();
+                        saveSettings({ ...s, liveVoiceTemperature: val });
+                      }}
+                      className="w-full accent-emerald-500"
+                    />
+                    <div className="flex justify-between text-[9px] text-zinc-600 mt-0.5">
+                      <span>0.2 (Consistent)</span>
+                      <span>1.0 (Default)</span>
+                      <span>1.8 (Expressive)</span>
+                    </div>
                   </div>
                 </motion.div>
               )}
