@@ -164,6 +164,10 @@ function teardownSession(handle: SessionHandle | null) {
   // Prevent a stale session's late onclose from clobbering the state of a
   // newer session (it would emit idle/connecting after the new one is live).
   handle.disposed = true;
+  if ((handle as any)._watchdogTimer) {
+    clearTimeout((handle as any)._watchdogTimer);
+    (handle as any)._watchdogTimer = null;
+  }
   if (handle.animFrameId) {
     cancelAnimationFrame(handle.animFrameId);
   }
@@ -356,16 +360,29 @@ function setupAudioPlayback(handle: SessionHandle): AudioContext {
     // silent mid-response. Android fires "interrupted" when audio focus is
     // taken away (e.g. a headset button or another app grabs the mic).
     handle.audioContext.onstatechange = () => {
-      if (handle.audioContext && handle.audioContext.state !== "running") {
-        // The context was suspended (screen lock, power management, audio
-        // focus change). DO NOT call stopPlayback() here — that throws away
-        // all queued audio, causing the "text pops up silently" bug on long
-        // sessions. Just resume so scheduled buffers play when it's running.
+      if (!handle.audioContext) return;
+      if (handle.audioContext.state === "running") {
+        // Resumed from suspended/interrupted — queued buffers scheduled while
+        // suspended would otherwise all fire at once as a jumbled burst.
+        // Clear the stale queue so only fresh incoming chunks play.
+        if (handle.playbackQueue.length > 0) {
+          for (const s of [...handle.playbackQueue]) {
+            try {
+              s.stop();
+            } catch {}
+          }
+          handle.playbackQueue = [];
+          handle.nextPlaybackTime = handle.audioContext.currentTime;
+        }
+        (handle as any)._wasSuspended = false;
+      } else if (handle.audioContext.state !== "closed") {
+        (handle as any)._wasSuspended = true;
         handle.audioContext.resume().catch(() => {});
       }
     };
   }
   if (handle.audioContext.state === "suspended" || (handle.audioContext.state as string) === "interrupted") {
+    (handle as any)._wasSuspended = true;
     handle.audioContext.resume().catch(() => {});
   }
   installContextReviver();
@@ -475,6 +492,7 @@ function enqueuePcmAudio(handle: SessionHandle, base64: string) {
   // "whole reply appears silent then pops in as text" bug after long sessions.
   if (ctx.state !== "running") {
     ctx.resume().catch(() => {});
+    (handle as any)._wasSuspended = true;
     // Cast to string: TypeScript narrows ctx.state to never inside the outer
     // if-block otherwise and flags the inner check as unreachable.
     if ((ctx.state as string) !== "running") {
@@ -486,6 +504,20 @@ function enqueuePcmAudio(handle: SessionHandle, base64: string) {
       return;
     }
   }
+
+  // Context just resumed from suspension — clear any stale queued buffers
+  // that accumulated while suspended before scheduling fresh audio, otherwise
+  // they avalanche as a jumbled burst playing all at once.
+  if ((handle as any)._wasSuspended && handle.playbackQueue.length > 0) {
+    for (const s of [...handle.playbackQueue]) {
+      try {
+        s.stop();
+      } catch {}
+    }
+    handle.playbackQueue = [];
+    handle.nextPlaybackTime = ctx.currentTime;
+  }
+  (handle as any)._wasSuspended = false;
 
   const pcm = base64DecodeToPcm(base64);
   if (pcm.length === 0) return;
@@ -720,6 +752,10 @@ function syncWorkletState(handle: SessionHandle) {
 }
 
 function detachMicCapture(handle: SessionHandle) {
+  if ((handle as any)._watchdogTimer) {
+    clearTimeout((handle as any)._watchdogTimer);
+    (handle as any)._watchdogTimer = null;
+  }
   try {
     handle.processor?.disconnect();
   } catch (e) {}
@@ -752,26 +788,27 @@ function detachMicCapture(handle: SessionHandle) {
 // error anywhere. When the mic should be sending but the worklet has delivered
 // nothing after a grace period, tear it down and re-attach using the
 // ScriptProcessor fallback so speech keeps flowing.
-// Fix #3: When the mic is currently off, reschedule the check for 1 s from
-// now. When the mic opens later this pending timer fires and correctly
-// detects a dead worklet. A boolean flag `watchdogArmed` prevents stacking
-// multiple parallel timers on the same handle.
+// When the mic is currently off, reschedule the check for 1 s from now.
+// When the mic opens later this pending timer fires and correctly detects a
+// dead worklet. Store timer ID and clear any existing timer before scheduling
+// to avoid two parallel watchdog loops (boolean flag alone has a race window).
 function scheduleWorkletWatchdog(handle: SessionHandle) {
-  if ((handle as any)._watchdogArmed) return;
-  (handle as any)._watchdogArmed = true;
+  if ((handle as any)._watchdogTimer) {
+    clearTimeout((handle as any)._watchdogTimer);
+    (handle as any)._watchdogTimer = null;
+  }
   const check = () => {
-    (handle as any)._watchdogArmed = false;
+    (handle as any)._watchdogTimer = null;
     if (!handle.workletNode || handle.disposed || handle.workletDelivered) return;
     if (isMicSending(handle)) {
       console.warn("AudioWorklet produced no mic audio; falling back to ScriptProcessor.");
       attachMicCapture(handle, true).catch(() => {});
     } else {
       // Mic is off right now — re-arm so we catch when it opens next.
-      (handle as any)._watchdogArmed = true;
-      setTimeout(check, 1000);
+      (handle as any)._watchdogTimer = setTimeout(check, 1000);
     }
   };
-  setTimeout(check, 2000);
+  (handle as any)._watchdogTimer = setTimeout(check, 2000);
 }
 
 async function attachMicCapture(handle: SessionHandle, forceProcessor = false) {
@@ -909,6 +946,9 @@ function finalizeTurn(handle: SessionHandle) {
   handle.userTranscript = "";
   handle.modelTranscript = "";
   handle.turnCancelled = false;
+  // Reset for next turn so a stale true from an interrupted/jumbled turn
+  // doesn't bleed into the following turn's Force Reply logic.
+  handle.audioSentInCurrentTurn = false;
   // Pass final=true so callers can distinguish a committed transcript from a live partial.
   handle.options?.onUserTranscript?.("", true);
   handle.options?.onModelTranscript?.("", true);
@@ -1017,6 +1057,9 @@ async function connectSession(
           handle.userTranscript = "";
           handle.modelTranscript = "";
           handle.turnCancelled = false;
+          // Reset for next turn so stale flag doesn't bleed into the new turn
+          // (hands-free mic stays open, so onMicSendingChanged won't fire).
+          handle.audioSentInCurrentTurn = false;
           handle.options?.onUserTranscript?.("", false);
           handle.options?.onModelTranscript?.("", false);
           emitState(handle);
@@ -1196,6 +1239,13 @@ async function reconnectNow(): Promise<void> {
   while (totalChars > MAX_CONTEXT_CHARS && combinedTurns.length > 1) {
     const removed = combinedTurns.shift()!;
     totalChars -= removed.text.length;
+  }
+  // If a single remaining turn alone exceeds the cap, truncate its text
+  // instead of sending the oversized payload as-is (which bypasses the limit).
+  if (totalChars > MAX_CONTEXT_CHARS && combinedTurns.length === 1) {
+    const only = combinedTurns[0];
+    only.text = only.text.slice(-MAX_CONTEXT_CHARS);
+    totalChars = only.text.length;
   }
 
   const reconnectOptions: LiveVoiceOptions = combinedTurns.length
@@ -1487,6 +1537,8 @@ export function interruptAiSpeech(): void {
   active.turnCancelled = true;
   stopPlayback(active);
   active.modelTranscript = "";
+  // Reset for next turn so stale flag doesn't bleed (see Fix D)
+  active.audioSentInCurrentTurn = false;
   active.options?.onModelTranscript?.("", false);
   emitState(active);
 }
@@ -1538,19 +1590,27 @@ export function stopLiveVoice(): void {
  * Force Gemini to reply immediately: stops mic capture, sends audioStreamEnd,
  * then sends clientContent { turnComplete: true } so the model doesn't keep
  * waiting for VAD silence detection. Equivalent to Android's forceSendTurn().
+ * Always sends both signals regardless of audioSentInCurrentTurn stale state,
+ * so Force Reply never does nothing or sends a duplicate pair on retry.
  */
 export function forceSendTurn(): void {
   if (!active) return;
-  const wasSending = isMicSending(active);
   // Stop mic so we don't keep streaming while Gemini is generating
   active.pushToTalk = false;
   syncMicSendingState(active);
-  if (wasSending && active.audioSentInCurrentTurn) {
-    sendAudioStreamEnd(active); // also calls sendTurnComplete internally
-  } else {
-    // Even if no audio was sent, force-signal the turn end
-    sendTurnComplete(active);
+  // Always send both audioStreamEnd and turnComplete regardless of the
+  // audioSentInCurrentTurn flag which can be stuck from a previous turn.
+  if (!active.session) {
+    emitState(active);
+    return;
   }
+  try {
+    active.session.sendRealtimeInput({ audioStreamEnd: true });
+  } catch (e) {
+    console.warn("Failed to send audioStreamEnd:", e);
+  }
+  active.audioSentInCurrentTurn = false;
+  sendTurnComplete(active);
   emitState(active);
 }
 
