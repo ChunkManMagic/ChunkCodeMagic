@@ -36,6 +36,11 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     handsFreeRef.current = handsFree;
   }, [handsFree]);
 
+  const phaseRef = useRef(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  }, [phase]);
+
   // Watch for AI reply
   useEffect(() => {
     if (!awaitingReply || isStreaming) return;
@@ -101,9 +106,10 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     };
     rec.onerror = () => setPhase('idle');
     rec.onend = () => {
-      // if handsFree and still idle and not thinking/speaking, restart
-      if (handsFree && phase === 'listening') {
-        // will be handled by effect
+      if (handsFreeRef.current && phaseRef.current === 'listening') {
+        setPhase('idle');
+      } else if (phaseRef.current === 'listening') {
+        setPhase('idle');
       }
     };
     recognitionRef.current = rec;
@@ -127,10 +133,9 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
 
   // handsFree auto-loop
   useEffect(() => {
-    if (handsFree && phase === 'idle' && !awaitingReply) {
-      // small delay to avoid immediate re-trigger after speaking
+    if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply) {
       const id = setTimeout(() => {
-        if (handsFree && phase === 'idle' && !awaitingReply) launchSTT();
+        if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply) launchSTT();
       }, 800);
       return () => clearTimeout(id);
     }

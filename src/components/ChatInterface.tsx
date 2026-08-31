@@ -38,6 +38,7 @@ interface ChatInterfaceProps {
 export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharacter, onCarryOver, onUpdateProfile, onUpdateAvatar, onBranchScenario }: ChatInterfaceProps) {
   const { messages, setMessages, addMessage, updateMessage, updateMessages, deleteMessage, rewindToMessage, resetMessages, storySummary, updateSummary, isLoaded, isSaving } = useChatState(scenarioId);
   const liveTurnMessageIds = useRef<string[]>([]);
+  const autoNarratedIds = useRef<Set<string>>(new Set());
   const [showCodex, setShowCodex] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
@@ -598,7 +599,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       
       const { mainText } = parseMessageContent(displayReply, 'model');
       if (isAutoRead && mainText && !isLiveMode) {
-        handleReadAloud(mainText);
+        handleReadAloud(mainText, profile);
       }
 
       const historyWithReply = [
@@ -626,6 +627,19 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       setIsTyping(false);
     }
   }, [storySummary, updateSummary, messages, updateMessages, addMessage, profile, codexEntries, updateMessage, onUpdateProfile, isAutoRead, isLiveMode, handleReadAloud, isAutoCodexEnabled, handleAutoPopulateCodex, isAutoInventoryEnabled, handleAutoUpdateInventory, isAutoProfileEnabled, handleAutoUpdateProfile, handleAutoUpdateAvatar, toastError, setMessages]);
+
+  // Auto-narrate for voiceMode === 'tts'
+  useEffect(() => {
+    const settings = getSettings();
+    if ((settings as any).voiceMode !== 'tts') return;
+    if (isTyping) return;
+    const last = messages[messages.length - 1];
+    if (!last || last.role === 'user') return;
+    if (autoNarratedIds.current.has(last.id)) return;
+    autoNarratedIds.current.add(last.id);
+    const { mainText } = parseMessageContent(last.text, last.role);
+    handleReadAloud(mainText, profile);
+  }, [messages, isTyping, profile, handleReadAloud]);
 
   const saveEdit = async (messageId: string) => {
     if (!editInput.trim() || isTyping) return;
@@ -1195,38 +1209,45 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
           >
             <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          <button
-            onClick={() => {
-              const mode = (getSettings() as any).voiceMode || 'live';
-              if (mode === 'tts' || mode === 'voice_chat') {
-                setShowVoiceChat(v => !v);
-                if (liveVoice.isActive) liveVoice.stop();
-              } else {
-                startLiveVoiceSession();
-              }
-            }}
-            className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
-              liveVoice.isActive || showVoiceChat
-                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
-                : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
-            }`}
-            title={(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'Voice Chat (STT + TTS)' : m==='tts' ? 'Turn-Based Voice (Push-to-Talk)' : 'Live Voice (Real-time Spoken Conversation with Gemini)'; })()}
-            aria-label="Toggle Voice"
-          >
-            {liveVoice.isActive || showVoiceChat ? (
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span className="text-emerald-400 font-bold">
-                  {liveVoice.isConnecting ? 'CONNECTING...' : showVoiceChat ? 'VOICE CHAT' : 'LIVE CALL'}
-                </span>
-              </div>
-            ) : (
-              <>
-                <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-                <span>{(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'VOICE CHAT' : m==='tts' ? 'VOICE' : 'LIVE VOICE'; })()}</span>
-              </>
-            )}
-          </button>
+          {(getSettings() as any).voiceMode === 'tts' ? (
+            <div className="px-3 py-2 rounded-xl text-[10px] font-bold glass-input text-zinc-300 flex items-center gap-2 shrink-0 whitespace-nowrap">
+              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>NARRATION ON</span>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                const voiceMode = (getSettings() as any).voiceMode || 'live';
+                if (voiceMode === 'voice_chat') {
+                  setShowVoiceChat(v => !v);
+                  if (liveVoice.isActive) liveVoice.stop();
+                } else {
+                  startLiveVoiceSession();
+                }
+              }}
+              className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
+                liveVoice.isActive || showVoiceChat
+                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
+                  : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
+              }`}
+              title={(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'Voice Chat (STT + TTS)' : 'Live Voice (Real-time Spoken Conversation with Gemini)'; })()}
+              aria-label="Toggle Voice"
+            >
+              {liveVoice.isActive || showVoiceChat ? (
+                <div className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                  <span className="text-emerald-400 font-bold">
+                    {liveVoice.isConnecting ? 'CONNECTING...' : showVoiceChat ? 'VOICE CHAT' : 'LIVE CALL'}
+                  </span>
+                </div>
+              ) : (
+                <>
+                  <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+                  <span>{(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'VOICE CHAT' : 'LIVE VOICE'; })()}</span>
+                </>
+              )}
+            </button>
+          )}
         </div>
       </div>
 
@@ -1431,7 +1452,7 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
                   onEdit={() => startEditing(msg)}
                   onReadAloud={() => {
                     const { mainText } = parseMessageContent(msg.text, msg.role);
-                    handleReadAloud(mainText);
+                    handleReadAloud(mainText, profile);
                   }}
                   onRegenerateStart={() => setRegeneratingMessageId(msg.id)}
                   onBranch={() => handleBranch(msg.id)}
@@ -1589,7 +1610,7 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => handleReadAloud(`Greetings! This is a live voice preview for ${profile.name}. My tone is ${profile.storyTone || 'natural'}.`)}
+                          onClick={() => handleReadAloud(`Greetings! This is a live voice preview for ${profile.name}. My tone is ${profile.storyTone || 'natural'}.`, profile)}
                           className="px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
                           title="Hear a short audio sample of this voice configuration"
                         >
