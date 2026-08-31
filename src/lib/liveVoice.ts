@@ -134,6 +134,7 @@ interface SessionHandle {
   // that the model needs to stay in turn.
   turnHistory: { user: string; model: string }[];
   playbackQueue: AudioBufferSourceNode[];
+  pendingAudioChunks: string[];
   nextPlaybackTime: number;
   animFrameId: number | null;
   options: LiveVoiceOptions;
@@ -164,6 +165,7 @@ function teardownSession(handle: SessionHandle | null) {
   // Prevent a stale session's late onclose from clobbering the state of a
   // newer session (it would emit idle/connecting after the new one is live).
   handle.disposed = true;
+  handle.pendingAudioChunks = [];
   if ((handle as any)._watchdogTimer) {
     clearTimeout((handle as any)._watchdogTimer);
     (handle as any)._watchdogTimer = null;
@@ -362,10 +364,17 @@ function setupAudioPlayback(handle: SessionHandle): AudioContext {
     handle.audioContext.onstatechange = () => {
       if (!handle.audioContext) return;
       if (handle.audioContext.state === "running") {
-        // Resumed from suspended/interrupted — queued buffers scheduled while
-        // suspended would otherwise all fire at once as a jumbled burst.
-        // Clear the stale queue so only fresh incoming chunks play.
-        if (handle.playbackQueue.length > 0) {
+        // Drain buffered chunks that arrived while suspended.
+        if (handle.pendingAudioChunks.length > 0) {
+          const ctx = handle.audioContext;
+          handle.nextPlaybackTime = ctx.currentTime; // resync head to now
+          const drained = handle.pendingAudioChunks.splice(0);
+          for (const chunk of drained) {
+            _scheduleAudioChunk(handle, ctx, chunk);
+          }
+        } else if (handle.playbackQueue.length > 0) {
+          // No pending chunks but stale scheduled buffers exist — clear them
+          // so they don't avalanche (the original behavior, kept as fallback).
           for (const s of [...handle.playbackQueue]) {
             try {
               s.stop();
@@ -487,24 +496,28 @@ const TARGET_PLAYBACK_LATENCY = 0.22;
 function enqueuePcmAudio(handle: SessionHandle, base64: string) {
   const ctx = setupAudioPlayback(handle);
 
-  // If the context isn't running, kick a resume. We do NOT schedule audio into
-  // a suspended context — it would burst all at once on resume, which is the
-  // "whole reply appears silent then pops in as text" bug after long sessions.
   if (ctx.state !== "running") {
+    // Buffer the chunk instead of dropping it — the context will drain
+    // these when it resumes via onstatechange.
+    handle.pendingAudioChunks.push(base64);
+    handle.isSpeaking = true;
+    emitState(handle);
     ctx.resume().catch(() => {});
-    (handle as any)._wasSuspended = true;
-    // Cast to string: TypeScript narrows ctx.state to never inside the outer
-    // if-block otherwise and flags the inner check as unreachable.
-    if ((ctx.state as string) !== "running") {
-      // Still not running after resume() — genuinely suspended. Mark as
-      // speaking so the UI stays active; onstatechange will call resume()
-      // again when the context recovers.
-      handle.isSpeaking = true;
-      emitState(handle);
-      return;
+    return;
+  }
+
+  // Drain any chunks that arrived while we were suspended, then play this one.
+  if (handle.pendingAudioChunks.length > 0) {
+    const drained = handle.pendingAudioChunks.splice(0);
+    for (const chunk of drained) {
+      _scheduleAudioChunk(handle, ctx, chunk);
     }
   }
 
+  _scheduleAudioChunk(handle, ctx, base64);
+}
+
+function _scheduleAudioChunk(handle: SessionHandle, ctx: AudioContext, base64: string) {
   // Context just resumed from suspension — clear any stale queued buffers
   // that accumulated while suspended before scheduling fresh audio, otherwise
   // they avalanche as a jumbled burst playing all at once.
@@ -574,6 +587,7 @@ function enqueuePcmAudio(handle: SessionHandle, base64: string) {
 }
 
 export function stopPlayback(handle: SessionHandle) {
+  handle.pendingAudioChunks = [];
   for (const source of handle.playbackQueue) {
     try {
       source.stop();
@@ -1033,6 +1047,7 @@ async function connectSession(
     audioSentInCurrentTurn: false,
     turnHistory: [],
     playbackQueue: [],
+    pendingAudioChunks: [],
     nextPlaybackTime: 0,
     animFrameId: null,
     options,
