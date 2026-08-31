@@ -1975,14 +1975,20 @@ Text: ${text.slice(0, 4000)}`;
   }
 
   let lastError: any = null;
+  const timeoutMs = (model: string): number => model.includes('pro') ? 12000 : model.includes('flash') ? 6000 : 5000;
+  const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> => Promise.race([p, new Promise<null>(r => setTimeout(() => r(null), ms))]);
   for (const model of chain) {
     try {
       console.log(`[generateSpeech] Attempting TTS with model: ${model}`);
-      const response = await ai.models.generateContent({
+      const response = await withTimeout(ai.models.generateContent({
         model,
         contents: [{ role: 'user', parts: [{ text: prompt }] } as any],
         config,
-      } as any);
+      } as any) as Promise<any>, timeoutMs(model));
+      if (response == null) {
+        console.warn(`[generateSpeech] ${model} timed out after ${timeoutMs(model)}ms, trying next`);
+        continue;
+      }
       const audioData = (response as any).candidates?.[0]?.content?.parts?.[0]?.inlineData?.data
         ?? (response as any).candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data)?.inlineData?.data;
       if (audioData) {
@@ -2002,7 +2008,6 @@ Text: ${text.slice(0, 4000)}`;
 // Backwards-compatible wrapper for callers that expect stylePrefix usage (Director Prompt)
 export async function generateSpeechWithDirectorPrompt(text: string, voiceName?: string, stylePrefix?: string | null, useFastChain: boolean = false): Promise<string | null> {
   const prompt = `${stylePrefix ? stylePrefix + '\n\n' : ''}${text.slice(0, 4000)}`;
-  // Reuse same chain logic but with prebuilt prompt
   const TTS_CHAIN = useFastChain
     ? ['gemini-3.1-flash-tts-preview','gemini-2.5-flash-preview-tts','gemini-2.5-flash','gemini-2.0-flash']
     : ['gemini-2.5-pro-preview-tts','gemini-3.1-flash-tts-preview','gemini-2.5-flash-preview-tts','gemini-2.5-flash','gemini-2.0-flash'];
@@ -2011,9 +2016,12 @@ export async function generateSpeechWithDirectorPrompt(text: string, voiceName?:
     responseModalities: ["AUDIO" as const],
     speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } },
   };
+  const timeoutMs2 = (m: string): number => m.includes('pro') ? 12000 : m.includes('flash') ? 6000 : 5000;
+  const withTimeout2 = <T>(p: Promise<T>, ms: number): Promise<T | null> => Promise.race([p, new Promise<null>(r => setTimeout(() => r(null), ms))]);
   for (const model of TTS_CHAIN) {
     try {
-      const res: any = await ai.models.generateContent({ model, contents: [{ role: 'user', parts: [{ text: prompt }] } as any], config } as any);
+      const res: any = await withTimeout2(ai.models.generateContent({ model, contents: [{ role: 'user', parts: [{ text: prompt }] } as any], config } as any) as Promise<any>, timeoutMs2(model));
+      if (res == null) continue;
       const b64 = res.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data ?? res.candidates?.[0]?.content?.parts?.find((p:any)=>p.inlineData?.data)?.inlineData?.data;
       if (b64) return b64;
     } catch { continue; }

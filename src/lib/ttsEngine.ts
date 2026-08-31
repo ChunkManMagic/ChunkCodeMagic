@@ -171,15 +171,35 @@ export async function synthesizeSpeech(
     ...(extraConfig || {}),
   };
 
+  // Per-model timeouts: Pro gets longer (it's slower but higher quality). Flash gets tighter window.
+  const timeoutMs = (model: string): number => {
+    if (model.includes('pro')) return 12000;
+    if (model.includes('flash')) return 6000;
+    return 5000;
+  };
+  const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T | null> => {
+    return Promise.race([
+      promise,
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), ms)),
+    ]);
+  };
+
   for (const model of chain) {
     try {
-      const response: any = await ai.models.generateContent({
-        model,
-        contents: [{ role: 'user', parts: [{ text: prompt }] }],
-        config: configBase,
-      });
-      const b64 = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data
-        ?? response.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data)?.inlineData?.data;
+      const result = await withTimeout(
+        ai.models.generateContent({
+          model,
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          config: configBase,
+        }) as Promise<any>,
+        timeoutMs(model)
+      );
+      if (result == null) {
+        console.warn(`[TtsEngine] ${model} timed out after ${timeoutMs(model)}ms, trying next`);
+        continue;
+      }
+      const b64 = result.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data
+        ?? result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data)?.inlineData?.data;
       if (b64) {
         console.log(`[TtsEngine] succeeded: ${model}`);
         return b64;
@@ -187,7 +207,6 @@ export async function synthesizeSpeech(
       console.warn(`[TtsEngine] ${model} returned no audio, trying next`);
     } catch (e: any) {
       console.warn(`[TtsEngine] ${model} failed (${e?.message}), trying next`);
-      // Continue to next regardless of error type — quota, 404, or transient
       continue;
     }
   }
@@ -236,9 +255,10 @@ export class TtsEngine {
     }
   }
 
-  // Convenience: synthesize + play, with browser fallback
+  // Convenience: synthesize + play, with browser fallback and 30s outer timeout
   async speak(text: string, voiceName?: string, stylePrefix?: string | null, useFastChain: boolean = false, onDone?: () => void): Promise<void> {
-    const b64 = await this.synthesize(text, voiceName, stylePrefix, useFastChain);
+    const withOuterTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> => Promise.race([p, new Promise<null>(r => setTimeout(() => r(null), ms))]);
+    const b64 = await withOuterTimeout(this.synthesize(text, voiceName, stylePrefix, useFastChain), 30000) as string | null;
     if (b64) {
       await this.playBase64(b64, onDone);
     } else {

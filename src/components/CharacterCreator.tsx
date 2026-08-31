@@ -1964,11 +1964,11 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                           />
                         </div>
                       </div>
-                      {/* Voice Profile fields — ported from Android */}
+                      {/* Voice Performance Profile — applies to ALL voice modes */}
                       <div className="mt-4 p-3 rounded-xl bg-white/[0.03] border border-white/5 space-y-3">
                         <div>
-                          <h5 className="text-xs font-bold text-white">Voice Profile (AI Voice Director)</h5>
-                          <p className="text-[10px] text-zinc-500">These fields are sent to the AI voice director to shape how your character sounds. The more specific, the better.</p>
+                          <h5 className="text-xs font-bold text-white">Voice Performance Profile</h5>
+                          <p className="text-[10px] text-zinc-500">These fields shape how the AI voice actor performs your character — they apply to ALL voice modes (Live, Voice Chat, and Turn-Based TTS). Leave blank to use the voice's natural default style.</p>
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                           <div>
