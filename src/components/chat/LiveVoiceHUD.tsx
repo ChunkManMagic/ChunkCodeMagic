@@ -404,6 +404,20 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                 <Zap className="w-2.5 h-2.5 fill-emerald-400" /> Reply Now
               </button>
 
+              {/* Rewind — undo last live turn */}
+              {onRewind && (
+                <button
+                  onClick={() => {
+                    liveVoice.rewind();
+                    onRewind();
+                  }}
+                  className="px-2.5 py-1.5 rounded-xl bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 border border-purple-500/25 text-[10px] font-bold flex items-center gap-1 transition-all"
+                  title="Rewind Last Turn"
+                >
+                  <RotateCcw className="w-2.5 h-2.5" /> Rewind
+                </button>
+              )}
+
               {liveVoice.state.isSpeaking && (
                 <button
                   onClick={liveVoice.interrupt}
@@ -417,7 +431,12 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
 
 
             {/* Central Talk Button */}
-            {liveVoice.state.micMode === 'hold' ? (
+            {liveVoice.isConnecting || liveVoice.state.isReconnecting ? (
+              <div className="px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 bg-amber-500/15 text-amber-400 border border-amber-500/30 animate-pulse">
+                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                <span>{liveVoice.state.isReconnecting ? 'Reconnecting...' : 'Connecting...'}</span>
+              </div>
+            ) : liveVoice.state.micMode === 'hold' ? (
               <button
                 onPointerDown={(e) => {
                   e.preventDefault();

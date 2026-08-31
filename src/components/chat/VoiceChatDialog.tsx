@@ -31,6 +31,11 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     return () => { try { ttsRef.current?.stop(); } catch {} };
   }, []);
 
+  const handsFreeRef = useRef(handsFree);
+  useEffect(() => {
+    handsFreeRef.current = handsFree;
+  }, [handsFree]);
+
   // Watch for AI reply
   useEffect(() => {
     if (!awaitingReply || isStreaming) return;
@@ -51,10 +56,10 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
         const tts = ttsRef.current!;
         await tts.speak(last.text, voiceName, directorPrompt || null, useFast, () => {
           setPhase('idle');
-          if (handsFree) {
+          if (handsFreeRef.current) {
             // auto-loop: go back to listening
             setTimeout(() => {
-              if (handsFree) launchSTT();
+              if (handsFreeRef.current) launchSTT();
             }, 400);
           }
         });
@@ -62,10 +67,10 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
         // If TtsEngine used browser fallback, it still calls onDone after estimated duration.
       } catch {
         setPhase('idle');
-        if (handsFree) setTimeout(()=> launchSTT(), 400);
+        if (handsFreeRef.current) setTimeout(() => { if (handsFreeRef.current) launchSTT(); }, 400);
       }
     })();
-  }, [messages, isStreaming, awaitingReply, profile, storySummary, handsFree]);
+  }, [messages, isStreaming, awaitingReply, profile, storySummary]);
 
   const launchSTT = () => {
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
