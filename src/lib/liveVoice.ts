@@ -1,10 +1,13 @@
 import { GoogleGenAI } from "@google/genai";
 import { sanitizeUserInput } from "./sanitize";
 
-export const LIVE_MODELS = [
+export const LIVE_MODEL_CHAIN = [
   "gemini-3.1-flash-live-preview",
   "gemini-2.5-flash-native-audio-preview-12-2025",
+  "gemini-2.5-flash-native-audio-preview-09-2025",
 ] as const;
+
+export const LIVE_MODELS = LIVE_MODEL_CHAIN;
 
 export const LIVE_VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"] as const;
 

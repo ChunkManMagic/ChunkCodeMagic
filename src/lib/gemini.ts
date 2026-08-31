@@ -1,6 +1,7 @@
 import { CharacterProfile, CodexEntry, InventoryItem, AppMode, VoiceSettings, getSettings } from "./types";
 import { getToneDirective, getMatureContentDirective, getAdultSafetySettings } from "./tone";
 import { sanitizeUserInput } from "./sanitize";
+import { recordRequest } from "../hooks/useApiUsageMonitor";
 
 export { AppMode };
 export type { CharacterProfile, CodexEntry, InventoryItem, VoiceSettings };
@@ -42,6 +43,7 @@ export function getGenAI() {
   return {
     models: {
       generateContent: async ({ model, contents, config }: any) => {
+        try { recordRequest(model); } catch {}
         const controller = new AbortController();
         try {
           const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
@@ -137,6 +139,7 @@ export function getGenAI() {
       },
       
       generateContentStream: async function* ({ model, contents, config }: any) {
+        try { recordRequest(model); } catch {}
         const controller = new AbortController();
         try {
           const isAgent = model.startsWith('antigravity') || model.startsWith('deep-research');
@@ -509,6 +512,23 @@ export function buildScenarioDirective(profile: CharacterProfile): string {
   lines.push("- Do not reference them in the story; treat them as invisible constraints.");
   if (profile.mode === AppMode.ROLEPLAY) {
     lines.push("- You MUST start every single response with your character's current mood in brackets, like this: [MOOD: Happy] or [MOOD: Suspicious]. Then, write your response.");
+  }
+  lines.push("");
+
+  // Ported from Android ChatViewModel.buildScenarioDirective voice performance direction
+  const voiceEnabled = !!(profile.voiceArchetype?.trim() || profile.voiceStyle?.trim() || profile.voicePacing?.trim() || profile.voiceAccent?.trim());
+  if (voiceEnabled) {
+    lines.push("[VOICE PERFORMANCE DIRECTION]");
+    lines.push("This story's dialogue will be spoken aloud by an AI voice actor.");
+    lines.push("To increase realism, embed appropriate inline audio tags in dialogue:");
+    lines.push("- Use [whispers], [shouting], [laughs], [sighs], [gasps], [trembling],");
+    lines.push("  [panicked], [mischievously], [excitedly], [bored], [crying], [tired],");
+    lines.push("  [nervously], [angrily], [sadly], [warmly], [mockingly] etc.");
+    lines.push("- Tags go inline: \"I told you [whispers] never to come here.\"");
+    lines.push("- Use sparingly for maximum impact. Never over-tag.");
+    lines.push("- For narration, prefer pacing/mood tags: [slowly], [urgently], [gravely]");
+    lines.push("- Tags appear in transcript text and are interpreted by the TTS as");
+    lines.push("  performance cues. Do NOT explain or call attention to them.");
   }
 
   return lines.join("\n");
@@ -1906,10 +1926,10 @@ RULES:
   return response.text?.trim() || input;
 }
 
-export async function generateSpeech(text: string, voiceName: string, voiceSettings: any, tone: string): Promise<string> {
+export async function generateSpeech(text: string, voiceName: string, voiceSettings: any, tone: string, useFastChain: boolean = false): Promise<string> {
   if (!text || !text.trim()) return "";
   const ai = getGenAI();
-  
+
   const accentNote = voiceSettings?.accent && voiceSettings.accent !== 'None'
     ? ` Accent: ${voiceSettings.accent}.`
     : '';
@@ -1917,7 +1937,7 @@ export async function generateSpeech(text: string, voiceName: string, voiceSetti
   const prompt = `Perform this text as a cinematic audiobook narrator.
 Tone: ${tone || 'natural'}.
 Voice: ${voiceSettings?.pitch || 'Normal'} pitch, ${voiceSettings?.speed || 'Normal'} speed.${accentNote}
-Text: ${text}`;
+Text: ${text.slice(0, 4000)}`;
 
   const config = {
     responseModalities: ["AUDIO" as const],
@@ -1928,41 +1948,77 @@ Text: ${text}`;
     },
   };
 
-  const settings = getSettings();
-  const activeTTSModel = settings.activeTTSModel || "gemini-3.5-flash";
-
-  const modelsToTry = [
-    activeTTSModel,
-    activeTTSModel === "gemini-3.1-pro-preview" ? "gemini-3.5-flash" : "gemini-3.1-pro-preview"
+  // Full chain from Android GeminiTtsClient.kt — parity
+  const TTS_MODEL_CHAIN = [
+    'gemini-2.5-pro-preview-tts',
+    'gemini-3.1-flash-tts-preview',
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
+  ];
+  const TTS_MODEL_CHAIN_FAST = [
+    'gemini-3.1-flash-tts-preview',
+    'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash',
   ];
 
-  let lastError: any = null;
+  const chain = useFastChain ? TTS_MODEL_CHAIN_FAST : TTS_MODEL_CHAIN;
 
-  for (let i = 0; i < modelsToTry.length; i++) {
-    const model = modelsToTry[i];
-    const isLast = i === modelsToTry.length - 1;
-    
-    try {
-      console.log(`Attempting TTS with model: ${model}`);
-      const response = await withRetry(() => ai.models.generateContent({
-        model,
-        contents: [{ parts: [{ text: prompt }] }],
-        config,
-      }), isLast ? 1 : 0, 1000); // Only retry on the very last fallback model
-      
-      const audioData = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-      if (audioData) {
-        return audioData;
-      }
-      throw new Error(`Model ${model} returned no audio data.`);
-    } catch (error: any) {
-      console.warn(`TTS model ${model} failed: ${error.message}`);
-      lastError = error;
-      continue; // Move to next model
-    }
+  function isQuotaOrRateLimit(e: any): boolean {
+    const msg = (e?.message || String(e)).toLowerCase();
+    return msg.includes('429') || msg.includes('quota') || msg.includes('resource exhausted') || msg.includes('rate limit');
+  }
+  function isModelNotFound(e: any): boolean {
+    const msg = (e?.message || String(e)).toLowerCase();
+    return msg.includes('404') || msg.includes('not found') || msg.includes('deprecated');
   }
 
+  let lastError: any = null;
+  for (const model of chain) {
+    try {
+      console.log(`[generateSpeech] Attempting TTS with model: ${model}`);
+      const response = await ai.models.generateContent({
+        model,
+        contents: [{ role: 'user', parts: [{ text: prompt }] } as any],
+        config,
+      } as any);
+      const audioData = (response as any).candidates?.[0]?.content?.parts?.[0]?.inlineData?.data
+        ?? (response as any).candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data)?.inlineData?.data;
+      if (audioData) {
+        console.log(`[generateSpeech] TTS succeeded: ${model}`);
+        return audioData;
+      }
+      console.warn(`[generateSpeech] ${model} returned no audio, trying next`);
+    } catch (error: any) {
+      console.warn(`[generateSpeech] ${model} failed (${error?.message}), trying next — quota=${isQuotaOrRateLimit(error)} notFound=${isModelNotFound(error)}`);
+      lastError = error;
+      continue;
+    }
+  }
   throw lastError || new Error("All TTS models failed.");
+}
+
+// Backwards-compatible wrapper for callers that expect stylePrefix usage (Director Prompt)
+export async function generateSpeechWithDirectorPrompt(text: string, voiceName?: string, stylePrefix?: string | null, useFastChain: boolean = false): Promise<string | null> {
+  const prompt = `${stylePrefix ? stylePrefix + '\n\n' : ''}${text.slice(0, 4000)}`;
+  // Reuse same chain logic but with prebuilt prompt
+  const TTS_CHAIN = useFastChain
+    ? ['gemini-3.1-flash-tts-preview','gemini-2.5-flash-preview-tts','gemini-2.5-flash','gemini-2.0-flash']
+    : ['gemini-2.5-pro-preview-tts','gemini-3.1-flash-tts-preview','gemini-2.5-flash-preview-tts','gemini-2.5-flash','gemini-2.0-flash'];
+  const ai = getGenAI();
+  const config = {
+    responseModalities: ["AUDIO" as const],
+    speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' } } },
+  };
+  for (const model of TTS_CHAIN) {
+    try {
+      const res: any = await ai.models.generateContent({ model, contents: [{ role: 'user', parts: [{ text: prompt }] } as any], config } as any);
+      const b64 = res.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data ?? res.candidates?.[0]?.content?.parts?.find((p:any)=>p.inlineData?.data)?.inlineData?.data;
+      if (b64) return b64;
+    } catch { continue; }
+  }
+  return null;
 }
 
 export async function extractCodexEntries(history: any[], profile: CharacterProfile, existingEntries: CodexEntry[]): Promise<Partial<CodexEntry>[]> {

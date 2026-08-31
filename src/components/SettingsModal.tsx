@@ -32,7 +32,9 @@ import { RefineButton } from './RefineButton';
 import { clear } from 'idb-keyval';
 import { AMBIENT_PRESETS } from '../lib/ambientPresets';
 import { TONE_PRESETS, TONE_DIM_LABELS, tonePresetLabel } from '../lib/tone';
-import { LIVE_VOICES, LIVE_VOICE_DESCRIPTIONS } from '../lib/liveVoice';
+import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES } from '../lib/ttsEngine';
+import { useApiUsageMonitor } from '../hooks/useApiUsageMonitor';
+import { UsageMonitorCard } from './UsageMonitorCard';
 
 interface SettingsModalProps {
   onClose: () => void;
@@ -52,6 +54,7 @@ const THEME_PRESETS: { id: ThemeAccent; label: string; bg: string; border: strin
 export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('models');
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
+  const { usageState } = useApiUsageMonitor();
   const [isRefining, setIsRefining] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
@@ -376,12 +379,63 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
             </div>
           )}
 
-          {/* TAB 2: VOICE & AUDIO STUDIO */}
+          {/* TAB 2: VOICE & AUDIO STUDIO — Section 7 parity */}
           {activeTab === 'voice' && (
             <div className="space-y-5">
-              {/* Voice Engine */}
+              {/* Voice Mode selector (3 options) */}
               <div className="space-y-2">
-                <label className="text-sm font-medium text-gray-200">Text-to-Speech Engine</label>
+                <label className="text-sm font-medium text-gray-200">Voice Mode</label>
+                <select
+                  value={settings.voiceMode || 'live'}
+                  onChange={(e) => handleChange('voiceMode', e.target.value as any)}
+                  className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500"
+                >
+                  <option value="live">Live Voice (Gemini Websocket)</option>
+                  <option value="voice_chat">Voice Chat (STT + High-Quality TTS)</option>
+                  <option value="tts">Turn-Based Voice (Push-to-Talk TTS)</option>
+                </select>
+                <p className="text-[11px] text-zinc-500">
+                  {settings.voiceMode === 'live' ? 'Real-time bidirectional Live API (3 concurrent sessions).' : settings.voiceMode === 'voice_chat' ? 'One-shot SpeechRecognition → Gemini thinks → Gemini TTS readback.' : 'Push-to-talk: hold to speak, model replies via TTS.'}
+                </p>
+              </div>
+
+              {/* Voice Quality selector (shown when tts or voice_chat) */}
+              {(settings.voiceMode === 'tts' || settings.voiceMode === 'voice_chat') && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-200">Voice Quality</label>
+                  <select
+                    value={settings.voiceQuality || 'quality'}
+                    onChange={(e) => handleChange('voiceQuality', e.target.value as any)}
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500"
+                  >
+                    <option value="quality">Quality (Pro TTS — best fidelity, slower)</option>
+                    <option value="speed">Speed (Flash TTS — fast, great for real-time)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Live Voice Model selector (shown when live) */}
+              {(!settings.voiceMode || settings.voiceMode === 'live') && (
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-200">Live Voice Model</label>
+                  <select
+                    value={settings.liveVoiceModel?.includes('2.5') ? 'stable' : 'latest'}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const full = v === 'latest' ? 'gemini-3.1-flash-live-preview' : 'gemini-2.5-flash-native-audio-preview-12-2025';
+                      handleChange('liveVoiceModel', full);
+                    }}
+                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-emerald-500 text-xs"
+                  >
+                    <option value="latest">Latest (gemini-3.1-flash-live-preview)</option>
+                    <option value="stable">Stable (gemini-2.5-flash-native-audio)</option>
+                  </select>
+                </div>
+              )}
+
+              {/* Legacy Voice Engine (kept for compatibility, hidden when voiceMode set) */}
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-gray-200">Text-to-Speech Engine (Legacy)</label>
                 <select
                   value={settings.voiceEngine}
                   onChange={(e) => handleChange('voiceEngine', e.target.value as any)}
@@ -394,7 +448,7 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
               {settings.voiceEngine === 'Cinematic' && (
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-200">Active TTS Model</label>
+                  <label className="text-sm font-medium text-gray-200">Active TTS Model (Legacy)</label>
                   <select
                     value={settings.activeTTSModel}
                     onChange={(e) => handleChange('activeTTSModel', e.target.value)}
@@ -407,6 +461,56 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </div>
               )}
 
+              {/* Voice Picker — all 30 voices grouped */}
+              <div className="space-y-3">
+                <label className="text-sm font-medium text-gray-200">Voice Picker — 30 Gemini Voices</label>
+                <p className="text-[11px] text-zinc-500">Grouped as Roleplay / Narration / Bright. Works for TTS; Live API uses subset automatically.</p>
+                {(() => {
+                  const groups: Array<[string, string[]]> = [
+                    ['Roleplay / Character', [...ROLEPLAY_VOICES]],
+                    ['Narration', [...NARRATOR_VOICES]],
+                    ['Bright / Companion', [...BRIGHT_VOICES]],
+                    ['All', ALL_VOICES.map(v=>v.name).filter(n=> ![...ROLEPLAY_VOICES, ...NARRATOR_VOICES, ...BRIGHT_VOICES].includes(n))],
+                  ];
+                  return (
+                    <div className="space-y-3">
+                      {groups.map(([label, names]) => (
+                        <div key={label} className="space-y-1">
+                          <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">{label}</div>
+                          <div className="grid grid-cols-1 gap-1">
+                            {names.map((name: string) => {
+                              const desc = ALL_VOICES.find(v=>v.name===name)?.character || '';
+                              const isSelected = settings.liveVoiceName === name;
+                              return (
+                                <button
+                                  key={name}
+                                  type="button"
+                                  onClick={() => handleChange('liveVoiceName', name)}
+                                  className={`text-left px-3 py-2 rounded-xl border flex justify-between items-center ${isSelected ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/[0.02] border-white/5 text-zinc-400 hover:text-white hover:bg-white/5'}`}
+                                >
+                                  <span className="text-xs font-medium">{name} — <span className="text-[11px] opacity-70">{desc}</span></span>
+                                  {isSelected && <Check className="w-3 h-3 text-emerald-400" />}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+                {/* Fallback select for accessibility */}
+                <select
+                  value={settings.liveVoiceName}
+                  onChange={(e) => handleChange('liveVoiceName', e.target.value)}
+                  className="w-full mt-2 bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-emerald-500 text-xs"
+                >
+                  {ALL_VOICES.map((v) => (
+                      <option key={v.name} value={v.name}>{v.name} — {v.character}</option>
+                    ))}
+                </select>
+              </div>
+
               {/* Gemini Live Voice Settings */}
               <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/10 space-y-4">
                 <div className="flex items-center gap-2">
@@ -414,33 +518,6 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400">
                     Live Voice (Real-Time Bidirectional Speech)
                   </h4>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-200">Live Voice Model</label>
-                  <select
-                    value={settings.liveVoiceModel}
-                    onChange={(e) => handleChange('liveVoiceModel', e.target.value)}
-                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-emerald-500 text-xs"
-                  >
-                    <option value="gemini-3.1-flash-live-preview">Gemini 3.1 Flash Live (Recommended)</option>
-                    <option value="gemini-2.5-flash-native-audio-preview-12-2025">Gemini 2.5 Flash Native Audio</option>
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-200">Default Live Persona Voice</label>
-                  <select
-                    value={settings.liveVoiceName}
-                    onChange={(e) => handleChange('liveVoiceName', e.target.value)}
-                    className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-emerald-500 text-xs"
-                  >
-                    {LIVE_VOICES.map((v) => (
-                      <option key={v} value={v}>
-                        {v} — {LIVE_VOICE_DESCRIPTIONS[v]?.tone}
-                      </option>
-                    ))}
-                  </select>
                 </div>
 
                 <div className="space-y-2">
@@ -465,6 +542,9 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                   />
                 </div>
               </div>
+
+              {/* Usage Monitor */}
+              <UsageMonitorCard usageState={usageState} />
             </div>
           )}
 

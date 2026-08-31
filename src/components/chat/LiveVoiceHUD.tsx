@@ -27,6 +27,7 @@ import {
   isAudioContextSinkSupported,
   playOutputTest,
 } from '../../lib/liveVoice';
+import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES } from '../../lib/ttsEngine';
 
 interface LiveVoiceHUDProps {
   liveVoice: {
@@ -592,35 +593,37 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                       Real-time bidirectional speech
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
-                    {LIVE_VOICES.map((v) => {
-                      const info = LIVE_VOICE_DESCRIPTIONS[v];
-                      const isSelected = currentVoice === v;
-                      return (
-                        <button
-                          key={v}
-                          onClick={() => handleSelectVoice(v)}
-                          className={`p-3 rounded-2xl text-left border transition-all ${
-                            isSelected
-                              ? 'bg-emerald-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10'
-                              : 'bg-white/5 border-white/5 hover:border-white/20 hover:bg-white/10'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-sm font-bold text-white">{info.label}</span>
-                            {isSelected && (
-                              <span className="w-2 h-2 rounded-full bg-emerald-400" />
-                            )}
-                          </div>
-                          <p className="text-[11px] text-emerald-400 font-medium mt-0.5">
-                            {info.tone}
-                          </p>
-                          <p className="text-[10px] text-zinc-400 mt-1 leading-snug">
-                            {info.description}
-                          </p>
-                        </button>
-                      );
-                    })}
+                  <div className="space-y-3">
+                    {(() => {
+                      const groups: Array<[string, string[]]> = [
+                        ['Roleplay / Character', [...ROLEPLAY_VOICES]],
+                        ['Narration', [...NARRATOR_VOICES]],
+                        ['Bright / Companion', [...BRIGHT_VOICES]],
+                        ['All', ALL_VOICES.map(v=>v.name).filter(n=> ![...ROLEPLAY_VOICES, ...NARRATOR_VOICES, ...BRIGHT_VOICES].includes(n))],
+                      ];
+                      return groups.map(([label, names])=> (
+                      <div key={label}>
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 mb-1">{label}</div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                          {names.map((v: string)=>{
+                            const isLive = (LIVE_VOICES as readonly string[]).includes(v);
+                            const desc = ALL_VOICES.find(x=>x.name===v)?.character || (LIVE_VOICE_DESCRIPTIONS as any)[v]?.tone || '';
+                            const info = (LIVE_VOICE_DESCRIPTIONS as any)[v];
+                            const isSelected = currentVoice===v;
+                            return (
+                              <button key={v} onClick={()=> handleSelectVoice(v as any)} className={`p-2 rounded-xl text-left border transition-all ${isSelected ? 'bg-emerald-500/15 border-emerald-500/40 shadow-lg shadow-emerald-500/10' : 'bg-white/5 border-white/5 hover:border-white/20 hover:bg-white/10'}`}>
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xs font-bold text-white">{v} <span className="text-[10px] font-normal text-zinc-400">— {desc}</span></span>
+                                  {isSelected && <span className="w-2 h-2 rounded-full bg-emerald-400" />}
+                                </div>
+                                {info ? <p className="text-[10px] text-zinc-400 mt-0.5 leading-snug">{info.description} {isLive ? '' : ' (TTS only — Live will use Kore)'}</p> : null}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ));
+                    })()}
                   </div>
 
                   {/* Tone Preset Quick Picker */}

@@ -126,6 +126,12 @@ export interface CharacterProfile {
   // DYNAMIC STATE
   currentMood?: string;
 
+  // VOICE PERFORMANCE — mirrors Android CharacterProfile voiceArchetype/style/pacing/accent
+  voiceArchetype?: string; // e.g. "Ancient vampire lord"
+  voiceStyle?: string;    // e.g. "Cold, imperious, barely suppressed menace"
+  voicePacing?: string;   // e.g. "Slow, deliberate, long pauses between threats"
+  voiceAccent?: string;   // e.g. "Eastern European, Transylvanian"
+
   // FICTIONLAB / NOVELAI PARITY FIELDS
   scenarioInstructions?: string; // Long-form Custom Scenario Instructions / director rules
   lorePieces?: LorePiece[];      // Structured Lore Pieces / Lorebook
@@ -214,6 +220,9 @@ export interface AppSettings {
   liveVoiceOutputDeviceId?: string;
   liveVoiceOutputVolume?: number;
   liveVoiceBargeIn?: boolean;
+  // Ported from Android AppSettings — voice chat mode & quality
+  voiceMode?: 'live' | 'tts' | 'voice_chat';
+  voiceQuality?: 'quality' | 'speed';
   themeAccent?: ThemeAccent;
   fontFamily?: FontFamilyOption;
   chatDensity?: ChatDensityOption;
@@ -266,6 +275,8 @@ export const defaultSettings: AppSettings = {
   liveVoiceTemperature: 1.0,
   liveVoiceOutputVolume: 1,
   liveVoiceBargeIn: false,
+  voiceMode: 'live',
+  voiceQuality: 'quality',
   themeAccent: 'emerald',
   fontFamily: 'sans',
   chatDensity: 'comfy',
@@ -324,6 +335,12 @@ export function getSettings(): AppSettings {
       }
       if (parsed.liveVoiceBargeIn === undefined) {
         parsed.liveVoiceBargeIn = false;
+      }
+      if (!parsed.voiceMode) {
+        parsed.voiceMode = 'live';
+      }
+      if (!parsed.voiceQuality) {
+        parsed.voiceQuality = 'quality';
       }
       if (!parsed.themeAccent) {
         parsed.themeAccent = 'emerald';

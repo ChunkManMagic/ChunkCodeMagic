@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { motion } from 'motion/react';
 import { useToast } from '../hooks/useToast';
 import { CharacterProfile, generateAvatar, AppMode, refineField, refineTraits, refinePlayerProfile, generateSpeech, refineProfile, applyGlobalEdit } from '../lib/gemini';
+import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES } from '../lib/ttsEngine';
 import { Loader2, RotateCcw, BookOpen, Wand2, Globe, Heart, Swords, Settings2, Volume2, Plus, Trash2, Sparkles } from 'lucide-react';
 import { RefineButton } from './RefineButton';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
@@ -433,19 +434,30 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                 PREVIEW
               </button>
             </div>
-            <div className="grid grid-cols-5 gap-1.5">
-              {['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede'].map(v => (
-                <button
-                  key={v}
-                  type="button"
-                  onClick={() => setProfile({...profile, voiceName: v})}
-                  className={`py-2 rounded-lg text-[9px] font-bold border transition-all ${
-                    (profile.voiceName || 'Kore') === v ? 'bg-emerald-500 border-emerald-400 text-white shadow-md' : 'glass-input text-zinc-400 border-transparent hover:text-white hover:border-white/20'
-                  }`}
-                >
-                  {v}
-                </button>
-              ))}
+            <div className="space-y-3">
+              {(() => {
+                const groups: Array<[string, string[]]> = [
+                  ['Roleplay / Character', [...ROLEPLAY_VOICES]],
+                  ['Narration', [...NARRATOR_VOICES]],
+                  ['Bright / Companion', [...BRIGHT_VOICES]],
+                  ['All', ALL_VOICES.map(v=>v.name).filter(n=> ![...ROLEPLAY_VOICES, ...NARRATOR_VOICES, ...BRIGHT_VOICES].includes(n))],
+                ];
+                return groups.map(([label, names]) => (
+                <div key={label}>
+                  <div className="text-[9px] font-bold uppercase tracking-widest text-zinc-600 mb-1">{label}</div>
+                  <div className="grid grid-cols-4 gap-1">
+                    {names.map((v: string)=>{
+                      const desc = ALL_VOICES.find(x=>x.name===v)?.character || '';
+                      return (
+                        <button key={v} type="button" onClick={()=> setProfile({...profile, voiceName: v})} className={`py-1.5 rounded-lg text-[9px] font-bold border transition-all flex flex-col items-center ${ (profile.voiceName||'Kore')===v ? 'bg-emerald-500 border-emerald-400 text-white shadow-md' : 'glass-input text-zinc-400 border-transparent hover:text-white hover:border-white/20'}`} title={`${v} — ${desc}`}>
+                          <span>{v}</span><span className="text-[7px] opacity-70">{desc}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ));
+              })()}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <div>
@@ -497,6 +509,31 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                   <option value="Southern">Southern</option>
                   <option value="Fantasy Melodic">Fantasy</option>
                 </select>
+              </div>
+            </div>
+            {/* Voice Profile fields — Android parity */}
+            <div className="mt-4 p-3 rounded-xl bg-white/[0.03] border border-white/5 space-y-3">
+              <div>
+                <h5 className="text-[11px] font-bold text-white">Voice Profile (AI Voice Director)</h5>
+                <p className="text-[10px] text-zinc-500">These fields are sent to the AI voice director to shape how your character sounds. The more specific, the better.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[8px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Voice Archetype</label>
+                  <input type="text" value={(profile as any).voiceArchetype || ''} onChange={e=> setProfile({...profile, voiceArchetype: e.target.value} as any)} placeholder="Ancient vampire lord" className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]" />
+                </div>
+                <div>
+                  <label className="block text-[8px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Voice Accent</label>
+                  <input type="text" value={(profile as any).voiceAccent || ''} onChange={e=> setProfile({...profile, voiceAccent: e.target.value} as any)} placeholder="Eastern European, Transylvanian" className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]" />
+                </div>
+              </div>
+              <div>
+                <label className="block text-[8px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Voice Style</label>
+                <input type="text" value={(profile as any).voiceStyle || ''} onChange={e=> setProfile({...profile, voiceStyle: e.target.value} as any)} placeholder="Cold, imperious, barely suppressed menace" className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]" />
+              </div>
+              <div>
+                <label className="block text-[8px] font-bold text-zinc-500 uppercase tracking-widest mb-1">Voice Pacing</label>
+                <input type="text" value={(profile as any).voicePacing || ''} onChange={e=> setProfile({...profile, voicePacing: e.target.value} as any)} placeholder="Slow and deliberate, long pauses" className="w-full px-2 py-1.5 glass-input rounded-lg text-white text-[10px]" />
               </div>
             </div>
           </div>

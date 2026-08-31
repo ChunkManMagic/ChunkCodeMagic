@@ -17,6 +17,8 @@ import { MessageBubble } from './chat/MessageBubble';
 import { parseMessageContent } from './chat/messageContent';
 import { PinnedMessagesPanel } from './chat/PinnedMessagesPanel';
 import { LiveVoiceHUD } from './chat/LiveVoiceHUD';
+import { VoiceChatDialog } from './chat/VoiceChatDialog';
+import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES } from '../lib/ttsEngine';
 import { refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { getSettings, Message, CharacterProfile, CodexEntry } from '../lib/types';
@@ -129,6 +131,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [rerollGuidance, setRerollGuidance] = useState('');
   const [isLiveMode, setIsLiveMode] = useState(false);
   const [isMicActive, setIsMicActive] = useState(false);
+  const [showVoiceChat, setShowVoiceChat] = useState(false);
   const { toastSuccess, toastError } = useToast();
   const [isInputExpanded, setIsInputExpanded] = useState(false);
   const [showVoiceSettings, setShowVoiceSettings] = useState(false);
@@ -1187,26 +1190,34 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
             <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
           <button
-            onClick={startLiveVoiceSession}
+            onClick={() => {
+              const mode = (getSettings() as any).voiceMode || 'live';
+              if (mode === 'tts' || mode === 'voice_chat') {
+                setShowVoiceChat(v => !v);
+                if (liveVoice.isActive) liveVoice.stop();
+              } else {
+                startLiveVoiceSession();
+              }
+            }}
             className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
-              liveVoice.isActive
+              liveVoice.isActive || showVoiceChat
                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
                 : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
             }`}
-            title="Live Voice (Real-time Spoken Conversation with Gemini)"
-            aria-label="Toggle Live Voice Call"
+            title={(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'Voice Chat (STT + TTS)' : m==='tts' ? 'Turn-Based Voice (Push-to-Talk)' : 'Live Voice (Real-time Spoken Conversation with Gemini)'; })()}
+            aria-label="Toggle Voice"
           >
-            {liveVoice.isActive ? (
+            {liveVoice.isActive || showVoiceChat ? (
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
                 <span className="text-emerald-400 font-bold">
-                  {liveVoice.isConnecting ? 'CONNECTING...' : 'LIVE CALL'}
+                  {liveVoice.isConnecting ? 'CONNECTING...' : showVoiceChat ? 'VOICE CHAT' : 'LIVE CALL'}
                 </span>
               </div>
             ) : (
               <>
                 <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-                <span>LIVE VOICE</span>
+                <span>{(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'VOICE CHAT' : m==='tts' ? 'VOICE' : 'LIVE VOICE'; })()}</span>
               </>
             )}
           </button>
@@ -1611,33 +1622,36 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
                       </div>
                     </div>
 
-                    {/* Voice Persona Selector */}
-                    <div className="space-y-1.5">
+                    {/* Voice Persona Selector — 30 voices grouped */}
+                    <div className="space-y-3">
                       <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                        Persona Voice Archetype
+                        Persona Voice Archetype — 30 Gemini Voices
                       </label>
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-1.5">
-                        {(['Kore', 'Puck', 'Charon', 'Fenrir', 'Aoede'] as const).map((v) => {
-                          const isSelected = (profile.voiceName || 'Kore') === v;
-                          return (
-                            <button
-                              key={v}
-                              type="button"
-                              onClick={() => handleUpdateVoice({ voiceName: v })}
-                              className={`p-2 rounded-xl text-left border transition-all ${
-                                isSelected
-                                  ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-md'
-                                  : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white'
-                              }`}
-                            >
-                              <div className="text-xs font-bold text-white">{v}</div>
-                              <div className="text-[9px] text-zinc-400 leading-tight">
-                                {v === 'Kore' ? 'Narrative' : v === 'Puck' ? 'Youthful' : v === 'Charon' ? 'Deep' : v === 'Fenrir' ? 'Bold' : 'Melodic'}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
+                      {(() => {
+                        const groups: Array<[string, string[]]> = [
+                          ['Roleplay / Character', [...ROLEPLAY_VOICES]],
+                          ['Narration', [...NARRATOR_VOICES]],
+                          ['Bright / Companion', [...BRIGHT_VOICES]],
+                          ['All', ALL_VOICES.map(v=>v.name).filter(n=> ![...ROLEPLAY_VOICES, ...NARRATOR_VOICES, ...BRIGHT_VOICES].includes(n))],
+                        ];
+                        return groups.map(([label, names])=> (
+                        <div key={label}>
+                          <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-600 mb-1">{label}</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                            {names.map((v: string)=>{
+                              const desc = ALL_VOICES.find(x=>x.name===v)?.character || '';
+                              const isSelected = (profile.voiceName||'Kore')===v;
+                              return (
+                                <button key={v} type="button" onClick={()=> handleUpdateVoice({ voiceName: v })} className={`p-2 rounded-xl text-left border transition-all ${isSelected ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-md' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white'}`}>
+                                  <div className="text-xs font-bold text-white">{v}</div>
+                                  <div className="text-[9px] text-zinc-400 leading-tight">{desc}</div>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      ));
+                      })()}
                     </div>
 
                     {/* Pitch, Speed, Accent, and Tone */}
@@ -1953,6 +1967,16 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
         avatarBase64={avatarBase64}
         onUpdateProfile={handleUpdateVoice}
         onRewind={handleLiveRewind}
+      />
+      {/* Voice Chat Dialog — STT + TTS parity with Android */}
+      <VoiceChatDialog
+        isOpen={showVoiceChat}
+        onClose={()=> setShowVoiceChat(false)}
+        profile={profile}
+        storySummary={storySummary}
+        messages={messages}
+        isStreaming={isTyping}
+        onSendMessage={async (text)=> { await handleSendText(text); }}
       />
 
       {/* Confirmation Modal */}
