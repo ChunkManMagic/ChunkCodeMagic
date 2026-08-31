@@ -124,8 +124,8 @@ export const MessageBubble = memo(function MessageBubble({
         />
       )}
 
-      {/* Desktop Actions (Hover-only on MD and up) */}
-      <div className={`hidden md:flex absolute -top-6 opacity-0 group-hover:opacity-100 transition-all flex items-center gap-1.5 z-10 ${isUser ? 'right-0' : 'left-0'}`}>
+      {/* Desktop Actions – now also keyboard/focus accessible (was hover-only) */}
+      <div className={`hidden md:flex absolute -top-6 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 transition-all flex items-center gap-1.5 z-10 ${isUser ? 'right-0' : 'left-0'}`}>
         <button onClick={onRewind} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-red-400 transition-colors" title="Rewind to here"><RotateCcw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Rewind</span></button>
         <button onClick={onEdit} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Edit</span></button>
         {!isUser && (
@@ -264,8 +264,8 @@ export const MessageBubble = memo(function MessageBubble({
           )}
         </div>
 
-        {/* Mobile/Touch Actions */}
-        <div className="flex flex-wrap md:hidden mt-2 items-center gap-1.5 px-1 opacity-80 z-10">
+        {/* Mobile/Touch Actions – always visible, larger hit areas for touch accessibility */}
+        <div className="flex flex-wrap md:hidden mt-2 items-center gap-1.5 px-1 opacity-100 z-10">
           <button onClick={onRewind} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-red-400 transition-colors flex items-center gap-1 shadow-md" title="Rewind to here">
             <RotateCcw className="w-3 h-3" />
             <span className="text-[8px] font-bold uppercase tracking-wider">Rewind</span>
