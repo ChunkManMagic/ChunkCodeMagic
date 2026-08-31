@@ -83,7 +83,7 @@ export const SubjectMatters = {
     "Taboo": ["Unforgivable Passion", "Breaking Sacred Vows", "Guilty Pleasure", "Secret Room", "Society's Condemnation", "Crossed Lines"]
   } as Record<string,string[]>,
   maxFor(mature: boolean){ return mature ? this.MAX_TOTAL : this.MAX_STANDARD },
-  offlineLevelTwoFor(picks: string[], mature: boolean): string[] {
+  offlineLevelTwoFor(picks: string[], _mature?: boolean): string[] {
     if (picks.length === 0) return ["Rival Alliance", "Ancient Mystery", "Dangerous Bargain", "Hidden Truth", "Midnight Encounter", "Final Stand"];
     const themes = [...new Set(picks.flatMap(k => this.SUB_THEMES_MAP[k] || []))];
     const pool = themes.length >= 8 ? themes : [...new Set([...themes, "Rival Alliance", "Ancient Mystery", "Dangerous Bargain", "Hidden Truth", "Midnight Encounter", "Final Stand"])];

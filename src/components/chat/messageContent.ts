@@ -17,10 +17,17 @@ export const parseMessageContent = (text: string, role: string): ParsedMessageCo
       };
     }
   } else if (role === 'user') {
-    const noteMatch = text.match(/\[Director's Note: ([\s\S]*?)\]/i);
+    const dirMatch = text.match(/\[DIRECTOR INSTRUCTION\]:\s*([\s\S]*?)(?:$|(?=\n\n))/i);
+    if (dirMatch) {
+      return {
+        mainText: text.replace(/\[DIRECTOR INSTRUCTION\]:\s*[\s\S]*?(?:$|(?=\n\n))/i, '').trim(),
+        oocText: dirMatch[1].trim()
+      };
+    }
+    const noteMatch = text.match(/\[Director's Note(?: for AI)?: ([\s\S]*?)\]/i);
     if (noteMatch) {
       return {
-        mainText: text.replace(/\[Director's Note: [\s\S]*?\]/i, '').trim(),
+        mainText: text.replace(/\[Director's Note(?: for AI)?: [\s\S]*?\]/i, '').trim(),
         oocText: noteMatch[1].trim()
       };
     }

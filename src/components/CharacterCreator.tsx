@@ -130,8 +130,6 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
   const [selectedSubjects, setSelectedSubjects] = useState<string[]>([]);
   const [matureEnabledInForge, setMatureEnabledInForge] = useState(false);
   const [dynamicSubjects, setDynamicSubjects] = useState<string[]>([]);
-  const [suggestedStarters, setSuggestedStarters] = useState<string[]>([]);
-  const [isGeneratingStarters, setIsGeneratingStarters] = useState(false);
   const [isGeneratingDynamic, setIsGeneratingDynamic] = useState(false);
   const [showMatureConfirm, setShowMatureConfirm] = useState(false);
 
@@ -253,35 +251,6 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
       setDynamicSubjects(SubjectMatters.dynamicFor(picks, matureEnabledInForge));
     } finally { setIsGeneratingDynamic(false); }
   };
-  const generateSuggestedStarters = async () => {
-    if (selectedSubjects.length===0) { toastError("Pick at least one subject"); return; }
-    setIsGeneratingStarters(true);
-    setSuggestedStarters([]);
-    try {
-      const count = matureEnabledInForge ? 7 : 5;
-      const prompt = `You are a story-starter generator for PersonaForge. Mode=${appMode}. Subjects=${selectedSubjects.join(", ")}. Mature=${matureEnabledInForge}. Generate ${count} distinct one-sentence story starter prompts (1-2 lines each) tailored to mode: ROLEPLAY→ character relationship hooks, SCENARIO→ crisis/world hooks, GAME→ quest hooks. ${matureEnabledInForge ? "May include mature sensual/obsessive themes between consenting adults, never involving minors." : "Keep PG-13."} Return ONLY JSON array of strings.`;
-      const tryModel = async (m:string) => {
-        const r = await fetch('/api/gemini/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model:m, contents:[{role:'user', parts:[{text:prompt}]}], generationConfig:{responseMimeType:'application/json', responseSchema:{type:'ARRAY', items:{type:'STRING'}}}})});
-        if (!r.ok) throw new Error(`${r.status}`);
-        const d = await r.json();
-        const t = d.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!t) throw new Error('no text');
-        return JSON.parse(t) as string[];
-      };
-      let starters: string[] | null = null;
-      try { starters = await tryModel('gemini-3.1-flash-lite-preview'); }
-      catch { try { starters = await tryModel('gemma-3-4b-it'); } catch {} }
-      if (starters && starters.length>0) setSuggestedStarters(starters.slice(0, count));
-      else throw new Error('offline');
-    } catch {
-      const count = matureEnabledInForge ? 7 : 5;
-      setSuggestedStarters(SubjectMatters.offlineSuggestionsFor(selectedSubjects, appMode, matureEnabledInForge, count));
-      toastSuccess("Using offline starters (quota fallback)");
-    } finally {
-      setIsGeneratingStarters(false);
-    }
-  };
-
   // 5 Optional Quick-Customize Questions
   const [quickQuestions, setQuickQuestions] = useState<{ id: string; question: string; options: string[] }[]>([]);
   const [userQuestionAnswers, setUserQuestionAnswers] = useState<Record<string, string>>({});
@@ -883,7 +852,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                       <h4 className="text-sm font-bold text-white uppercase tracking-widest">Quick Create Wizard</h4>
                     </div>
                     <button 
-                      onClick={() => { setSelectedSubjects([]); setDynamicSubjects([]); setSuggestedStarters([]); setLevelTwoSubThemes([]); setSelectedSubThemes([]); setWizardLevel('topics'); }} 
+                      onClick={() => { setSelectedSubjects([]); setDynamicSubjects([]); setLevelTwoSubThemes([]); setSelectedSubThemes([]); setWizardLevel('topics'); }} 
                       className="text-xs text-zinc-500 hover:text-zinc-300"
                     >
                       Reset

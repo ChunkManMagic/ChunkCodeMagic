@@ -125,6 +125,22 @@ export interface CharacterProfile {
 
   // DYNAMIC STATE
   currentMood?: string;
+
+  // FICTIONLAB / NOVELAI PARITY FIELDS
+  scenarioInstructions?: string; // Long-form Custom Scenario Instructions / director rules
+  lorePieces?: LorePiece[];      // Structured Lore Pieces / Lorebook
+  greetingMessage?: string;      // First AI message when story opens
+}
+
+export type LoreType = 'CHARACTER' | 'LOCATION' | 'FACTION' | 'ITEM' | 'EVENT';
+
+export interface LorePiece {
+  id: string;
+  name: string;
+  type: LoreType;
+  summary: string;
+  detailedLore: string;
+  tags?: string[];
 }
 
 export interface Scenario {
@@ -132,6 +148,10 @@ export interface Scenario {
   profile: CharacterProfile;
   avatarBase64: string;
   lastUpdated: number;
+  scenarioInstructions?: string;
+  lorePieces?: LorePiece[];
+  greetingMessage?: string;
+  backstory?: string;
 }
 
 export interface CodexEntry {
@@ -221,6 +241,7 @@ export interface Message {
   versions?: string[]; // Multiple drafts for this message
   activeVersionIndex?: number;
   isPinned?: boolean;
+  isOoc?: boolean; // Out of character / director guidance
 }
 
 declare global {

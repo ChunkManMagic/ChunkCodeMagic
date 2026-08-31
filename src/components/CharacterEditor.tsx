@@ -774,6 +774,145 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
             </div>
           </div>
 
+          {/* FictionLab / NovelAI Parity — Backstory, Greeting & Directives */}
+          <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-8">
+            <h3 className="text-xs font-bold text-emerald-400 uppercase tracking-widest flex items-center gap-2">
+              <Sparkles className="w-3.5 h-3.5" />
+              Story Engine Directives & Lorebook
+            </h3>
+
+            <div className="space-y-6">
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">
+                  Greeting Message (Opening Turn from AI)
+                </label>
+                <textarea
+                  rows={3}
+                  value={profile.greetingMessage || ''}
+                  onChange={e => setProfile({ ...profile, greetingMessage: e.target.value })}
+                  placeholder="e.g. You awaken to the sound of heavy rain beating against the stained glass windows..."
+                  className="w-full p-4 rounded-2xl glass-input text-white text-sm leading-relaxed resize-none focus:ring-2 focus:ring-emerald-500/30 transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">
+                  Custom Scenario Instructions (Long-Form Director Rules)
+                </label>
+                <p className="text-[11px] text-zinc-400 mb-2">
+                  Multi-section director script governing world logic, speech constraints, and scene steering.
+                </p>
+                <textarea
+                  rows={6}
+                  value={profile.scenarioInstructions || ''}
+                  onChange={e => setProfile({ ...profile, scenarioInstructions: e.target.value })}
+                  placeholder={`[World & Setting Instructions]\n- The city never sleeps; neon signs cast long crimson shadows.\n\n[Narrative & Style Instructions]\n- Narrate with sensory atmosphere and subtle psychological tension.\n\n[Character Dialogue & Behavior]\n- Keep dialogue grounded and avoid flowery declarations.\n\n[User Interaction Rules]\n- Always respect the player's agency and autonomy.`}
+                  className="w-full p-4 rounded-2xl glass-input text-white text-xs font-mono leading-relaxed resize-none focus:ring-2 focus:ring-emerald-500/30 transition-all"
+                />
+              </div>
+
+              {/* Lore Pieces Manager */}
+              <div className="space-y-4 pt-2 border-t border-white/5">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h4 className="text-xs font-bold text-zinc-300 uppercase tracking-wider">Lore Pieces (Lorebook)</h4>
+                    <p className="text-[11px] text-zinc-500">Structured codex entries for characters, locations, factions, items, and events.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const newPiece = {
+                        id: `lore_${Date.now()}`,
+                        name: 'New Lore',
+                        type: 'LOCATION' as const,
+                        summary: 'Brief description',
+                        detailedLore: 'Deep world facts',
+                        tags: []
+                      };
+                      setProfile({
+                        ...profile,
+                        lorePieces: [...(profile.lorePieces || []), newPiece]
+                      });
+                    }}
+                    className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 text-xs font-bold rounded-xl border border-emerald-500/30 flex items-center gap-1.5 transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add Lore Piece
+                  </button>
+                </div>
+
+                <div className="space-y-3">
+                  {(profile.lorePieces || []).map((piece, pIdx) => (
+                    <div key={piece.id} className="p-4 rounded-2xl glass-input border border-white/5 space-y-3">
+                      <div className="flex items-center gap-3">
+                        <select
+                          value={piece.type}
+                          onChange={e => {
+                            const updated = [...(profile.lorePieces || [])];
+                            updated[pIdx] = { ...updated[pIdx], type: e.target.value as any };
+                            setProfile({ ...profile, lorePieces: updated });
+                          }}
+                          className="bg-black/60 border border-white/10 text-emerald-400 text-xs font-bold px-3 py-1.5 rounded-xl"
+                        >
+                          <option value="CHARACTER">Character</option>
+                          <option value="LOCATION">Location</option>
+                          <option value="FACTION">Faction</option>
+                          <option value="ITEM">Item</option>
+                          <option value="EVENT">Event</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={piece.name}
+                          onChange={e => {
+                            const updated = [...(profile.lorePieces || [])];
+                            updated[pIdx] = { ...updated[pIdx], name: e.target.value };
+                            setProfile({ ...profile, lorePieces: updated });
+                          }}
+                          placeholder="Name / Title"
+                          className="flex-1 px-3 py-1.5 bg-black/40 border border-white/10 rounded-xl text-white text-xs font-bold"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setProfile({
+                              ...profile,
+                              lorePieces: (profile.lorePieces || []).filter((_, idx) => idx !== pIdx)
+                            });
+                          }}
+                          className="p-1.5 text-zinc-500 hover:text-red-400 transition-colors"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                      <input
+                        type="text"
+                        value={piece.summary}
+                        onChange={e => {
+                          const updated = [...(profile.lorePieces || [])];
+                          updated[pIdx] = { ...updated[pIdx], summary: e.target.value };
+                          setProfile({ ...profile, lorePieces: updated });
+                        }}
+                        placeholder="One-line summary (injected on key events)"
+                        className="w-full px-3 py-1.5 bg-black/40 border border-white/10 rounded-xl text-zinc-300 text-xs"
+                      />
+                      <textarea
+                        rows={2}
+                        value={piece.detailedLore}
+                        onChange={e => {
+                          const updated = [...(profile.lorePieces || [])];
+                          updated[pIdx] = { ...updated[pIdx], detailedLore: e.target.value };
+                          setProfile({ ...profile, lorePieces: updated });
+                        }}
+                        placeholder="Detailed lore description..."
+                        className="w-full p-3 bg-black/40 border border-white/10 rounded-xl text-zinc-300 text-xs resize-none"
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </div>
+
           {/* Additional Characters */}
           <div className="glass-panel p-8 rounded-[2.5rem] border border-white/5 space-y-8">
             <div className="flex justify-between items-center">

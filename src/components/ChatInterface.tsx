@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Package, User, Cloud, Download, Pin, Radio } from 'lucide-react';
+import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Package, User, Cloud, Download, Pin, Radio, Terminal } from 'lucide-react';
 import { useVoice } from '../hooks/useVoice';
 import { useLiveVoice } from '../hooks/useLiveVoice';
 import { useAmbientSoundscape } from '../hooks/useAmbientSoundscape';
@@ -117,6 +117,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const [input, setInput] = useState('');
   const [directorNote, setDirectorNote] = useState('');
+  const [sessionInstructions, setSessionInstructions] = useState('');
+  const [showSessionInstructions, setShowSessionInstructions] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [isRefining, setIsRefining] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
@@ -135,6 +137,38 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [showModeDetails, setShowModeDetails] = useState(false);
   const [showPinnedPanel, setShowPinnedPanel] = useState(false);
   const [flashHighlightId, setFlashHighlightId] = useState<string | null>(null);
+
+  // Seed greeting message if chat is empty and profile defines a greetingMessage
+  useEffect(() => {
+    if (isLoaded && messages.length === 0 && profile.greetingMessage?.trim()) {
+      addMessage({
+        id: generateId(),
+        role: 'model',
+        text: profile.greetingMessage.trim(),
+        versions: [profile.greetingMessage.trim()],
+        activeVersionIndex: 0
+      });
+    }
+  }, [isLoaded, messages.length, profile.greetingMessage, addMessage]);
+
+  // Seed Codex & Inventory from LorePieces & Profile if empty
+  useEffect(() => {
+    if (isLoaded && codexEntries.length === 0 && profile.lorePieces && profile.lorePieces.length > 0) {
+      const seededCodex: CodexEntry[] = profile.lorePieces.map(piece => {
+        let cat: CodexEntry['category'] = 'Lore';
+        if (piece.type === 'LOCATION') cat = 'Location';
+        else if (piece.type === 'ITEM') cat = 'Item';
+        else if (piece.type === 'CHARACTER') cat = 'Lore';
+        return {
+          id: piece.id || generateId(),
+          title: piece.name,
+          category: cat,
+          content: piece.summary ? `${piece.summary}\n${piece.detailedLore}` : piece.detailedLore
+        };
+      });
+      setCodexEntries(seededCodex);
+    }
+  }, [isLoaded, codexEntries.length, profile.lorePieces, setCodexEntries]);
 
   // Memoize token estimation to prevent expensive string concatenation and split on every keystroke render
   const estimateTokens = useMemo(() => {
@@ -475,7 +509,13 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         unsummarizedMessages = unsummarizedMessages.slice(-15);
       }
 
-      const historyForAi = unsummarizedMessages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
+      const historyForAi = unsummarizedMessages.map(m => {
+        let text = m.text;
+        if (m.isOoc && !text.includes('[DIRECTOR INSTRUCTION]')) {
+          text = `[DIRECTOR INSTRUCTION]: ${text}`;
+        }
+        return { role: m.role, parts: [{ text }] };
+      });
       
       let aiMessageId: string;
       let targetMessage: Message | undefined;
@@ -496,13 +536,18 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       let lastUpdateTime = Date.now();
       
       const settings = getSettings();
+      const effectiveInstructions = [
+        sanitizeInstruction(settings.customRefineInstructions),
+        sessionInstructions.trim() ? `[LIVE SESSION INSTRUCTIONS]: ${sessionInstructions.trim()}` : ''
+      ].filter(Boolean).join('\n\n') || undefined;
+
       const stream = generateTextReplyStream(
         historyForAi, 
         profile, 
         userInput, 
         codexEntries, 
         currentSummary,
-        sanitizeInstruction(settings.customRefineInstructions) || undefined
+        effectiveInstructions
       );
       
       for await (const chunk of stream) {
@@ -619,7 +664,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     let userInput = lastUserMessage.text;
     const safeGuidance = sanitizeInstruction(guidance).trim();
     if (safeGuidance) {
-      userInput += `\n\n[Director's Note for AI: ${safeGuidance}]`;
+      userInput += `\n\n[DIRECTOR INSTRUCTION]: ${safeGuidance}`;
     }
 
     setRegeneratingMessageId(null);
@@ -631,18 +676,20 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const handleSendText = useCallback(async (overrideText?: string) => {
     let rawText = overrideText || input;
     const safeDirectorNote = sanitizeInstruction(directorNote).trim();
+    let isOocMessage = false;
     if (safeDirectorNote) {
       if (rawText.trim()) {
-        rawText += `\n\n[Director's Note: ${safeDirectorNote}]`;
+        rawText += `\n\n[DIRECTOR INSTRUCTION]: ${safeDirectorNote}`;
       } else {
-        rawText = `[Director's Note: ${safeDirectorNote}]`;
+        rawText = `[DIRECTOR INSTRUCTION]: ${safeDirectorNote}`;
+        isOocMessage = true;
       }
     }
     
     const textToSend = processUserInput(rawText);
     if (!textToSend.trim() || isTyping) return;
     const userMsgId = generateId();
-    const userMsg: Message = { id: userMsgId, role: 'user', text: textToSend };
+    const userMsg: Message = { id: userMsgId, role: 'user', text: textToSend, isOoc: isOocMessage };
     await addMessage(userMsg);
     setInput('');
     setDirectorNote('');
@@ -1742,6 +1789,18 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
                 {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                 {profile.mode === AppMode.ROLEPLAY ? 'SUGGEST DIALOGUE' : profile.mode === AppMode.GAME ? 'SUGGEST MOVE' : 'SUGGEST ACTION'}
               </button>
+              <button
+                onClick={() => setShowSessionInstructions(!showSessionInstructions)}
+                title="Session-Level Custom LLM Instructions (live nudges, formatting, brevity)"
+                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
+                  sessionInstructions.trim() || showSessionInstructions
+                    ? 'bg-blue-500/20 text-blue-400 border-blue-500/30'
+                    : 'glass-input text-zinc-500 border-transparent hover:text-blue-400'
+                }`}
+              >
+                <Terminal className="w-3 h-3" />
+                SESSION
+              </button>
               {profile.mode === AppMode.GAME && (
                 <div className="flex items-center gap-1">
                   {(['d4','d6','d8','d10','d12','d20'] as const).map(die => (
@@ -1786,6 +1845,41 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
                 Playing as: <span className="text-zinc-400">{profile.playerProfile?.name || 'The Protagonist'}</span>
               </div>
             </div>
+
+            {/* Live Session Instructions Panel */}
+            <AnimatePresence>
+              {showSessionInstructions && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="mb-3 px-2 overflow-hidden"
+                >
+                  <div className="glass-panel p-3 rounded-2xl border border-blue-500/20 bg-black/50 space-y-2">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[10px] font-bold text-blue-400 uppercase tracking-widest flex items-center gap-1.5">
+                        <Terminal className="w-3 h-3" />
+                        Session-Level Custom LLM Instructions
+                      </span>
+                      <button
+                        onClick={() => setShowSessionInstructions(false)}
+                        className="text-zinc-500 hover:text-white text-xs"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <textarea
+                      rows={2}
+                      value={sessionInstructions}
+                      onChange={e => setSessionInstructions(e.target.value)}
+                      placeholder="Live formatting / style preferences: e.g. 'Narrate in third person', 'Keep descriptions brief', 'Avoid repeating user dialogue'..."
+                      className="w-full p-2.5 bg-black/40 border border-white/10 rounded-xl text-zinc-200 text-xs font-mono resize-none focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <div className="flex items-end gap-2 sm:gap-3">
               {error && (
                 <div className="absolute -top-10 left-0 right-0 bg-red-500/20 border border-red-500/30 text-red-400 text-[10px] px-3 py-1 rounded-lg backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2">

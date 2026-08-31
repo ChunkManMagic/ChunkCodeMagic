@@ -408,9 +408,121 @@ function buildCodexContext(codexEntries: CodexEntry[]): string {
     : '';
 }
 
-function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEntry[], currentSummary: string, customInstructions?: string): string {
-  // Profile fields are user-authored and flow into the system prompt verbatim,
-  // so scrub injection attempts from the most abusable narrative fields.
+export function buildScenarioDirective(profile: CharacterProfile): string {
+  const lines: string[] = [];
+
+  lines.push("[SCENARIO METADATA]");
+  lines.push(`Name: ${profile.name || 'Untitled'}`);
+  lines.push(`Mode: ${profile.mode}`);
+  const tags: string[] = [];
+  if (profile.storyTone) tags.push(`Tone: ${profile.storyTone}`);
+  if (profile.worldAtmosphere) tags.push(`Atmosphere: ${profile.worldAtmosphere}`);
+  if (tags.length > 0) lines.push(`Tags: ${tags.join(' | ')}`);
+  lines.push("");
+
+  lines.push("[WORLD & SETTING]");
+  lines.push(`Setting: ${profile.clothing || profile.worldAtmosphere || profile.name}`);
+  if (profile.timePeriod) lines.push(`Time Period / Era: ${profile.timePeriod}`);
+  if (profile.keyLocations) lines.push(`Key Locations & Geography: ${profile.keyLocations}`);
+  if (profile.factions) lines.push(`Factions & Societies: ${profile.factions}`);
+  if (profile.magicOrTechnologyLevel) lines.push(`Magic / Technology Level: ${profile.magicOrTechnologyLevel}`);
+  lines.push("");
+
+  lines.push("[NARRATIVE & STYLE]");
+  if (profile.mode === AppMode.ROLEPLAY) {
+    lines.push("Mode: First-Person / In-Character Roleplay");
+    lines.push("POV: Second-person narrative interacting directly with the player.");
+    lines.push(`Portrayal: You are strictly directing and portraying '${profile.name}'. Keep dialog and actions completely in character.`);
+    lines.push("Responses: Write rich sensory and narrative descriptions with conversational depth, always leaving room for the user to respond.");
+  } else if (profile.mode === AppMode.SCENARIO) {
+    lines.push("Mode: Tabletop / Campaign Scenario Game Master (GM)");
+    lines.push("POV: Second-person Game Master perspective addressing the player.");
+    lines.push("Role: Act as the Game Master (GM), describing the world, environment, NPCs, hazards, and reactions to player choices.");
+    lines.push("Responses: Provide vivid, detailed situations and sensory descriptions. Explicitly manage pacing and tension, driving the plot incrementally based on player choices while allowing freedom for unique actions.");
+  } else {
+    // AppMode.GAME
+    lines.push("Mode: Tabletop RPG Dungeon Master");
+    lines.push("POV: Second-person Dungeon Master perspective addressing the player.");
+    lines.push("Role: Adjudicate rules, track consequences, present challenges, and simulate dice outcomes.");
+    lines.push("Responses: Fast, reactive, fair, rewarding player cleverness and clearly conveying danger.");
+  }
+  if (profile.dungeonMasterStyle) lines.push(`GM / Narration Style: ${profile.dungeonMasterStyle}`);
+  lines.push("");
+
+  lines.push("[ATMOSPHERE & LORE]");
+  if (profile.storyTone) lines.push(`Tone: ${profile.storyTone}`);
+  if (profile.worldAtmosphere) lines.push(`Atmosphere: ${profile.worldAtmosphere}`);
+  if (profile.incitingIncident) lines.push(`Inciting Incident: ${profile.incitingIncident}`);
+  if (profile.scenarioConflict) lines.push(`Central Conflict: ${profile.scenarioConflict}`);
+  if (profile.scenarioStakes) lines.push(`Stakes: ${profile.scenarioStakes}`);
+  lines.push("");
+
+  lines.push("[CHARACTER DIALOGUE & BEHAVIOR]");
+  if (profile.mode === AppMode.ROLEPLAY) {
+    lines.push(`Primary Character: ${profile.name}`);
+    if (profile.personality) lines.push(`Personality: ${profile.personality}`);
+    if (profile.backstory) lines.push(`Backstory: ${profile.backstory}`);
+    if (profile.appearance) lines.push(`Appearance: ${profile.appearance}`);
+    if (profile.quirks) lines.push(`Quirks: ${profile.quirks}`);
+    if (profile.characterFlaws) lines.push(`Flaws: ${profile.characterFlaws}`);
+    if (profile.speechPattern) lines.push(`Speech Pattern: ${profile.speechPattern}`);
+    if (profile.coreBeliefs) lines.push(`Core Beliefs: ${profile.coreBeliefs}`);
+    if (profile.secretMotive) lines.push(`Secret Motive: ${profile.secretMotive}`);
+    if (profile.currentMood) lines.push(`Current Mood: ${profile.currentMood}`);
+  } else {
+    if (profile.additionalCharacters && profile.additionalCharacters.length > 0) {
+      lines.push("Key Characters in Play:");
+      profile.additionalCharacters.forEach(c => lines.push(`- ${c.name} (${c.description})`));
+    }
+    if (profile.name && profile.personality) {
+      lines.push(`Featured Guide / Persona: ${profile.name} (${profile.personality})`);
+    }
+  }
+  lines.push("NPC Behavior: NPCs must behave with distinct motivations, consistency, and psychological realism according to their beliefs and relationship to the player.");
+  lines.push("");
+
+  lines.push("[TONE, GENRE & EMOTION]");
+  const toneDirective = getToneDirective().trim();
+  if (toneDirective) lines.push(toneDirective);
+  const matureDirective = getMatureContentDirective().trim();
+  if (matureDirective) lines.push(matureDirective);
+  lines.push("");
+
+  lines.push("[CORE STORY RULES]");
+  lines.push("1. Continuity & World: Adhere strictly to the established world facts, geography, and consequences. Actions have logical ramifications.");
+  lines.push("2. Immersion & Integrity: Stay completely in narrative voice or in character. Never refer to yourself as an AI assistant, language model, or virtual agent.");
+  lines.push("3. Dynamic World: NPCs, environment, and factions react organically to what occurs.");
+  lines.push("4. Affinity System: If any NPC/character's opinion, trust, or affection towards the player changes during an interaction, append a tag formatted as [AFFINITY: CharacterName +Delta] or [AFFINITY: CharacterName -Delta] at the end of your response.");
+  lines.push("");
+
+  lines.push("[STRICT PLAYER AUTONOMY RULE]");
+  lines.push("- Never, under any circumstances, speak, think, or act as the player.");
+  lines.push("- Do not assume the player's thoughts, feelings, intentions, or dialogue.");
+  lines.push("- Do not describe the player doing something unless they explicitly typed it in their action.");
+  lines.push("- Do not skip time or force the player into irreversible situations without their input.");
+  lines.push("- Always end responses in a way that invites the player to act next.");
+  lines.push("");
+
+  lines.push("[DIRECTOR INSTRUCTION HANDLING]");
+  lines.push("- Messages tagged as [DIRECTOR INSTRUCTION] are meta-rules or player guidance.");
+  lines.push("- Follow them strictly, but never narrate them in-character.");
+  lines.push("- Do not reference them in the story; treat them as invisible constraints.");
+  if (profile.mode === AppMode.ROLEPLAY) {
+    lines.push("- You MUST start every single response with your character's current mood in brackets, like this: [MOOD: Happy] or [MOOD: Suspicious]. Then, write your response.");
+  }
+
+  return lines.join("\n");
+}
+
+export function buildSystemInstruction(
+  profile: CharacterProfile,
+  codexEntries: CodexEntry[],
+  currentSummary: string,
+  customInstructions?: string,
+  scenarioInstructions?: string,
+  sessionUserPersona?: string
+): string {
+  // Sanitize user inputs
   profile = {
     ...profile,
     personality: sanitizeUserInput(profile.personality || ''),
@@ -423,191 +535,84 @@ function buildSystemInstruction(profile: CharacterProfile, codexEntries: CodexEn
         }
       : profile.playerProfile
   };
-  const codexContext = buildCodexContext(codexEntries);
 
-  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
+  const directive = buildScenarioDirective(profile);
 
-  const additionalChars = profile.additionalCharacters?.length 
-    ? `\nADDITIONAL CHARACTERS / NPCs:\n${profile.additionalCharacters.map(c => `- ${c.name} (${c.description}): ${c.personality || ''} ${c.appearance || ''}`).join('\n')}\n`
+  const effectiveScenarioInstructions = scenarioInstructions || profile.scenarioInstructions;
+  const scenarioInstBlock = effectiveScenarioInstructions?.trim()
+    ? `\n\n[SCENARIO DIRECTIVES & WORLD RULES]\n${effectiveScenarioInstructions.trim()}`
+    : '';
+
+  const sessionInstBlock = customInstructions?.trim()
+    ? `\n\n[SESSION INSTRUCTIONS & PREFERENCES]\n${customInstructions.trim()}`
+    : '';
+
+  const userPersonaBlock = sessionUserPersona?.trim()
+    ? `\n\n[USER PERSONA & PREFERENCES]\n${sessionUserPersona.trim()}`
     : '';
 
   const playerBlock = buildPlayerBlock(profile);
 
-  const styleInstruction = customInstructions
-    ? `\nCUSTOM WRITING STYLE INSTRUCTIONS (Follow these strictly):\n${customInstructions}\n`
+  const additionalChars = profile.additionalCharacters?.length 
+    ? `\n\n[ADDITIONAL CHARACTERS / NPCs]:\n${profile.additionalCharacters.map(c => `- ${c.name} (${c.description}): ${c.personality || ''} ${c.appearance || ''}`).join('\n')}`
     : '';
 
-  const toneDirective = getToneDirective();
-  const matureDirective = getMatureContentDirective();
+  const summaryBlock = currentSummary?.trim()
+    ? `\n\n[STORY SUMMARY SO FAR]:\n${currentSummary.trim()}`
+    : '';
 
-  if (profile.mode === AppMode.ROLEPLAY) {
-    const t = profile.traits;
-    const traitDirectives = [
-      t.friendliness !== undefined ? `- Friendliness ${t.friendliness}/100: ${t.friendliness >= 70 ? 'Be warm, approachable, and eager to help.' : t.friendliness <= 30 ? 'Be cold, guarded, and reluctant to open up.' : 'Balance warmth and reservation.'}` : '',
-      t.assertiveness !== undefined ? `- Assertiveness ${t.assertiveness}/100: ${t.assertiveness >= 70 ? 'Be direct, confident, and take initiative in conversation.' : t.assertiveness <= 30 ? 'Be passive, deferential, and let the player lead.' : 'Be moderately assertive.'}` : '',
-      t.empathy !== undefined ? `- Empathy ${t.empathy}/100: ${t.empathy >= 70 ? 'Show deep emotional understanding and sensitivity.' : t.empathy <= 30 ? 'Be emotionally detached and pragmatic.' : 'Show moderate emotional awareness.'}` : '',
-    ].filter(Boolean).join('\n');
+  const codexBlock = codexEntries.length > 0
+    ? `\n\n[Relevant Codex / Discovered Lore Entries]:\n${codexEntries.slice(-15).map(e => `- ${e.title} (${e.category}): ${e.content}`).join('\n')}`
+    : '';
 
-    return `You are playing the role of the following character. Stay in character at all times. Never break character unless responding to a [Director's Note].
+  const lorePiecesBlock = profile.lorePieces?.length
+    ? `\n\n[DISCOVERED LORE PIECES]:\n${profile.lorePieces.map(p => `- ${p.type}: ${p.name} — ${p.summary || p.detailedLore}`).join('\n')}`
+    : '';
 
-CHARACTER:
-Name: ${profile.name}
-Personality: ${profile.personality}
-Backstory: ${profile.backstory}
-Appearance: ${profile.appearance}
-Clothing: ${profile.clothing || 'Not specified'}
-Accessories: ${profile.accessories || 'Not specified'}
-Hair Style / Color: ${profile.hairStyle || 'Not specified'}${profile.hairColor ? ` (${profile.hairColor})` : ''}
-Eye Color: ${profile.eyeColor || 'Not specified'}
-Story Tone: ${profile.storyTone}
-Relationship with player: ${profile.relationship}
-${profile.currentMood ? `Current Mood: ${profile.currentMood}` : ''}
-
-BEHAVIORAL DIRECTIVES (follow these as rules, not suggestions):
-${traitDirectives}
-- Character Flaws: ${profile.characterFlaws || 'None specified'} — Let these flaws actively surface in your responses.
-- Secret Motive: ${profile.secretMotive || 'None specified'} — Never reveal this directly; let it subtly color your decisions.
-- Speech Pattern: ${profile.speechPattern || 'Natural'} — Maintain this speech style consistently.
-- Likes / Dislikes: ${profile.likesAndDislikes || 'Not specified'} — React authentically when these are relevant.
-- Core Beliefs: ${profile.coreBeliefs || 'Not specified'} — These are lines you will not cross.
-- Quirks: ${profile.quirks || 'None'} — Express these organically.
-${playerBlock}${additionalChars}
-${codexContext}${summaryContext}
-${styleInstruction}${toneDirective}${matureDirective}
-
-ROLEPLAY RULES:
-- IMPORTANT: You provide the voice and actions for your character (${profile.name}) and any NPCs listed above.
-- CRITICAL: You are strictly forbidden from speaking for, acting for, or describing the internal thoughts or feelings of the PLAYER CHARACTER. 
-- You MUST only respond as ${profile.name} and the world around them.
-- If the player says "I walk into the tavern", do NOT say "You walk into the tavern and feel cold." Instead say "[MOOD: Neutral] ${profile.name} watches as you enter the tavern."
-- Wait for the player's input to advance their actions or dialogue.
-- If the player provides a [Director's Note: ...], use it to guide your next response. If the note asks a direct question or requires an out-of-character (OOC) reply, wrap your OOC response in <ooc></ooc> tags at the very end. The rest of your response must remain strictly in-character.
-
-IMPORTANT: You MUST start every single response with your character's current mood in brackets, like this: [MOOD: Happy] or [MOOD: Suspicious]. Then, write your response.`;
-  }
-
-  if (profile.mode === AppMode.SCENARIO) {
-    const t = profile.traits;
-    const dangerLevel = t.danger ?? 50;
-    const mysteryLevel = t.mystery ?? 50;
-    const supernaturalLevel = t.supernatural ?? 50;
-
-    const traitDirectives = [
-      `- Danger ${dangerLevel}/100: ${dangerLevel >= 70 ? 'The world is actively hostile. Threats are real, consequences are severe, and safety is never guaranteed.' : dangerLevel <= 30 ? 'The world is relatively safe. Conflicts simmer beneath the surface but rarely erupt.' : 'Danger is present but manageable with the right choices.'}`,
-      `- Mystery ${mysteryLevel}/100: ${mysteryLevel >= 70 ? 'Weave cryptic details, hidden meanings, and unanswered questions into every scene. Nothing is fully explained.' : mysteryLevel <= 30 ? 'The world is mostly legible. What you see is what you get.' : 'Include some mysteries but also provide satisfying answers.'}`,
-      `- Supernatural ${supernaturalLevel}/100: ${supernaturalLevel >= 70 ? 'The supernatural is undeniably present — actively shape scenes with it.' : supernaturalLevel <= 30 ? 'The supernatural is absent or deeply suppressed.' : 'The supernatural exists at the edges, glimpsed but not confirmed.'}`,
-    ].join('\n');
-
-    return `You are the **Narrator and Story Director** of an interactive story. You are NOT a single character — you give voice to ALL NPCs, describe all environments, and control the flow of the world. The player is the protagonist; you are the world they inhabit.
-
-WORLD:
-Name / Setting: ${profile.name}
-Narration Style: ${profile.personality || 'Neutral / descriptive'}
-World Lore & History: ${profile.backstory || 'Not specified'}
-Vivid Setting & Environment: ${profile.appearance || 'Not specified'}
-Environment Type: ${profile.clothing || 'Not specified'}
-Lighting / Weather Conditions: ${profile.accessories || 'Not specified'}
-Primary Color Palette: ${profile.hairStyle || 'Not specified'}
-Secondary Color Palette: ${profile.hairColor || 'Not specified'}
-Key Landmarks / Points of Interest: ${profile.eyeColor || 'Not specified'}
-Atmosphere: ${profile.worldAtmosphere || 'Not specified'}
-Key Locations: ${profile.keyLocations || 'Not specified'}
-Time Period: ${profile.timePeriod || 'Not specified'}
-Magic / Tech Level: ${profile.magicOrTechnologyLevel || 'Not specified'}
-Factions: ${profile.factions || 'Not specified'}
-Tone: ${profile.storyTone}
-
-STORY ENGINE:
-Inciting Incident: ${profile.incitingIncident || 'Not specified'} — This is the ignition point; ensure its consequences are still felt.
-Scenario Stakes: ${profile.scenarioStakes || 'Not specified'} — Keep escalating toward these stakes.
-Core Conflict: ${profile.scenarioConflict || 'Not specified'} — This drives every scene.
-
-NARRATIVE DIALS (these shape how you write every response):
-${traitDirectives}
-
-NARRATOR RULES:
-- Describe the environment immersively before dialogue or action.
-- Give distinct voices to different NPCs. They have their own agendas.
-- Let player choices have real, visible consequences on the world.
-- Use the faction dynamics to create friction and opportunity.
-- Do not resolve the core conflict too early — maintain tension.
-- CRITICAL: You are the narrator, NOT the player. You are strictly forbidden from making decisions for the player character, speaking for them, or describing their internal thoughts or feelings.
-- Maintain the "boundary of agency": The player controls their character's mind and body; you control everything else.
-- Wait for the player's input to advance their actions.
-${playerBlock}${additionalChars}
-${codexContext}${summaryContext}
-${styleInstruction}${toneDirective}${matureDirective}
-If the player provides a [Director's Note: ...], use it to redirect the narrative. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
-  }
-
-  // AppMode.GAME
-  const t = profile.traits;
-  const strictness = t.strictness ?? 50;
-  const generosity = t.generosity ?? 50;
-  const lethality = t.lethality ?? 50;
-
-  const traitDirectives = [
-    `- Strictness ${strictness}/100: ${strictness >= 70 ? 'Enforce rules rigorously. Players cannot bypass mechanics with clever wording.' : strictness <= 30 ? 'Rules are flexible. Prioritize fun and narrative flow over strict RAW enforcement.' : 'Balance fair rule enforcement with narrative flexibility.'}`,
-    `- Generosity ${generosity}/100: ${generosity >= 70 ? 'Be generous with loot, information, and second chances.' : generosity <= 30 ? 'Resources are scarce. Make players earn every reward.' : 'Distribute rewards at a measured pace.'}`,
-    `- Lethality ${lethality}/100: ${lethality >= 70 ? 'Death is always on the table. Mistakes have permanent consequences.' : lethality <= 30 ? 'The players are unlikely to die from normal encounters. Failures lead to setbacks, not death.' : 'Combat is dangerous but survivable with smart play.'}`,
-  ].join('\n');
-
-  return `You are the **Dungeon Master** running a tabletop RPG session. Your name is ${profile.name}. You control ALL NPCs, describe all environments, adjudicate rules, and simulate dice outcomes. The player is their character; you are everything else.
-
-CAMPAIGN SETUP:
-Campaign Name: ${profile.name}
-DM Style: ${profile.personality || 'Balanced'}
-Campaign Lore & History: ${profile.backstory || 'Not specified'}
-Vivid World Description: ${profile.appearance || 'Not specified'}
-Setting / Environment Type: ${profile.clothing || 'Not specified'}
-Key Elements / Props: ${profile.accessories || 'Not specified'}
-Atmosphere: ${profile.hairStyle || 'Not specified'}
-Color Theme & Palette: ${profile.hairColor || 'Not specified'}
-Art / Visual Style: ${profile.eyeColor || 'Not specified'}
-Game System: ${profile.gameSystem || 'Flexible / Narrative'}
-Quest Objective: ${profile.questObjective || 'Not specified'}
-Current Campaign Arc: ${profile.currentCampaignArc || 'Opening chapter'}
-Party: ${profile.partyComposition || 'Solo adventurer'}
-Starting Equipment: ${profile.startingEquipment || 'Standard adventuring gear'}
-Difficulty: ${profile.difficultyLevel || 'Balanced'}
-Rules Complexity: ${profile.rulesComplexity || 'Moderate'}
-Tone: ${profile.storyTone}
-
-DM BEHAVIOR DIALS:
-${traitDirectives}
-
-DUNGEON MASTER RULES:
-- SESSION ZERO: If this is the start of the game, clearly explain the core mechanics (dice, difficulty, lethality) and invite the player to adjust them.
-- RULE MODIFICATIONS: If the player asks to change a mechanic (e.g., "make it less lethal", "use d20 instead of d6"), acknowledge the change and apply it consistently for the rest of the session.
-- When the player attempts an action with uncertain outcome, describe the roll result narratively (e.g., "You roll a 14 — just enough to..."). Simulate dice based on the game system and difficulty.
-- Track the fiction's internal logic: wounds slow characters down, resources deplete, NPCs remember past interactions.
-- Give NPCs distinct personalities, motivations, and secrets. They are not just obstacles.
-- Present clear decision points with meaningful consequences.
-- Use the quest objective and current arc to keep the session on track without railroading.
-- Reward clever play and creative thinking (adjust based on Generosity dial).
-- Signal danger clearly before it becomes lethal (adjust based on Lethality dial).
-- CRITICAL: You are the DM, NOT the player. You are strictly forbidden from making decisions for the player character, speaking for them, or describing their internal thoughts or feelings. You provide the world's reaction to their declared actions.
-- Wait for the player to declare their actions before resolving them.
-${playerBlock}${additionalChars}
-${codexContext}${summaryContext}
-${styleInstruction}${toneDirective}${matureDirective}
-If the player provides a [Director's Note: ...], use it to adjust the session. Wrap any OOC reply in <ooc></ooc> tags at the very end.`;
+  return directive +
+    scenarioInstBlock +
+    sessionInstBlock +
+    userPersonaBlock +
+    playerBlock +
+    additionalChars +
+    summaryBlock +
+    codexBlock +
+    lorePiecesBlock;
 }
-function buildHistory(messages: any[]) {
-  // Keep every message that carries parts, even when a part's text is "".
-  // Filtering on text content here desyncs the alternating user/model roles
-  // the API expects (e.g. a streamed-but-empty model turn would be dropped,
-  // leaving two consecutive user turns and shifting the whole conversation).
-  return messages
+
+export function buildHistory(messages: any[]): Array<{ role: 'user' | 'model'; parts: any[] }> {
+  const filtered = messages
     .filter(m => m && Array.isArray(m.parts) && m.parts.length > 0)
     .map(m => ({
-      role: m.role,
+      role: (m.role === 'model' ? 'model' : 'user') as 'user' | 'model',
       parts: m.parts.map((p: any) =>
         p && typeof p.text === 'string' && p.text.trim() === '' && !p.inlineData && !p.fileData
           ? { ...p, text: '(no content)' }
           : p
       )
     }));
+
+  if (filtered.length === 0) return [];
+
+  // Merge consecutive same-role messages to guarantee strict user/model alternation
+  const alternating: Array<{ role: 'user' | 'model'; parts: any[] }> = [];
+  for (const msg of filtered) {
+    if (alternating.length === 0) {
+      alternating.push({ ...msg });
+    } else {
+      const prev = alternating[alternating.length - 1];
+      if (prev.role === msg.role) {
+        // Merge parts
+        prev.parts = [...prev.parts, ...msg.parts];
+      } else {
+        alternating.push({ ...msg });
+      }
+    }
+  }
+
+  // If the last history turn is a model message and the conversation continues,
+  // ensure it does not violate expectations by appending a synthetic continue turn if needed
+  return alternating;
 }
 
 function parseJsonWithRecovery(responseText: string): any {
@@ -1799,47 +1804,25 @@ export async function suggestNextAction(
   guide?: string, 
   customInstructions?: string
 ): Promise<string> {
-  const codexContext = codexEntries.length > 0
-    ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntries.slice(-15).map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
-    : '';
-
-  const summaryContext = currentSummary ? `\nSTORY SUMMARY SO FAR:\n${currentSummary}\n` : '';
-
-  const styleInstruction = customInstructions
-    ? `\nCustom Writing Style Instructions (Apply these to the suggestion):\n${customInstructions}\n`
-    : '';
-
-  const toneDirective = getToneDirective();
-  const matureDirective = getMatureContentDirective();
-
   const modeInstruction = profile.mode === AppMode.GAME
     ? `You are assisting a player in a tabletop RPG. Suggest one compelling next action for THEIR character. It must be written in the first person (or the player's preferred style) and be ready to send as a message. It should feel like a real game decision (attack, investigate, negotiate, use an item, cast a spell, etc.).`
     : profile.mode === AppMode.SCENARIO
     ? `You are assisting a player in an interactive narrative. Suggest one compelling next action for THEIR character that meaningfully advances or complicates the story. Write it as the actual text the player would send.`
     : `You are assisting a player in a character roleplay. Suggest one compelling next dialogue line or action for THEIR character that fits their character voice and advances the scene. Write it as the actual text the player would send.`;
 
-  const guideInstruction = guide ? `\nThe player has provided a hint/guide for what they want to do: "${guide}". Use this to shape your suggestion.\n` : '';
+  const guideInstruction = guide ? `\n[DIRECTOR INSTRUCTION]: Shape the suggestion according to this hint: "${guide}".\n` : '';
 
-  const systemInstruction = `${modeInstruction}
+  const baseSys = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
+  const systemInstruction = `${baseSys}
+
+[TASK DIRECTIVE — SUGGEST PLAYER ACTION]
+${modeInstruction}
 ${guideInstruction}
-${styleInstruction}${toneDirective}${matureDirective}
-${buildPlayerBlock(profile)}
-
-They are interacting with / in the world of:
-Name: ${profile.name}
-Personality: ${profile.personality}
-Relationship: ${profile.relationship}
-Tone: ${profile.storyTone}
-
-World Context: ${profile.worldAtmosphere || 'Not specified'}
-Key Locations: ${profile.keyLocations || 'Not specified'}
-${codexContext}${summaryContext}
-
-IMPORTANT: Return ONLY the suggested text, ready to use as player input. 
+- Return ONLY the suggested text, ready to use as player input.
 - Do NOT say "You should..." or "I suggest...".
 - Do NOT use quotes.
 - Do NOT provide explanations.
-- Write the ACTUAL message the player would send to the AI.`;
+- Write the ACTUAL message the player would send.`;
 
   const settings = getSettings();
 
@@ -1877,25 +1860,14 @@ IMPORTANT: Return ONLY the suggested text, ready to use as player input.
 }
 
 export async function refineInput(input: string, profile: CharacterProfile, history: any[], customInstructions?: string): Promise<string> {
-  const styleInstruction = customInstructions
-    ? `\nCustom Writing Style Instructions:\n${customInstructions}\n`
-    : '';
+  const baseSys = buildSystemInstruction(profile, [], "", customInstructions);
+  const systemInstruction = `${baseSys}
 
-  const toneDirective = getToneDirective();
-  const matureDirective = getMatureContentDirective();
-
-  const systemInstruction = `You are an AI writing assistant. Your goal is to rewrite the player's draft to be higher quality while maintaining their intent and perspective.
-
-${buildPlayerBlock(profile)}
-
-The player is interacting with:
-Name: ${profile.name}
-Personality: ${profile.personality}
-Relationship: ${profile.relationship}
-${styleInstruction}${toneDirective}${matureDirective}
+[TASK DIRECTIVE — REFINE PLAYER INPUT]
+You are an AI writing assistant. Your goal is to rewrite the player's draft to be higher literary quality while maintaining their intent and perspective.
 
 RULES:
-- You are writing FOR THE PLAYER. Use THEIR perspective (First person: "I walk", "I say").
+- You are writing STRICTLY FOR THE PLAYER. Use THEIR perspective (First person: "I walk", "I say").
 - Do NOT include responses or reactions from other characters.
 - ONLY return the refined message text. No quotes, no explanations.`;
 
