@@ -14,6 +14,8 @@ import {
   Sliders,
   Volume2,
   FileText,
+  Play,
+  Square,
 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import {
@@ -32,7 +34,7 @@ import { RefineButton } from './RefineButton';
 import { clear } from 'idb-keyval';
 import { AMBIENT_PRESETS } from '../lib/ambientPresets';
 import { TONE_PRESETS, TONE_DIM_LABELS, tonePresetLabel } from '../lib/tone';
-import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES } from '../lib/ttsEngine';
+import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES, TtsEngine } from '../lib/ttsEngine';
 import { useApiUsageMonitor } from '../hooks/useApiUsageMonitor';
 import { UsageMonitorCard } from './UsageMonitorCard';
 
@@ -55,6 +57,8 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
   const [activeTab, setActiveTab] = useState<SettingsTab>('models');
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const { usageState } = useApiUsageMonitor();
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
+  const ttsEngineRef = (useState(() => new TtsEngine())[0] as any);
   const [isRefining, setIsRefining] = useState(false);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
   const [isValidatingKey, setIsValidatingKey] = useState(false);
@@ -461,10 +465,10 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                 </div>
               )}
 
-              {/* Voice Picker — all 30 voices grouped */}
+              {/* Voice Picker — all 30 voices grouped with preview */}
               <div className="space-y-3">
                 <label className="text-sm font-medium text-gray-200">Voice Picker — 30 Gemini Voices</label>
-                <p className="text-[11px] text-zinc-500">Grouped as Roleplay / Narration / Bright. Works for TTS; Live API uses subset automatically.</p>
+                <p className="text-[11px] text-zinc-500">Grouped as Roleplay / Narration / Bright. Tap to select, ▶ to preview.</p>
                 {(() => {
                   const groups: Array<[string, string[]]> = [
                     ['Roleplay / Character', [...ROLEPLAY_VOICES]],
@@ -472,6 +476,27 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     ['Bright / Companion', [...BRIGHT_VOICES]],
                     ['All', ALL_VOICES.map(v=>v.name).filter(n=> ![...ROLEPLAY_VOICES, ...NARRATOR_VOICES, ...BRIGHT_VOICES].includes(n))],
                   ];
+                  const handlePreview = async (voiceName: string, desc: string) => {
+                    if (previewingVoice === voiceName) {
+                      try { ttsEngineRef.stop(); } catch {}
+                      try { window.speechSynthesis.cancel(); } catch {}
+                      setPreviewingVoice(null);
+                      return;
+                    }
+                    try { ttsEngineRef.stop(); window.speechSynthesis.cancel(); } catch {}
+                    setPreviewingVoice(voiceName);
+                    const sample = `Hello, I am ${voiceName}, ${desc}. This is a preview of my voice.`;
+                    try {
+                      await ttsEngineRef.speak(sample, voiceName, null, false, () => setPreviewingVoice(null));
+                    } catch {
+                      try {
+                        const u = new SpeechSynthesisUtterance(sample);
+                        u.onend = () => setPreviewingVoice(null);
+                        window.speechSynthesis.speak(u);
+                      } catch { setPreviewingVoice(null); }
+                    }
+                    setTimeout(() => setPreviewingVoice(prev => prev === voiceName ? null : prev), 8000);
+                  };
                   return (
                     <div className="space-y-3">
                       {groups.map(([label, names]) => (
@@ -481,16 +506,26 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                             {names.map((name: string) => {
                               const desc = ALL_VOICES.find(v=>v.name===name)?.character || '';
                               const isSelected = settings.liveVoiceName === name;
+                              const isPreviewing = previewingVoice === name;
                               return (
-                                <button
-                                  key={name}
-                                  type="button"
-                                  onClick={() => handleChange('liveVoiceName', name)}
-                                  className={`text-left px-3 py-2 rounded-xl border flex justify-between items-center ${isSelected ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300' : 'bg-white/[0.02] border-white/5 text-zinc-400 hover:text-white hover:bg-white/5'}`}
-                                >
-                                  <span className="text-xs font-medium">{name} — <span className="text-[11px] opacity-70">{desc}</span></span>
-                                  {isSelected && <Check className="w-3 h-3 text-emerald-400" />}
-                                </button>
+                                <div key={name} className={`flex items-center gap-1 px-3 py-2 rounded-xl border ${isSelected ? 'bg-emerald-500/15 border-emerald-500/30' : 'bg-white/[0.02] border-white/5'}`}>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleChange('liveVoiceName', name)}
+                                    className={`flex-1 text-left flex justify-between items-center ${isSelected ? 'text-emerald-300' : 'text-zinc-400 hover:text-white'}`}
+                                  >
+                                    <span className="text-xs font-medium">{name} — <span className="text-[11px] opacity-70">{desc}</span></span>
+                                    {isSelected && <Check className="w-3 h-3 text-emerald-400 shrink-0" />}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handlePreview(name, desc)}
+                                    className={`p-1.5 rounded-lg border transition-colors ${isPreviewing ? 'bg-red-500/20 border-red-500/30 text-red-400' : 'bg-white/5 border-white/10 text-zinc-400 hover:text-white hover:bg-white/10'}`}
+                                    title={isPreviewing ? 'Stop preview' : 'Preview voice'}
+                                  >
+                                    {isPreviewing ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                                  </button>
+                                </div>
                               );
                             })}
                           </div>
