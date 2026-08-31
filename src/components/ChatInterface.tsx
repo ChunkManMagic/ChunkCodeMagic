@@ -774,6 +774,12 @@ ${messages
 `
       : '';
 
+    // Voice Performance Profile — optional acting directives set in character editor
+    const voicePerf = (profile as any);
+    const voicePerformanceBlock = (voicePerf.voiceArchetype || voicePerf.voiceStyle || voicePerf.voicePacing || voicePerf.voiceAccent)
+      ? `VOICE PERFORMANCE DIRECTIVES:\n${voicePerf.voiceArchetype ? `Vocal Archetype: ${voicePerf.voiceArchetype}\n` : ''}${voicePerf.voiceStyle ? `Delivery Style: ${voicePerf.voiceStyle}\n` : ''}${voicePerf.voicePacing ? `Pacing: ${voicePerf.voicePacing}\n` : ''}${voicePerf.voiceAccent ? `Accent: ${voicePerf.voiceAccent}\n` : ''}\n`
+      : '';
+
     return `This is a LIVE, in-person experience — not a text chat. The moment is happening right now, and you narrate it as it happens, treating it like a scene you are physically present in.
 ${presence}
 
@@ -788,7 +794,7 @@ Speech pattern: ${profile.speechPattern || 'Natural'} — keep your spoken respo
 Current mood: ${profile.currentMood || 'Neutral'}
 World / atmosphere: ${profile.worldAtmosphere || 'Not specified'}
 ${profile.additionalCharacters?.length ? `NPCs present that you may voice: ${profile.additionalCharacters.map(c => c.name).join(', ')}` : ''}
-${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}LIVE NARRATION RULES:
+${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getMatureContentDirective()}LIVE NARRATION RULES:
 - Treat the moment as if it is happening in person, inside the scene. React to the player as someone physically there with you.
 - NARRATE ACTIONS ALONGSIDE SPEAKING: describe physical actions, gestures, expressions, sounds, and environment details as they happen, then speak the dialogue. Blend narration and speech in every turn so it feels like the scene is unfolding live.
 - Format narrated actions in asterisks and keep spoken dialogue as plain text, e.g.: *She steps closer, her voice dropping low.* "I've been waiting for you."
@@ -853,7 +859,7 @@ ${summaryBlock}${recentBlock}${getToneDirective()}${getMatureContentDirective()}
     liveVoice.start({
       systemInstruction: buildLiveVoicePrompt(),
       voiceName: getSettings().liveVoiceName || profile.voiceName || 'Kore',
-      temperature: 1.0,
+      temperature: getSettings().liveVoiceTemperature ?? 1.0,
       preferredModel: getSettings().liveVoiceModel,
       micMode: 'hold',
       contextTurns: messages.slice(-30).map(m => ({ role: m.role, text: m.text })),

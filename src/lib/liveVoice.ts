@@ -9,15 +9,48 @@ export const LIVE_MODEL_CHAIN = [
 
 export const LIVE_MODELS = LIVE_MODEL_CHAIN;
 
-export const LIVE_VOICES = ["Puck", "Charon", "Kore", "Fenrir", "Aoede"] as const;
+export const LIVE_VOICES = [
+  // All 30 Gemini voices — matches ttsEngine.ALL_VOICES so any picker selection is valid in Live mode
+  "Zephyr", "Puck", "Charon", "Kore", "Fenrir", "Leda", "Orus", "Aoede",
+  "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+  "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+  "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+  "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
+] as const;
 
 export const LIVE_VOICE_DESCRIPTIONS: Record<string, { label: string; tone: string; description: string }> = {
-  Kore: { label: "Kore", tone: "Calm & Narrative", description: "Balanced, articulate, and expressive storytelling voice." },
-  Puck: { label: "Puck", tone: "Playful & Youthful", description: "Energetic, bright, and spirited tone." },
-  Charon: { label: "Charon", tone: "Deep & Resonant", description: "Authoritative, grave, and cinematic narrator voice." },
-  Fenrir: { label: "Fenrir", tone: "Gravelly & Bold", description: "Intense, dramatic, and rugged persona." },
-  Aoede: { label: "Aoede", tone: "Melodic & Elegant", description: "Soft, graceful, and enchanting delivery." },
+  Kore:          { label: "Kore",          tone: "Calm & Narrative",     description: "Balanced, articulate, and expressive storytelling voice." },
+  Puck:          { label: "Puck",          tone: "Playful & Youthful",   description: "Energetic, bright, and spirited tone." },
+  Charon:        { label: "Charon",        tone: "Deep & Resonant",      description: "Authoritative, grave, and cinematic narrator voice." },
+  Fenrir:        { label: "Fenrir",        tone: "Gravelly & Bold",      description: "Intense, dramatic, and rugged persona." },
+  Aoede:         { label: "Aoede",         tone: "Melodic & Elegant",    description: "Soft, graceful, and enchanting delivery." },
+  Zephyr:        { label: "Zephyr",        tone: "Bright & Airy",        description: "Light, clear, and energetically uplifting." },
+  Leda:          { label: "Leda",          tone: "Youthful & Clear",     description: "Fresh, youthful tone with natural warmth." },
+  Orus:          { label: "Orus",          tone: "Firm & Steady",        description: "Grounded, reliable, and composed delivery." },
+  Callirrhoe:    { label: "Callirrhoe",    tone: "Easy-Going",           description: "Relaxed and natural conversational tone." },
+  Autonoe:       { label: "Autonoe",       tone: "Bright",               description: "Enthusiastic and upbeat character voice." },
+  Enceladus:     { label: "Enceladus",     tone: "Breathy & Dramatic",   description: "Whisper-close and intensely atmospheric." },
+  Iapetus:       { label: "Iapetus",       tone: "Clear & Precise",      description: "Crisp enunciation, perfect for narration." },
+  Umbriel:       { label: "Umbriel",       tone: "Easy-Going",           description: "Smooth and unhurried storytelling pace." },
+  Algieba:       { label: "Algieba",       tone: "Smooth",               description: "Polished and fluid delivery." },
+  Despina:       { label: "Despina",       tone: "Smooth",               description: "Even-keeled and polished voice." },
+  Erinome:       { label: "Erinome",       tone: "Clear",                description: "Clean and articulate roleplay voice." },
+  Algenib:       { label: "Algenib",       tone: "Gravelly",             description: "Rough-edged and characterful." },
+  Rasalgethi:    { label: "Rasalgethi",    tone: "Informative",          description: "Authoritative narrator with clear diction." },
+  Laomedeia:     { label: "Laomedeia",     tone: "Upbeat",               description: "Buoyant and cheerfully energetic." },
+  Achernar:      { label: "Achernar",      tone: "Soft",                 description: "Gentle and soothing presence." },
+  Alnilam:       { label: "Alnilam",       tone: "Firm",                 description: "Steady and composed performance." },
+  Schedar:       { label: "Schedar",       tone: "Even & Balanced",      description: "Neutral and professional narrator tone." },
+  Gacrux:        { label: "Gacrux",        tone: "Mature & Rich",        description: "Deep, mature character with gravitas." },
+  Pulcherrima:   { label: "Pulcherrima",   tone: "Forward & Assertive",  description: "Confident and forward-leaning delivery." },
+  Achird:        { label: "Achird",        tone: "Friendly & Warm",      description: "Approachable, welcoming voice." },
+  Zubenelgenubi: { label: "Zubenelgenubi", tone: "Casual",               description: "Laid-back and conversational." },
+  Vindemiatrix:  { label: "Vindemiatrix",  tone: "Gentle",               description: "Soft-spoken and unhurried." },
+  Sadachbia:     { label: "Sadachbia",     tone: "Lively",               description: "Vibrant and expressive character voice." },
+  Sadaltager:    { label: "Sadaltager",    tone: "Knowledgeable",        description: "Scholarly narrator with measured delivery." },
+  Sulafat:       { label: "Sulafat",       tone: "Warm",                 description: "Inviting and rich storytelling voice." },
 };
+
 
 export type LiveVoiceStatus = "idle" | "connecting" | "connected" | "error";
 export type LiveVoiceMicMode = "hold" | "toggle" | "handsFree";
