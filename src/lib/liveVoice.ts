@@ -962,7 +962,20 @@ function seedContext(handle: SessionHandle) {
   // own turn tracking, so we don't re-seed every reconnect.
   const context = handle.options.contextTurns;
   if (!context?.length) return;
-  const turns = context.map((c) => ({
+  // Enforce strict user/model alternation — Gemini Live requires turns to
+  // strictly alternate, two same-role turns in a row throw 400 INVALID_ARGUMENT.
+  // Keep the last of each consecutive duplicate-role group.
+  const filtered: typeof context = [];
+  for (const c of context) {
+    const role = c.role === "user" ? "user" : "model";
+    if (filtered.length > 0 && filtered[filtered.length - 1].role === role) {
+      filtered[filtered.length - 1] = c;
+    } else {
+      filtered.push(c);
+    }
+  }
+  if (!filtered.length) return;
+  const turns = filtered.map((c) => ({
     role: c.role === "user" ? "user" : "model",
     parts: [{ text: c.text }],
   }));
@@ -1246,6 +1259,19 @@ async function reconnectNow(): Promise<void> {
     const only = combinedTurns[0];
     only.text = only.text.slice(-MAX_CONTEXT_CHARS);
     totalChars = only.text.length;
+  }
+
+  // Enforce strict user/model alternation for the reconnect payload as well.
+  {
+    const alt: typeof combinedTurns = [];
+    for (const t of combinedTurns) {
+      if (alt.length > 0 && alt[alt.length - 1].role === t.role) {
+        alt[alt.length - 1] = t;
+      } else {
+        alt.push(t);
+      }
+    }
+    combinedTurns = alt;
   }
 
   const reconnectOptions: LiveVoiceOptions = combinedTurns.length
@@ -1564,16 +1590,18 @@ export function rewindLiveVoice(onRewind?: () => void): void {
 
 export function sendTextMessage(text: string): void {
   if (!active?.session) return;
+  const trimmed = text.trim();
+  if (!trimmed) return;
   // Ensure the audio context is running: the send button / Enter key counts as
   // a user gesture, so this is the reliable place to recover an interrupted
   // context (mic release in hold/tap mode makes Android pull audio focus).
   setupAudioPlayback(active);
-  active.userTranscript = text;
-  active.options?.onUserTranscript?.(text, true);
+  active.userTranscript = trimmed;
+  active.options?.onUserTranscript?.(trimmed, true);
   // gemini-3.1-flash-live-preview only accepts live text through
   // sendRealtimeInput. sendClientContent mid-conversation is documented as
   // seed-only for that model and returns a text-only reply instead of speech.
-  active.session.sendRealtimeInput({ text });
+  active.session.sendRealtimeInput({ text: trimmed });
 }
 
 export function stopLiveVoice(): void {
