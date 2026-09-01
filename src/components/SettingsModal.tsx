@@ -70,7 +70,11 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
 
   useEffect(() => {
     setSettings(getSettings());
-  }, []);
+    return () => {
+      try { ttsEngineRef?.stop(); } catch {}
+      try { window.speechSynthesis?.cancel(); } catch {}
+    };
+  }, [ttsEngineRef]);
 
   const handleChange = (field: keyof AppSettings, value: any) => {
     setSettings((prev) => ({ ...prev, [field]: value }));

@@ -14,7 +14,7 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
   const [isGeneratingItemImage, setIsGeneratingItemImage] = useState<string | null>(null);
   const { toastSuccess, toastError } = useToast();
   
-  const { user, isAuthReady, syncInventory, saveInventoryItem, saveInventoryItemsBatch, deleteInventoryItem } = useFirestoreSync();
+  const { user, isAuthReady, syncInventory, saveInventoryItem, saveInventoryItemsBatch, deleteInventoryItem, deleteInventoryItemsBatch } = useFirestoreSync();
   const { loadData, saveData } = useStorage();
   const [isLoaded, setIsLoaded] = useState(false);
   
@@ -110,13 +110,9 @@ export function useInventory(scenarioId: string, profile: CharacterProfile, mess
   const removeItemsBatch = useCallback(async (itemIds: string[]) => {
     setInventory(prev => prev.filter(i => !itemIds.includes(i.id)));
     if (user) {
-      // We don't have deleteInventoryItemsBatch yet, but we can add it or just loop for now if it's small.
-      // Actually, let's add it to useFirestoreSync for completeness.
-      for (const id of itemIds) {
-        await deleteInventoryItem(scenarioId, id);
-      }
+      await deleteInventoryItemsBatch(scenarioId, itemIds);
     }
-  }, [user, scenarioId, deleteInventoryItem]);
+  }, [user, scenarioId, deleteInventoryItemsBatch]);
 
   const handleGenerateItemImage = useCallback(async (item: InventoryItem) => {
     setIsGeneratingItemImage(item.id);

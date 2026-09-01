@@ -462,17 +462,18 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
   useEffect(() => {
     try {
       const params = new URLSearchParams(window.location.search);
+      const mat = params.get('mature');
+      const isMature = mat === '1' || mat === 'true' || matureEnabledInForge;
+      if (mat) setMatureEnabledInForge(mat === '1' || mat === 'true');
       const subs = params.get('subjects');
       if (subs) {
-        const picks = subs.split(',').map(s=> s.trim()).filter(Boolean).slice(0, SubjectMatters.maxFor(matureEnabledInForge));
-        if (picks.length>0) setSelectedSubjects(picks);
+        const picks = subs.split(',').map(s => s.trim()).filter(Boolean).slice(0, SubjectMatters.maxFor(isMature));
+        if (picks.length > 0) setSelectedSubjects(picks);
       }
       const m = params.get('mode');
       if (m && Object.values(AppMode).includes(m as AppMode)) setAppMode(m as AppMode);
-      const mat = params.get('mature');
-      if (mat) setMatureEnabledInForge(mat==='1' || mat==='true');
     } catch {}
-  }, []);
+  }, [matureEnabledInForge]);
 
   // Auto-save basic draft
   useEffect(() => {

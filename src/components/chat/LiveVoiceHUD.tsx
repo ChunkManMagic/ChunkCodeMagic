@@ -135,6 +135,11 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
     transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [liveVoice.userTranscript, liveVoice.modelTranscript, liveVoice.transcriptTurns]);
 
+  const liveVoiceRef = useRef(liveVoice);
+  useEffect(() => {
+    liveVoiceRef.current = liveVoice;
+  }, [liveVoice]);
+
   // Global keyboard shortcuts while live voice is active
   useEffect(() => {
     if (!liveVoice.isActive) return;
@@ -144,8 +149,8 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
       const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
 
       if (e.key === 'Escape') {
-        if (liveVoice.state.isSpeaking) {
-          liveVoice.interrupt();
+        if (liveVoiceRef.current.state.isSpeaking) {
+          liveVoiceRef.current.interrupt();
         } else if (isExpanded) {
           setIsExpanded(false);
         }
@@ -156,14 +161,14 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
 
       if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
-        if (liveVoice.state.micMode === 'hold') {
-          liveVoice.holdToTalk(true);
-        } else if (liveVoice.state.micMode === 'toggle') {
-          liveVoice.toggleMic();
+        if (liveVoiceRef.current.state.micMode === 'hold') {
+          liveVoiceRef.current.holdToTalk(true);
+        } else if (liveVoiceRef.current.state.micMode === 'toggle') {
+          liveVoiceRef.current.toggleMic();
         }
       } else if (e.key.toLowerCase() === 'm') {
         e.preventDefault();
-        liveVoice.toggleMicMute();
+        liveVoiceRef.current.toggleMicMute();
       }
     };
 
@@ -172,9 +177,9 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
       const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA';
       if (isInput) return;
 
-      if ((e.key === ' ' || e.code === 'Space') && liveVoice.state.micMode === 'hold') {
+      if ((e.key === ' ' || e.code === 'Space') && liveVoiceRef.current.state.micMode === 'hold') {
         e.preventDefault();
-        liveVoice.holdToTalk(false);
+        liveVoiceRef.current.holdToTalk(false);
       }
     };
 
@@ -184,7 +189,7 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [liveVoice, isExpanded]);
+  }, [liveVoice.isActive, isExpanded]);
 
   if (!liveVoice.isActive) return null;
 

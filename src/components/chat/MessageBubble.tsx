@@ -1,6 +1,6 @@
 import { memo, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { RotateCcw, Edit2, Volume2, RefreshCw, GitBranch, Pin, PinOff, ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
+import { RotateCcw, Edit2, Volume2, VolumeX, RefreshCw, GitBranch, Pin, PinOff, Square, Activity } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import { AppMode, Message } from '../../lib/types';
 import { parseMessageContent } from './messageContent';
@@ -56,6 +56,10 @@ interface MessageBubbleProps {
   flashHighlight?: boolean;
   density: 'compact' | 'comfy';
   activeProvider: string;
+  isSpeaking?: boolean;
+  currentSegment?: number;
+  totalSegments?: number;
+  onStopAudio?: () => void;
 }
 
 export const MessageBubble = memo(function MessageBubble({
@@ -84,7 +88,11 @@ export const MessageBubble = memo(function MessageBubble({
   searchHighlighted,
   flashHighlight,
   density,
-  activeProvider
+  activeProvider,
+  isSpeaking,
+  currentSegment = 0,
+  totalSegments = 0,
+  onStopAudio
 }: MessageBubbleProps) {
   const msg = message;
   const isUser = msg.role === 'user';
@@ -130,7 +138,18 @@ export const MessageBubble = memo(function MessageBubble({
         <button onClick={onEdit} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-emerald-400 transition-colors" title="Edit message"><Edit2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Edit</span></button>
         {!isUser && (
           <>
-            <button onClick={onReadAloud} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-blue-400 transition-colors" title="Read aloud"><Volume2 className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Read</span></button>
+            <button
+              onClick={isSpeaking ? onStopAudio : onReadAloud}
+              className={`p-1.5 glass-panel rounded-lg transition-colors ${
+                isSpeaking ? 'text-blue-400 border border-blue-500/40 bg-blue-500/10' : 'text-zinc-300 hover:text-blue-400'
+              }`}
+              title={isSpeaking ? "Stop narration" : "Read aloud"}
+            >
+              {isSpeaking ? <Square className="w-3.5 h-3.5 fill-current" /> : <Volume2 className="w-3.5 h-3.5" />}
+              <span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">
+                {isSpeaking ? 'Stop' : 'Read'}
+              </span>
+            </button>
             <button onClick={onRegenerateStart} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-emerald-400 transition-colors" title="Regenerate message"><RefreshCw className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Regen</span></button>
             <button onClick={onBranch} className="p-1.5 glass-panel rounded-lg text-zinc-300 hover:text-purple-400 transition-colors" title="Branch scenario from here"><GitBranch className="w-3.5 h-3.5" /><span className="hidden lg:inline ml-1 text-[8px] uppercase tracking-wider">Branch</span></button>
           </>
@@ -160,6 +179,24 @@ export const MessageBubble = memo(function MessageBubble({
           ) : (
             <>
               <div className="flex flex-col gap-3">
+                {isSpeaking && (
+                  <div className="flex items-center justify-between gap-2 px-3 py-1.5 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 text-xs shadow-inner animate-pulse">
+                    <div className="flex items-center gap-2">
+                      <Activity className="w-3.5 h-3.5 text-blue-400" />
+                      <span className="font-bold text-[10px] uppercase tracking-wider">
+                        Narrating {totalSegments > 1 ? `(Segment ${currentSegment + 1}/${totalSegments})` : ''}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={onStopAudio}
+                      className="px-2 py-0.5 rounded-md bg-blue-500/20 hover:bg-blue-500/30 text-blue-200 transition-colors flex items-center gap-1 text-[9px] font-bold uppercase tracking-wider"
+                    >
+                      <Square className="w-2.5 h-2.5 fill-current" />
+                      <span>Stop</span>
+                    </button>
+                  </div>
+                )}
                 {content.mainText && (
                   mode === AppMode.GAME && content.mainText.includes('[ROLL:')
                     ? <div className="text-[15px] leading-relaxed">{renderWithDiceRolls(content.mainText)}</div>
@@ -276,9 +313,17 @@ export const MessageBubble = memo(function MessageBubble({
           </button>
           {!isUser && (
             <>
-              <button onClick={onReadAloud} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-blue-400 transition-colors flex items-center gap-1 shadow-md" title="Read aloud">
-                <Volume2 className="w-3 h-3" />
-                <span className="text-[8px] font-bold uppercase tracking-wider">Read</span>
+              <button
+                onClick={isSpeaking ? onStopAudio : onReadAloud}
+                className={`p-1.5 border rounded-lg transition-colors flex items-center gap-1 shadow-md ${
+                  isSpeaking
+                    ? 'bg-blue-500/20 border-blue-500/40 text-blue-300'
+                    : 'bg-zinc-800/80 border-zinc-700/50 text-zinc-300 active:bg-zinc-700 active:text-blue-400'
+                }`}
+                title={isSpeaking ? "Stop narration" : "Read aloud"}
+              >
+                {isSpeaking ? <Square className="w-3 h-3 fill-current" /> : <Volume2 className="w-3 h-3" />}
+                <span className="text-[8px] font-bold uppercase tracking-wider">{isSpeaking ? 'Stop' : 'Read'}</span>
               </button>
               <button onClick={onRegenerateStart} className="p-1.5 bg-zinc-800/80 border border-zinc-700/50 rounded-lg text-zinc-300 active:bg-zinc-700 active:text-emerald-400 transition-colors flex items-center gap-1 shadow-md" title="Regenerate message">
                 <RefreshCw className="w-3 h-3" />

@@ -2,26 +2,77 @@
  * Web parity of Android GeminiTtsClient.kt
  * Same model fallback chains, voice list, quota detection, 24kHz PCM16 playback via Web Audio.
  */
+import { get as idbGet, set as idbSet } from 'idb-keyval';
 import { getGenAI } from './gemini';
 import { getSettings } from './types';
 
 export const SAMPLE_RATE = 24000;
 
+// Fast deterministic string hash for cache keys
+function hashString(str: string): string {
+  let hash = 5381;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) + hash) + str.charCodeAt(i);
+    hash |= 0;
+  }
+  return (hash >>> 0).toString(36);
+}
+
+// In-memory LRU cache for current session
+const memoryAudioCache = new Map<string, string>();
+const MAX_MEMORY_CACHE_ENTRIES = 60;
+
+function getMemoryCachedAudio(key: string): string | null {
+  if (memoryAudioCache.has(key)) {
+    const val = memoryAudioCache.get(key)!;
+    // Refresh LRU position
+    memoryAudioCache.delete(key);
+    memoryAudioCache.set(key, val);
+    return val;
+  }
+  return null;
+}
+
+function setMemoryCachedAudio(key: string, val: string) {
+  if (memoryAudioCache.size >= MAX_MEMORY_CACHE_ENTRIES) {
+    const oldestKey = memoryAudioCache.keys().next().value;
+    if (oldestKey) memoryAudioCache.delete(oldestKey);
+  }
+  memoryAudioCache.set(key, val);
+}
+
+async function getCachedAudio(key: string): Promise<string | null> {
+  const mem = getMemoryCachedAudio(key);
+  if (mem) return mem;
+  try {
+    const dbVal = await idbGet<string>(`personaforge_tts_${key}`);
+    if (dbVal) {
+      setMemoryCachedAudio(key, dbVal);
+      return dbVal;
+    }
+  } catch (err) {
+    console.warn('[TtsEngine] Cache read error:', err);
+  }
+  return null;
+}
+
+async function setCachedAudio(key: string, data: string): Promise<void> {
+  setMemoryCachedAudio(key, data);
+  try {
+    await idbSet(`personaforge_tts_${key}`, data);
+  } catch (err) {
+    console.warn('[TtsEngine] Cache write error:', err);
+  }
+}
+
 // Ordered fallback chain: highest quality first — matches Android
 export const TTS_MODEL_CHAIN = [
-  'gemini-2.5-pro-preview-tts',
-  'gemini-3.1-flash-tts-preview',
   'gemini-2.5-flash-preview-tts',
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
 ] as const;
 
 // For real-time VoiceChat (speed over quality), start at Flash
 export const TTS_MODEL_CHAIN_FAST = [
-  'gemini-3.1-flash-tts-preview',
   'gemini-2.5-flash-preview-tts',
-  'gemini-2.5-flash',
-  'gemini-2.0-flash',
 ] as const;
 
 export interface GeminiVoice {
@@ -58,6 +109,58 @@ export function isQuotaOrRateLimit(e: any): boolean {
 export function isModelNotFound(e: any): boolean {
   const msg = (e?.message || String(e)).toLowerCase();
   return msg.includes('404') || msg.includes('not found') || msg.includes('deprecated');
+}
+
+/**
+ * Splits text into natural, digestible narration segments (paragraphs or sentence chunks).
+ * Strips out OOC tags, raw dice rolls, and markdown styling while preserving dialogues.
+ */
+export function splitIntoSpeechSegments(text: string, maxSegmentLen: number = 400): string[] {
+  if (!text) return [];
+
+  // Strip OOC tags, director blocks, dice tags, and markdown markup
+  const clean = text
+    .replace(/<ooc>[\s\S]*?<\/ooc>/gi, '')
+    .replace(/\[DIRECTOR INSTRUCTION\]:[\s\S]*?(?:$|(?=\n\n))/gi, '')
+    .replace(/\[Director's Note(?: for AI)?: [\s\S]*?\]/gi, '')
+    .replace(/\[ROLL:.*?\]/gi, '')
+    .replace(/[*#_~`]/g, '')
+    .trim();
+
+  if (!clean) return [];
+
+  // Split by double newlines first (paragraphs)
+  const rawParagraphs = clean.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
+  const segments: string[] = [];
+
+  for (const para of rawParagraphs) {
+    if (para.length <= maxSegmentLen) {
+      segments.push(para);
+      continue;
+    }
+
+    // Split long paragraphs by sentence boundaries (.!?) without breaking mid-sentence
+    const sentences = para.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g) || [para];
+    let currentChunk = '';
+
+    for (const sentence of sentences) {
+      const trimmedSentence = sentence.trim();
+      if (!trimmedSentence) continue;
+
+      if ((currentChunk + ' ' + trimmedSentence).trim().length <= maxSegmentLen) {
+        currentChunk = currentChunk ? `${currentChunk} ${trimmedSentence}` : trimmedSentence;
+      } else {
+        if (currentChunk) segments.push(currentChunk);
+        currentChunk = trimmedSentence;
+      }
+    }
+
+    if (currentChunk) {
+      segments.push(currentChunk);
+    }
+  }
+
+  return segments.length > 0 ? segments : [clean];
 }
 
 // --- Web Audio playback (24kHz PCM16 mono, same format as Android AudioTrack) ---
@@ -157,6 +260,16 @@ export async function synthesizeSpeech(
   useFastChain: boolean = false,
   extraConfig?: any
 ): Promise<string | null> {
+  const chosenVoice = voiceName || 'Kore';
+  const cacheKey = `${chosenVoice}_${hashString(stylePrefix || '')}_${hashString(text)}`;
+
+  // Check cache (memory + IndexedDB) first
+  const cached = await getCachedAudio(cacheKey);
+  if (cached) {
+    console.log(`[TtsEngine] Audio cache hit for voice "${chosenVoice}"`);
+    return cached;
+  }
+
   const ai = getGenAI();
   const chain = useFastChain ? TTS_MODEL_CHAIN_FAST : TTS_MODEL_CHAIN;
   const prompt = `${stylePrefix ? stylePrefix + '\n\n' : ''}${text.slice(0, 4000)}`;
@@ -165,7 +278,7 @@ export async function synthesizeSpeech(
     responseModalities: ['AUDIO'] as const,
     speechConfig: {
       voiceConfig: {
-        prebuiltVoiceConfig: { voiceName: voiceName || 'Kore' },
+        prebuiltVoiceConfig: { voiceName: chosenVoice },
       },
     },
     ...(extraConfig || {}),
@@ -190,7 +303,7 @@ export async function synthesizeSpeech(
         ai.models.generateContent({
           model,
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          config: configBase,
+          config: configBase不易,
         }) as Promise<any>,
         timeoutMs(model)
       );
@@ -202,6 +315,8 @@ export async function synthesizeSpeech(
         ?? result.candidates?.[0]?.content?.parts?.find((p: any) => p.inlineData?.data)?.inlineData?.data;
       if (b64) {
         console.log(`[TtsEngine] succeeded: ${model}`);
+        // Asynchronously persist to cache
+        setCachedAudio(cacheKey, b64).catch(() => {});
         return b64;
       }
       console.warn(`[TtsEngine] ${model} returned no audio, trying next`);
@@ -255,18 +370,135 @@ export class TtsEngine {
     }
   }
 
+  private _currentSegmentIndex = 0;
+  private _totalSegments = 0;
+  private _currentSegmentText = '';
+
+  get currentSegmentIndex() { return this._currentSegmentIndex; }
+  get totalSegments() { return this._totalSegments; }
+  get currentSegmentText() { return this._currentSegmentText; }
+
+  // Speaks an array of segments in sequence with lookahead pre-buffering
+  async speakSegments(
+    segments: string[],
+    options: {
+      voiceName?: string;
+      stylePrefix?: string | null;
+      useFastChain?: boolean;
+      onSegmentStart?: (index: number, total: number, segmentText: string) => void;
+      onComplete?: () => void;
+    } = {}
+  ): Promise<void> {
+    if (!segments || segments.length === 0) {
+      options.onComplete?.();
+      return;
+    }
+
+    this.stop();
+    this.cancelFlag = { cancelled: false };
+    const myCancel = this.cancelFlag;
+    this.setSpeaking(true);
+    this._totalSegments = segments.length;
+
+    // Cache of synthesized audio promises for pre-buffering
+    const audioPromises: Promise<string | null>[] = segments.map((seg, idx) => {
+      // Start synthesizing the first 2 segments immediately, then lazy load
+      if (idx <= 1) {
+        return this.synthesize(seg, options.voiceName, options.stylePrefix, options.useFastChain ?? true);
+      }
+      return null as any;
+    });
+
+    const getAudioPromise = (idx: number): Promise<string | null> => {
+      if (!audioPromises[idx]) {
+        audioPromises[idx] = this.synthesize(
+          segments[idx],
+          options.voiceName,
+          options.stylePrefix,
+          options.useFastChain ?? true
+        );
+      }
+      return audioPromises[idx];
+    };
+
+    for (let i = 0; i < segments.length; i++) {
+      if (myCancel.cancelled) break;
+
+      this._currentSegmentIndex = i;
+      this._currentSegmentText = segments[i];
+      options.onSegmentStart?.(i, segments.length, segments[i]);
+
+      // Trigger pre-fetching for the next segment (i + 1)
+      if (i + 1 < segments.length) {
+        getAudioPromise(i + 1);
+      }
+
+      const b64 = await getAudioPromise(i);
+      if (myCancel.cancelled) break;
+
+      if (b64) {
+        await new Promise<void>((resolve) => {
+          this.playBase64(b64, () => {
+            resolve();
+          });
+        });
+      } else {
+        // Fallback to browser TTS for this segment
+        await new Promise<void>((resolve) => {
+          const settings = getSettings();
+          const rate = (settings as any)?.ttsSpeed ?? 1;
+          speakWithBrowser(segments[i], options.voiceName, rate);
+          const words = segments[i].split(/\s+/).length;
+          const estMs = Math.max(800, (words / 2.5) * 1000);
+          setTimeout(() => {
+            resolve();
+          }, estMs);
+        });
+      }
+    }
+
+    if (!myCancel.cancelled) {
+      this.setSpeaking(false);
+      this._currentSegmentIndex = 0;
+      this._totalSegments = 0;
+      this._currentSegmentText = '';
+      options.onComplete?.();
+    }
+  }
+
   // Convenience: synthesize + play, with browser fallback and 30s outer timeout
-  async speak(text: string, voiceName?: string, stylePrefix?: string | null, useFastChain: boolean = false, onDone?: () => void): Promise<void> {
-    const withOuterTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> => Promise.race([p, new Promise<null>(r => setTimeout(() => r(null), ms))]);
-    const b64 = await withOuterTimeout(this.synthesize(text, voiceName, stylePrefix, useFastChain), 30000) as string | null;
+  async speak(
+    text: string,
+    voiceName?: string,
+    stylePrefix?: string | null,
+    useFastChain: boolean = false,
+    onDone?: () => void,
+    onSegmentStart?: (index: number, total: number, segmentText: string) => void
+  ): Promise<void> {
+    const segments = splitIntoSpeechSegments(text);
+    if (segments.length > 1) {
+      return this.speakSegments(segments, {
+        voiceName,
+        stylePrefix,
+        useFastChain,
+        onSegmentStart,
+        onComplete: onDone,
+      });
+    }
+
+    const withOuterTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> =>
+      Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
+    const b64 = (await withOuterTimeout(
+      this.synthesize(text, voiceName, stylePrefix, useFastChain),
+      30000
+    )) as string | null;
     if (b64) {
       await this.playBase64(b64, onDone);
     } else {
       // browser fallback
       const settings = getSettings();
-      const rate = (settings as any)?.ttsSpeed ?? 1; // if app ever stores it
+      const rate = (settings as any)?.ttsSpeed ?? 1;
       speakWithBrowser(text, voiceName, rate);
-      // Estimate duration and fire onDone
       const words = text.split(/\s+/).length;
       const estMs = Math.max(800, (words / 2.5) * 1000);
       setTimeout(() => {
@@ -274,8 +506,6 @@ export class TtsEngine {
         onDone?.();
       }, estMs);
       this.setSpeaking(true);
-      const handler = () => { this.setSpeaking(false); window.speechSynthesis.removeEventListener?.('voiceschanged', handler as any); };
-      // fallback: listen to end via polling
       const poll = setInterval(() => {
         if (!window.speechSynthesis.speaking) {
           clearInterval(poll);

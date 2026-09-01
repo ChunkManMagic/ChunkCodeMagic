@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { X, Mic, Volume2, Loader2 } from 'lucide-react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { X, Mic, Volume2, Loader2, AlertCircle } from 'lucide-react';
 import { CharacterProfile } from '../../lib/types';
 import { TtsEngine, ALL_VOICES } from '../../lib/ttsEngine';
 import { buildDirectorPromptFromProfile } from '../../lib/voiceDirector';
@@ -21,14 +21,29 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
   const [replyText, setReplyText] = useState('');
   const [handsFree, setHandsFree] = useState(false);
   const [awaitingReply, setAwaitingReply] = useState(false);
+  const [sttError, setSttError] = useState<string | null>(null);
   const spokenIds = useRef<Set<string>>(new Set());
   const ttsRef = useRef<TtsEngine | null>(null);
   const recognitionRef = useRef<any>(null);
 
   if (!ttsRef.current) ttsRef.current = new TtsEngine();
 
+  // Cleanup on dialog close or unmount
   useEffect(() => {
-    return () => { try { ttsRef.current?.stop(); } catch {} };
+    if (!isOpen) {
+      try { recognitionRef.current?.abort(); } catch {}
+      try { ttsRef.current?.stop(); } catch {}
+      setPhase('idle');
+      setAwaitingReply(false);
+      setSttError(null);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
+    return () => {
+      try { recognitionRef.current?.abort(); } catch {}
+      try { ttsRef.current?.stop(); } catch {}
+    };
   }, []);
 
   const handsFreeRef = useRef(handsFree);
@@ -41,9 +56,56 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     phaseRef.current = phase;
   }, [phase]);
 
+  const launchSTT = useCallback(() => {
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setSttError('Speech recognition is not supported by your current browser. Please try Chrome, Edge, or Safari.');
+      setPhase('idle');
+      return;
+    }
+    setSttError(null);
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch {}
+    }
+    const rec = new SR();
+    rec.lang = navigator.language || 'en-US';
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+    rec.continuous = false;
+    setPhase('listening');
+    rec.onresult = (e: any) => {
+      const heard = e.results?.[0]?.[0]?.transcript?.trim();
+      if (heard) {
+        setTranscript(heard);
+        setPhase('thinking');
+        setAwaitingReply(true);
+        try {
+          const r = onSendMessage(heard);
+          if (r instanceof Promise) r.catch(() => setPhase('idle'));
+        } catch {
+          setPhase('idle');
+        }
+      } else {
+        setPhase('idle');
+      }
+    };
+    rec.onerror = () => setPhase('idle');
+    rec.onend = () => {
+      if (phaseRef.current === 'listening') {
+        setPhase('idle');
+      }
+    };
+    recognitionRef.current = rec;
+    try {
+      rec.start();
+    } catch {
+      setPhase('idle');
+    }
+  }, [onSendMessage]);
+
   // Watch for AI reply
   useEffect(() => {
-    if (!awaitingReply || isStreaming) return;
+    if (!isOpen || !awaitingReply || isStreaming) return;
     const last = messages[messages.length - 1];
     if (!last || last.role === 'user') return;
     if (spokenIds.current.has(last.id)) return;
@@ -61,60 +123,22 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
         const tts = ttsRef.current!;
         await tts.speak(last.text, voiceName, directorPrompt || null, useFast, () => {
           setPhase('idle');
-          if (handsFreeRef.current) {
-            // auto-loop: go back to listening
+          if (handsFreeRef.current && isOpen) {
             setTimeout(() => {
               if (handsFreeRef.current) launchSTT();
             }, 400);
           }
         });
-        // If TtsEngine fallback handled speaking internally, phase already set to speaking; we rely on onDone.
-        // If TtsEngine used browser fallback, it still calls onDone after estimated duration.
       } catch {
         setPhase('idle');
-        if (handsFreeRef.current) setTimeout(() => { if (handsFreeRef.current) launchSTT(); }, 400);
+        if (handsFreeRef.current && isOpen) {
+          setTimeout(() => {
+            if (handsFreeRef.current) launchSTT();
+          }, 400);
+        }
       }
     })();
-  }, [messages, isStreaming, awaitingReply, profile, storySummary]);
-
-  const launchSTT = () => {
-    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      alert('Speech Recognition not supported in this browser. Use Chrome/Edge.');
-      setPhase('idle');
-      return;
-    }
-    if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch {}
-    }
-    const rec = new SR();
-    rec.lang = navigator.language || 'en-US';
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-    rec.continuous = false;
-    setPhase('listening');
-    rec.onresult = (e: any) => {
-      const heard = e.results?.[0]?.[0]?.transcript?.trim();
-      if (heard) {
-        setTranscript(heard);
-        setPhase('thinking');
-        setAwaitingReply(true);
-        try { const r = onSendMessage(heard); if (r instanceof Promise) r.catch(()=> setPhase('idle')); } catch { setPhase('idle'); }
-      } else {
-        setPhase('idle');
-      }
-    };
-    rec.onerror = () => setPhase('idle');
-    rec.onend = () => {
-      if (handsFreeRef.current && phaseRef.current === 'listening') {
-        setPhase('idle');
-      } else if (phaseRef.current === 'listening') {
-        setPhase('idle');
-      }
-    };
-    recognitionRef.current = rec;
-    try { rec.start(); } catch { setPhase('idle'); }
-  };
+  }, [isOpen, messages, isStreaming, awaitingReply, profile, storySummary, launchSTT]);
 
   const handleMicClick = () => {
     if (phase === 'speaking') {
@@ -127,24 +151,24 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
       setPhase('idle');
       return;
     }
-    // check permission via getUserMedia? SpeechRecognition handles it.
     launchSTT();
   };
 
   // handsFree auto-loop
   useEffect(() => {
+    if (!isOpen) return;
     if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply) {
       const id = setTimeout(() => {
         if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply) launchSTT();
       }, 800);
       return () => clearTimeout(id);
     }
-  }, [handsFree, phase, awaitingReply]);
+  }, [isOpen, handsFree, phase, awaitingReply, launchSTT]);
 
   if (!isOpen) return null;
 
   const voiceName = getSettings().liveVoiceName || profile.voiceName || 'Kore';
-  const voiceDesc = ALL_VOICES.find(v=> v.name===voiceName)?.character || '';
+  const voiceDesc = ALL_VOICES.find(v => v.name === voiceName)?.character || '';
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 backdrop-blur-md p-4">
@@ -158,6 +182,13 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
         </div>
 
         <div className="px-6 py-4 space-y-4 overflow-y-auto flex-1">
+          {sttError && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>{sttError}</span>
+            </div>
+          )}
+
           <div className="w-full min-h-[100px] max-h-[200px] rounded-2xl bg-white/[0.04] border border-white/5 p-3 overflow-y-auto space-y-2">
             {transcript && <p className="text-sm text-emerald-300"><span className="font-semibold">You:</span> {transcript}</p>}
             {replyText && <p className="text-sm text-amber-200"><span className="font-semibold">{profile.name}:</span> {replyText}</p>}
@@ -173,7 +204,7 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
             <button
               role="switch"
               aria-checked={handsFree}
-              onClick={()=> setHandsFree(v=> !v)}
+              onClick={() => setHandsFree(v => !v)}
               className={`w-10 h-5 rounded-full relative transition-colors ${handsFree ? 'bg-emerald-600' : 'bg-zinc-800'}`}
             >
               <span className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${handsFree ? 'left-6' : 'left-1'}`} />
@@ -194,7 +225,7 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
               {phase === 'listening' ? 'LISTENING — TAP TO CANCEL' : phase === 'thinking' ? 'THINKING…' : phase === 'speaking' ? 'TAP TO STOP' : 'TAP TO TALK'}
             </span>
           </button>
-          {phase === 'speaking' && <p className="text-[11px] text-center text-zinc-500">Speaking via { (getSettings().voiceQuality === 'speed' ? 'Flash (fast)' : 'Pro (quality)') } — tap to interrupt</p>}
+          {phase === 'speaking' && <p className="text-[11px] text-center text-zinc-500">Speaking via {(getSettings().voiceQuality === 'speed' ? 'Flash (fast)' : 'Pro (quality)')} — tap to interrupt</p>}
         </div>
 
         <div className="px-6 py-3 border-t border-white/10 flex justify-end">

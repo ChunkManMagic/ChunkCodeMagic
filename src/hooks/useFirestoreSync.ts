@@ -387,6 +387,28 @@ export function useFirestoreSync() {
     }
   }, [user]);
 
+  const deleteInventoryItemsBatch = useCallback(async (scenarioId: string, itemIds: string[]) => {
+    if (!user || itemIds.length === 0) return;
+    try {
+      let batch = writeBatch(db);
+      let count = 0;
+
+      for (const id of itemIds) {
+        const ref = doc(db, 'users', user.uid, 'scenarios', scenarioId, 'inventory', id);
+        batch.delete(ref);
+        count++;
+        if (count >= 500) {
+          await batch.commit();
+          batch = writeBatch(db);
+          count = 0;
+        }
+      }
+      if (count > 0) await batch.commit();
+    } catch (error) {
+      throw handleFirestoreError(error, `users/${user.uid}/scenarios/${scenarioId}/inventory`, 'delete');
+    }
+  }, [user]);
+
   const syncSummary = useCallback((scenarioId: string, callback: (summary: string) => void) => {
     if (!user) return () => {};
 
@@ -430,6 +452,7 @@ export function useFirestoreSync() {
     saveInventoryItem,
     saveInventoryItemsBatch,
     deleteInventoryItem,
+    deleteInventoryItemsBatch,
     syncSummary,
     saveSummary
   };

@@ -1816,6 +1816,101 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
   }
 }
 
+export interface ActionSuggestion {
+  text: string;
+  type: 'dialogue' | 'action' | 'bold' | 'investigate';
+  label: string;
+}
+
+export async function suggestMultipleActions(
+  history: any[], 
+  profile: CharacterProfile, 
+  codexEntries: CodexEntry[] = [], 
+  currentSummary: string = "", 
+  guide?: string, 
+  customInstructions?: string
+): Promise<ActionSuggestion[]> {
+  const modeInstruction = profile.mode === AppMode.GAME
+    ? `You are assisting a player in a tabletop RPG. Generate 3 DISTINCT, compelling next options for THEIR character:
+1. DIALOGUE / INQUIRY (A conversation line or negotiation attempt)
+2. TACTICAL ACTION / INVESTIGATION (A careful physical action, perception check, or spell/item use)
+3. BOLD / DECISIVE MOVE (A dramatic, high-stakes, or unexpected move)`
+    : profile.mode === AppMode.SCENARIO
+    ? `You are assisting a player in an interactive narrative. Generate 3 DISTINCT, compelling next options for THEIR character:
+1. DIALOGUE / SOCIAL (A meaningful conversation line)
+2. EXPLORE / INVESTIGATE (An action exploring surroundings or examining something)
+3. BOLD / DRAMATIC (A bold move advancing or escalating the plot)`
+    : `You are assisting a player in character roleplay. Generate 3 DISTINCT, compelling next options for THEIR character:
+1. INTIMATE / EMOTIONAL DIALOGUE (An emotional reaction or vulnerable response)
+2. WITTY / ASSERTIVE MOVE (A playful, witty, or assertive dialogue/action)
+3. SCENE ADVANCEMENT (An action that shifts the physical or narrative dynamic)`;
+
+  const guideInstruction = guide ? `\n[DIRECTOR HINT]: Guide suggestions according to: "${guide}".\n` : '';
+
+  const baseSys = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
+  const systemInstruction = `${baseSys}
+
+[TASK DIRECTIVE — SUGGEST 3 PLAYER ACTIONS]
+${modeInstruction}
+${guideInstruction}
+- Return a JSON array with exactly 3 objects.
+- Each object must have:
+  - "label": A short 2-4 word summary chip (e.g. "Ask about the relic", "Draw blade quietly", "Attempt diplomacy")
+  - "text": The complete, ready-to-send first-person player message (1-2 sentences)
+  - "type": One of "dialogue", "action", "bold", "investigate"
+- No markdown wrappers around the JSON. Return only the JSON array.`;
+
+  const settings = getSettings();
+  const ai = getGenAI();
+
+  try {
+    const response = await withRetry(() => ai.models.generateContent({
+      model: settings.activeModel,
+      contents: [
+        ...buildHistory(history),
+        { role: 'user', parts: [{ text: "Suggest 3 diverse next actions for my character." }] }
+      ],
+      config: {
+        systemInstruction,
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              label: { type: Type.STRING },
+              text: { type: Type.STRING },
+              type: { type: Type.STRING }
+            },
+            required: ["label", "text", "type"]
+          }
+        }
+      }
+    }));
+
+    const parsed = parseJsonWithRecovery(response.text || "[]");
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.slice(0, 3);
+    }
+  } catch (err: any) {
+    console.warn("suggestMultipleActions structured generation failed, trying single suggestion fallback:", err);
+  }
+
+  // Fallback to single suggestion
+  try {
+    const single = await suggestNextAction(history, profile, codexEntries, currentSummary, guide, customInstructions);
+    if (single) {
+      return [{
+        label: "AI Suggestion",
+        text: single,
+        type: "action"
+      }];
+    }
+  } catch {}
+
+  return [];
+}
+
 export async function suggestNextAction(
   history: any[], 
   profile: CharacterProfile, 
@@ -1948,19 +2043,12 @@ Text: ${text.slice(0, 4000)}`;
     },
   };
 
-  // Full chain from Android GeminiTtsClient.kt — parity
+  // Valid Google Gemini TTS models
   const TTS_MODEL_CHAIN = [
-    'gemini-2.5-pro-preview-tts',
-    'gemini-3.1-flash-tts-preview',
     'gemini-2.5-flash-preview-tts',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
   ];
   const TTS_MODEL_CHAIN_FAST = [
-    'gemini-3.1-flash-tts-preview',
     'gemini-2.5-flash-preview-tts',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash',
   ];
 
   const chain = useFastChain ? TTS_MODEL_CHAIN_FAST : TTS_MODEL_CHAIN;
@@ -2008,9 +2096,9 @@ Text: ${text.slice(0, 4000)}`;
 // Backwards-compatible wrapper for callers that expect stylePrefix usage (Director Prompt)
 export async function generateSpeechWithDirectorPrompt(text: string, voiceName?: string, stylePrefix?: string | null, useFastChain: boolean = false): Promise<string | null> {
   const prompt = `${stylePrefix ? stylePrefix + '\n\n' : ''}${text.slice(0, 4000)}`;
-  const TTS_CHAIN = useFastChain
-    ? ['gemini-3.1-flash-tts-preview','gemini-2.5-flash-preview-tts','gemini-2.5-flash','gemini-2.0-flash']
-    : ['gemini-2.5-pro-preview-tts','gemini-3.1-flash-tts-preview','gemini-2.5-flash-preview-tts','gemini-2.5-flash','gemini-2.0-flash'];
+  const TTS_CHAIN = [
+    'gemini-2.5-flash-preview-tts',
+  ];
   const ai = getGenAI();
   const config = {
     responseModalities: ["AUDIO" as const],

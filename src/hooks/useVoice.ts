@@ -1,57 +1,96 @@
-import { useState, useCallback } from 'react';
-import { defaultTtsEngine } from '../lib/ttsEngine';
+import { useState, useCallback, useEffect } from 'react';
+import { defaultTtsEngine, splitIntoSpeechSegments } from '../lib/ttsEngine';
 import { buildDirectorPromptFromProfile } from '../lib/voiceDirector';
 import { getSettings } from '../lib/types';
 import type { CharacterProfile, VoiceSettings } from '../lib/types';
 
 export function useVoice(voiceName: string, _voiceSettings?: VoiceSettings, _storyTone?: string) {
   const [isPlaying, setIsPlaying] = useState(false);
+  const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
+  const [currentSegment, setCurrentSegment] = useState(0);
+  const [totalSegments, setTotalSegments] = useState(0);
 
-  const handleReadAloud = useCallback((text: string, profile?: CharacterProfile) => {
+  useEffect(() => {
+    defaultTtsEngine.onSpeakingChanged = (speaking) => {
+      setIsPlaying(speaking);
+      if (!speaking) {
+        setSpeakingMessageId(null);
+        setCurrentSegment(0);
+        setTotalSegments(0);
+      }
+    };
+    return () => {
+      defaultTtsEngine.onSpeakingChanged = undefined;
+    };
+  }, []);
+
+  const handleReadAloud = useCallback(async (text: string, profile?: CharacterProfile, messageId?: string) => {
     try {
-      const settings = getSettings();
-      // Strip OOC, markdown, and inline audio tags from spoken text
-      const clean = text
-        .replace(/<ooc>[\s\S]*?<\/ooc>/gi, '')
-        .replace(/\[.*?\]/g, '')
-        .replace(/[*#_~`]/g, '')
-        .trim();
-      if (!clean) return;
+      // If already speaking this message, toggle stop
+      if (isPlaying && speakingMessageId === messageId) {
+        defaultTtsEngine.stop();
+        setIsPlaying(false);
+        setSpeakingMessageId(null);
+        return;
+      }
 
+      const settings = getSettings();
       // Stop anything currently playing
       defaultTtsEngine.stop();
-      window.speechSynthesis.cancel();
+      try { window.speechSynthesis.cancel(); } catch {}
+
+      const segments = splitIntoSpeechSegments(text);
+      if (segments.length === 0) return;
 
       const voiceNameToUse = settings.liveVoiceName || voiceName || 'Kore';
       const useFast = settings.voiceQuality !== 'quality';
 
-      // Build director prompt if profile is available
+      setIsPlaying(true);
+      if (messageId) setSpeakingMessageId(messageId);
+      setTotalSegments(segments.length);
+      setCurrentSegment(0);
+
       const directorPrompt = profile
-        ? (buildDirectorPromptFromProfile(profile, '', '', clean) ?? null)
+        ? (buildDirectorPromptFromProfile(profile, '', '', segments[0] || text) ?? null)
         : null;
 
-      setIsPlaying(true);
-      defaultTtsEngine.onSpeakingChanged = (speaking) => {
-        setIsPlaying(speaking);
-      };
-      defaultTtsEngine.speak(clean, voiceNameToUse, directorPrompt, useFast, () => {
-        setIsPlaying(false);
+      await defaultTtsEngine.speakSegments(segments, {
+        voiceName: voiceNameToUse,
+        stylePrefix: directorPrompt,
+        useFastChain: useFast,
+        onSegmentStart: (idx, total) => {
+          setCurrentSegment(idx);
+          setTotalSegments(total);
+        },
+        onComplete: () => {
+          setIsPlaying(false);
+          setSpeakingMessageId(null);
+          setCurrentSegment(0);
+          setTotalSegments(0);
+        }
       });
     } catch (err) {
       console.error('Speech Error:', err);
       setIsPlaying(false);
+      setSpeakingMessageId(null);
     }
-  }, [voiceName]);
+  }, [voiceName, isPlaying, speakingMessageId]);
 
   const stopAudio = useCallback(() => {
     defaultTtsEngine.stop();
     setIsPlaying(false);
+    setSpeakingMessageId(null);
+    setCurrentSegment(0);
+    setTotalSegments(0);
   }, []);
 
   return {
     isPlaying,
+    speakingMessageId,
+    currentSegment,
+    totalSegments,
     handleReadAloud,
-    togglePause: () => defaultTtsEngine.stop(),
+    togglePause: stopAudio,
     stopAudio,
   };
 }

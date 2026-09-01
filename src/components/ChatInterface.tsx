@@ -18,8 +18,9 @@ import { parseMessageContent } from './chat/messageContent';
 import { PinnedMessagesPanel } from './chat/PinnedMessagesPanel';
 import { LiveVoiceHUD } from './chat/LiveVoiceHUD';
 import { VoiceChatDialog } from './chat/VoiceChatDialog';
+import { ActionSuggestionsBar } from './chat/ActionSuggestionsBar';
 import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES } from '../lib/ttsEngine';
-import { refineInput, AppMode, generateTextReplyStream, suggestNextAction, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
+import { refineInput, AppMode, generateTextReplyStream, suggestNextAction, suggestMultipleActions, type ActionSuggestion, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { getSettings, Message, CharacterProfile, CodexEntry } from '../lib/types';
 import { processUserInput, sanitizeInstruction } from '../lib/sanitize';
@@ -254,10 +255,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const {
     isPlaying,
+    speakingMessageId,
+    currentSegment,
+    totalSegments,
     handleReadAloud,
     togglePause,
     stopAudio
   } = useVoice(profile.voiceName || 'Kore', profile.voiceSettings, profile.storyTone || '');
+
+  const [suggestions, setSuggestions] = useState<ActionSuggestion[]>([]);
+  const [showSuggestionsBar, setShowSuggestionsBar] = useState(false);
 
   const liveVoice = useLiveVoice();
 
@@ -301,11 +308,12 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const handleSuggest = useCallback(async () => {
     if (isSuggesting) return;
     setIsSuggesting(true);
+    setShowSuggestionsBar(true);
     setError(null);
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
       const settings = getSettings();
-      const suggestion = await suggestNextAction(
+      const multiSuggestions = await suggestMultipleActions(
         history, 
         profile, 
         codexEntries, 
@@ -313,21 +321,26 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         sanitizeInstruction(input.trim()), 
         sanitizeInstruction(settings.customRefineInstructions) || undefined
       );
-      if (suggestion) {
-        setInput(suggestion);
-        toastSuccess("AI suggested an action");
+      if (multiSuggestions && multiSuggestions.length > 0) {
+        setSuggestions(multiSuggestions);
       } else {
-        setError("No suggestion received from AI. Check your API key.");
-        toastError("No suggestion received");
+        setError("No suggestions received from AI. Check your API key.");
+        toastError("No suggestions received");
       }
     } catch (err: any) {
       console.error("Suggestion Error:", err);
-      setError(err.message || "Failed to get suggestion. Check your connection or API key.");
+      setError(err.message || "Failed to get suggestions. Check your connection or API key.");
       toastError(`Suggestion Error: ${err.message || 'Unknown error'}`);
     } finally {
       setIsSuggesting(false);
     }
-  }, [isSuggesting, messages, profile, codexEntries, storySummary, input, toastSuccess, toastError]);
+  }, [isSuggesting, messages, profile, codexEntries, storySummary, input, toastError]);
+
+  const handleSelectSuggestion = useCallback((suggestionText: string) => {
+    setInput(suggestionText);
+    setShowSuggestionsBar(false);
+    toastSuccess("Applied suggestion to input");
+  }, [toastSuccess]);
 
   const handleRewind = (messageId: string) => {
     setConfirmModal({
@@ -598,8 +611,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       }
       
       const { mainText } = parseMessageContent(displayReply, 'model');
-      if (isAutoRead && mainText && !isLiveMode) {
-        handleReadAloud(mainText, profile);
+      if (isAutoRead && mainText && !isLiveMode && finalAiMessage) {
+        handleReadAloud(mainText, profile, finalAiMessage.id);
       }
 
       const historyWithReply = [
@@ -626,7 +639,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     } finally {
       setIsTyping(false);
     }
-  }, [storySummary, updateSummary, messages, updateMessages, addMessage, profile, codexEntries, updateMessage, onUpdateProfile, isAutoRead, isLiveMode, handleReadAloud, isAutoCodexEnabled, handleAutoPopulateCodex, isAutoInventoryEnabled, handleAutoUpdateInventory, isAutoProfileEnabled, handleAutoUpdateProfile, handleAutoUpdateAvatar, toastError, setMessages]);
+  }, [storySummary, updateSummary, messages, updateMessages, addMessage, profile, codexEntries, updateMessage, onUpdateProfile, isAutoRead, isLiveMode, handleReadAloud, isAutoCodexEnabled, handleAutoPopulateCodex, isAutoInventoryEnabled, handleAutoUpdateInventory, isAutoProfileEnabled, handleAutoUpdateProfile, handleAutoUpdateAvatar, toastError, setMessages, sessionInstructions]);
 
   // Auto-narrate for voiceMode === 'tts'
   useEffect(() => {
@@ -638,7 +651,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     if (autoNarratedIds.current.has(last.id)) return;
     autoNarratedIds.current.add(last.id);
     const { mainText } = parseMessageContent(last.text, last.role);
-    handleReadAloud(mainText, profile);
+    handleReadAloud(mainText, profile, last.id);
   }, [messages, isTyping, profile, handleReadAloud]);
 
   const saveEdit = async (messageId: string) => {
@@ -1452,7 +1465,7 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
                   onEdit={() => startEditing(msg)}
                   onReadAloud={() => {
                     const { mainText } = parseMessageContent(msg.text, msg.role);
-                    handleReadAloud(mainText, profile);
+                    handleReadAloud(mainText, profile, msg.id);
                   }}
                   onRegenerateStart={() => setRegeneratingMessageId(msg.id)}
                   onBranch={() => handleBranch(msg.id)}
@@ -1465,6 +1478,10 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
                   flashHighlight={flashHighlightId === msg.id}
                   density="comfy"
                   activeProvider={getSettings().activeTextProvider}
+                  isSpeaking={speakingMessageId === msg.id}
+                  currentSegment={currentSegment}
+                  totalSegments={totalSegments}
+                  onStopAudio={stopAudio}
                 />
               ))
             )}
@@ -1501,7 +1518,9 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
                 <div className="flex items-center gap-4 sm:gap-6 justify-center">
                   <div className="flex items-center gap-2 text-emerald-500 animate-pulse">
                     <Volume2 className="w-4 h-4" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Narrating...</span>
+                    <span className="text-[10px] font-bold uppercase tracking-widest">
+                      Narrating {totalSegments > 1 ? `(${currentSegment + 1}/${totalSegments})` : ''}...
+                    </span>
                   </div>
                   <button 
                     onClick={togglePause} 
@@ -1519,6 +1538,14 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
 
           {/* Input Area */}
           <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
+            <ActionSuggestionsBar
+              suggestions={suggestions}
+              isLoading={isSuggesting}
+              isOpen={showSuggestionsBar}
+              onSelectSuggestion={handleSelectSuggestion}
+              onRefresh={handleSuggest}
+              onClose={() => setShowSuggestionsBar(false)}
+            />
 
             <AnimatePresence>
               {showGuidedRefine && (
@@ -1823,12 +1850,14 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
               <button
                 onClick={handleSuggest}
                 disabled={isSuggesting}
+                title="Suggest next actions (Ctrl+Space / Alt+S)"
                 className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
                   isSuggesting ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
                 }`}
               >
                 {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
                 {profile.mode === AppMode.ROLEPLAY ? 'SUGGEST DIALOGUE' : profile.mode === AppMode.GAME ? 'SUGGEST MOVE' : 'SUGGEST ACTION'}
+                <kbd className="hidden md:inline text-[8px] bg-white/10 px-1 py-0.2 rounded text-zinc-400 font-mono">^Space</kbd>
               </button>
               <button
                 onClick={() => setShowSessionInstructions(!showSessionInstructions)}
@@ -1952,8 +1981,23 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
                   <textarea
                     value={input}
                     onChange={(e) => setInput(e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendText(); } }}
-                    placeholder={isLiveMode ? "Type or speak..." : "Type a message, or enter a hint and click Suggest..."}
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && e.code === 'Space') {
+                        e.preventDefault();
+                        handleSuggest();
+                        return;
+                      }
+                      if (e.altKey && (e.key === 's' || e.key === 'S')) {
+                        e.preventDefault();
+                        handleSuggest();
+                        return;
+                      }
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        handleSendText();
+                      }
+                    }}
+                    placeholder={isLiveMode ? "Type or speak..." : "Type a message, or press Ctrl+Space to suggest actions..."}
                     className={`w-full glass-input rounded-2xl px-4 sm:px-6 py-3 sm:py-4 text-sm sm:text-base text-white placeholder-zinc-600 focus:ring-2 focus:ring-emerald-500/30 transition-all resize-none ${isInputExpanded ? 'h-64 sm:h-80' : 'h-[50px] max-h-40'}`}
                     rows={1}
                   />

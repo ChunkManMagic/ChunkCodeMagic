@@ -42,6 +42,8 @@ const ALLOWED_MODELS = new Set([
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.6-flash",
+  "gemini-3.7-flash",
+  "gemini-3.7-pro",
   "gemini-3.1-flash-live-preview",
   "gemini-2.5-flash-native-audio-preview-12-2025",
   "gemini-3.1-flash-tts-preview",
@@ -49,10 +51,15 @@ const ALLOWED_MODELS = new Set([
   // Legacy models accepted for older cached clients
   "gemini-1.5-flash",
   "gemini-1.5-pro",
+  "gemini-2.0-flash",
+  "gemini-2.0-flash-001",
   "gemini-2.0-flash-exp",
+  "gemini-2.0-pro-exp-02-05",
   "gemini-2.5-flash",
   "gemini-2.5-flash-lite",
   "gemini-2.5-pro",
+  "gemini-2.5-pro-preview-tts",
+  "gemini-2.5-flash-preview-tts",
 ]);
 
 const ALLOWED_AGENT_PATTERN = /^(antigravity|deep-research)-[a-z0-9._-]+$/i;
@@ -81,6 +88,65 @@ function safeTokenEqual(provided: string, required: string): boolean {
   return timingSafeEqual(a, b);
 }
 
+function isAllowedOrigin(origin: string, req: express.Request): boolean {
+  try {
+    const originUrl = new URL(origin);
+    const originHost = originUrl.host.toLowerCase();
+    const originHostname = originUrl.hostname.toLowerCase();
+
+    // 1. Direct host header match (e.g. localhost:3000)
+    const host = (req.headers.host || "").toLowerCase();
+    if (host && (originHost === host || originHostname === host.split(":")[0])) {
+      return true;
+    }
+
+    // 2. Reverse proxy / forwarded headers (Cloud Run, ngrok, Render, etc.)
+    const forwardedHost = req.headers["x-forwarded-host"];
+    if (forwardedHost) {
+      const hosts = String(forwardedHost)
+        .split(",")
+        .map((h) => h.trim().toLowerCase());
+      if (hosts.some((h) => originHost === h || originHostname === h.split(":")[0])) {
+        return true;
+      }
+    }
+
+    // 3. Localhost & development domains
+    if (
+      originHostname === "localhost" ||
+      originHostname === "127.0.0.1" ||
+      originHostname === "0.0.0.0"
+    ) {
+      return true;
+    }
+
+    // 4. Cloud Run / Google AI Studio / Google / Render domains
+    if (
+      originHostname.endsWith(".run.app") ||
+      originHostname === "ai.studio" ||
+      originHostname.endsWith(".ai.studio") ||
+      originHostname.endsWith(".google.com") ||
+      originHostname.endsWith(".googleusercontent.com") ||
+      originHostname.endsWith(".onrender.com")
+    ) {
+      return true;
+    }
+
+    // 5. Check referer header
+    const referer = req.headers.referer;
+    if (referer) {
+      try {
+        const refererHost = new URL(referer).host.toLowerCase();
+        if (refererHost === originHost) return true;
+      } catch {}
+    }
+
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 40;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
@@ -95,17 +161,11 @@ function geminiGuard(req: express.Request, res: express.Response, next: express.
       return res.status(401).json({ error: { message: "Unauthorized." } });
     }
   } else {
-    // No token configured: enforce same-origin so third-party websites can't
-    // drive this server's paid API from a visitor's browser (CSRF).
+    // No token configured: verify origin is trusted (same-origin, AI Studio preview, Cloud Run, localhost)
     const origin = req.headers.origin;
-    const host = req.headers.host;
-    if (origin && host) {
-      try {
-        if (new URL(origin).host !== host) {
-          return res.status(403).json({ error: { message: "Cross-origin requests are not allowed." } });
-        }
-      } catch {
-        return res.status(403).json({ error: { message: "Invalid Origin header." } });
+    if (origin) {
+      if (!isAllowedOrigin(origin, req)) {
+        return res.status(403).json({ error: { message: "Cross-origin requests are not allowed." } });
       }
     }
   }
@@ -140,7 +200,17 @@ function geminiGuard(req: express.Request, res: express.Response, next: express.
   next();
 }
 
-function getFallbackModel(currentModel: string): string | null {
+function getFallbackModel(currentModel: string, config?: any): string | null {
+  // If requesting audio, do not fallback to text-only models
+  const isAudioRequest =
+    config?.responseModalities?.includes('AUDIO') ||
+    currentModel.includes('-tts') ||
+    currentModel.includes('native-audio') ||
+    currentModel.includes('live');
+  if (isAudioRequest) {
+    return null;
+  }
+
   if (currentModel === 'gemini-3.1-pro-preview') {
     return 'gemini-3.5-flash';
   }
@@ -185,6 +255,10 @@ async function startServer() {
 
   app.use(express.json({ limit: "2mb" }));
 
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok" });
+  });
+
   // Auth + rate limiting for every AI proxy endpoint. Applied before the
   // routes so rejected requests never reach the Gemini SDK.
   app.use("/api/gemini", geminiGuard);
@@ -228,7 +302,7 @@ async function startServer() {
           if (attempt >= maxAttempts || !isTransient) {
             // Try fallback model if we have one and it's a transient/overload error
             if (isTransient) {
-              const fallback = getFallbackModel(model);
+              const fallback = getFallbackModel(model, config);
               if (fallback) {
                 console.warn(`Falling back from ${model} to ${fallback} due to demand/quota issues.`);
                 model = fallback;
@@ -299,7 +373,7 @@ async function startServer() {
           
           if (attempt >= maxAttempts || !isTransient) {
             if (isTransient) {
-              const fallback = getFallbackModel(model);
+              const fallback = getFallbackModel(model, config);
               if (fallback) {
                 console.warn(`Falling back stream from ${model} to ${fallback} due to demand/quota issues.`);
                 model = fallback;
@@ -498,13 +572,12 @@ async function startServer() {
     try {
       if (rejectModel(res, req.body?.model)) return;
       const dedicatedKey = (process.env.GEMINI_LIVE_API_KEY || "").trim();
-      const allowMainFallback = process.env.LIVE_ALLOW_MAIN_KEY_FALLBACK === "true";
-      const apiKey = dedicatedKey || (allowMainFallback ? process.env.GEMINI_API_KEY : undefined);
+      const apiKey = dedicatedKey || (process.env.GEMINI_API_KEY || "").trim();
       if (!apiKey) {
         return res.status(500).json({
           error: {
             message:
-              "GEMINI_LIVE_API_KEY is not set on the server. Set a dedicated Live key, or opt into sharing the main key's quota with LIVE_ALLOW_MAIN_KEY_FALLBACK=true.",
+              "GEMINI_API_KEY is not set on the server. Please configure your API key in Settings > Secrets.",
           },
         });
       }
