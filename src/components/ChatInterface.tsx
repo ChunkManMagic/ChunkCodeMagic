@@ -1258,7 +1258,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
           >
             <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          {(getSettings() as any).voiceMode === 'tts' ? (
+          {getSettings().voiceMode === 'tts' ? (
             <div className="px-3 py-2 rounded-xl text-[10px] font-bold glass-input text-zinc-300 flex items-center gap-2 shrink-0 whitespace-nowrap">
               <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
               <span>NARRATION ON</span>
@@ -1266,7 +1266,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
           ) : (
             <button
               onClick={() => {
-                const voiceMode = (getSettings() as any).voiceMode || 'live';
+                const voiceMode = getSettings().voiceMode || 'live';
                 if (voiceMode === 'voice_chat') {
                   setShowVoiceChat(v => !v);
                   if (liveVoice.isActive) liveVoice.stop();
@@ -1279,7 +1279,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
                   ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
                   : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
               }`}
-              title={(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'Voice Chat (STT + TTS)' : 'Live Voice (Real-time Spoken Conversation with Gemini)'; })()}
+              title={getSettings().voiceMode === 'voice_chat' ? 'Voice Chat (STT + TTS)' : 'Live Voice (Real-time Spoken Conversation with Gemini)'}
               aria-label="Toggle Voice"
             >
               {liveVoice.isActive || showVoiceChat ? (
@@ -1292,7 +1292,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               ) : (
                 <>
                   <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-                  <span>{(() => { const m=(getSettings() as any).voiceMode; return m==='voice_chat' ? 'VOICE CHAT' : 'LIVE VOICE'; })()}</span>
+                  <span>{getSettings().voiceMode === 'voice_chat' ? 'VOICE CHAT' : 'LIVE VOICE'}</span>
                 </>
               )}
             </button>
@@ -1946,6 +1946,26 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               >
                 {isLiveMode ? <Mic className="w-3 h-3 text-red-400 animate-pulse" /> : <MicOff className="w-3 h-3" />}
                 {isLiveMode ? 'DICTATING' : 'DICTATE'}
+              </button>
+              <button
+                onClick={() => {
+                  const voiceMode = getSettings().voiceMode || 'live';
+                  if (voiceMode === 'voice_chat') {
+                    setShowVoiceChat(v => !v);
+                    if (liveVoice.isActive) liveVoice.stop();
+                  } else {
+                    startLiveVoiceSession();
+                  }
+                }}
+                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
+                  liveVoice.isActive || showVoiceChat
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-500/20'
+                    : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
+                }`}
+                title={getSettings().voiceMode === 'voice_chat' ? 'Voice Chat (STT + TTS)' : 'Live Voice (Gemini Multimodal Live Session)'}
+              >
+                <Radio className={`w-3 h-3 ${liveVoice.isActive || showVoiceChat ? 'text-emerald-400 animate-pulse' : ''}`} />
+                {liveVoice.isActive ? 'LIVE CALL' : showVoiceChat ? 'VOICE CHAT' : 'LIVE VOICE'}
               </button>
               <div className="text-[8px] sm:text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold ml-auto hidden sm:block">
                 Playing as: <span className="text-zinc-400">{profile.playerProfile?.name || 'The Protagonist'}</span>

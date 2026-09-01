@@ -884,6 +884,15 @@ export default function App() {
             }`}>
               {settings.voiceEngine}
             </div>
+            <div className={`px-2 py-0.5 rounded-full text-[8px] font-bold uppercase tracking-widest border ${
+              settings.voiceMode === 'live'
+                ? 'bg-purple-500/10 text-purple-300 border-purple-500/20'
+                : settings.voiceMode === 'voice_chat'
+                ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/20'
+                : 'bg-zinc-500/10 text-zinc-300 border-zinc-500/20'
+            }`}>
+              {settings.voiceMode === 'live' ? 'Live Voice' : settings.voiceMode === 'voice_chat' ? 'Voice Chat' : 'TTS Narration'}
+            </div>
           </div>
         </div>
         <div className="w-32 flex justify-end gap-4 items-center">

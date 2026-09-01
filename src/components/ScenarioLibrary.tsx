@@ -113,10 +113,11 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
           {onImport && (
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-2xl font-bold transition-all"
-              title="Import Story"
+              className="flex items-center gap-2 px-5 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-2xl font-bold transition-all group border border-white/5 hover:border-white/10"
+              title="Import Story (.json)"
             >
-              <Upload className="w-5 h-5" />
+              <Upload className="w-5 h-5 group-hover:-translate-y-0.5 transition-transform" />
+              <span className="hidden sm:inline text-sm">Import</span>
             </button>
           )}
           {hasDraft && onRestoreDraft && (
