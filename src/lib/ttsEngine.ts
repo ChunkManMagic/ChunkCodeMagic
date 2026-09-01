@@ -65,17 +65,18 @@ async function setCachedAudio(key: string, data: string): Promise<void> {
   }
 }
 
-// Ordered fallback chain: highest quality first — matches Android
+// Ordered fallback chain: Gemini 3.1 Flash starter -> 2.5 Flash -> 2.5 Pro
 export const TTS_MODEL_CHAIN = [
   'gemini-3.1-flash-tts-preview',
   'gemini-2.5-flash-preview-tts',
   'gemini-2.5-pro-preview-tts',
 ] as const;
 
-// For real-time VoiceChat (speed over quality), start at Flash
+// Fast chain for voice mode
 export const TTS_MODEL_CHAIN_FAST = [
   'gemini-3.1-flash-tts-preview',
   'gemini-2.5-flash-preview-tts',
+  'gemini-2.5-pro-preview-tts',
 ] as const;
 
 export interface GeminiVoice {
@@ -115,10 +116,10 @@ export function isModelNotFound(e: any): boolean {
 }
 
 /**
- * Splits text into natural, digestible narration segments (paragraphs or sentence chunks).
+ * Prepares clean narration text without splitting normal messages into multiple quota-consuming requests.
  * Strips out OOC tags, raw dice rolls, and markdown styling while preserving dialogues.
  */
-export function splitIntoSpeechSegments(text: string, maxSegmentLen: number = 400): string[] {
+export function splitIntoSpeechSegments(text: string, maxSegmentLen: number = 3500): string[] {
   if (!text) return [];
 
   // Strip OOC tags, director blocks, dice tags, and markdown markup
@@ -132,35 +133,27 @@ export function splitIntoSpeechSegments(text: string, maxSegmentLen: number = 40
 
   if (!clean) return [];
 
-  // Split by double newlines first (paragraphs)
+  // If within single request capacity, do not split
+  if (clean.length <= maxSegmentLen) {
+    return [clean];
+  }
+
+  // Split only oversized stories by paragraph boundaries
   const rawParagraphs = clean.split(/\n\n+/).map(p => p.trim()).filter(Boolean);
   const segments: string[] = [];
+  let currentChunk = '';
 
   for (const para of rawParagraphs) {
-    if (para.length <= maxSegmentLen) {
-      segments.push(para);
-      continue;
+    if ((currentChunk + '\n\n' + para).trim().length <= maxSegmentLen) {
+      currentChunk = currentChunk ? `${currentChunk}\n\n${para}` : para;
+    } else {
+      if (currentChunk) segments.push(currentChunk);
+      currentChunk = para;
     }
+  }
 
-    // Split long paragraphs by sentence boundaries (.!?) without breaking mid-sentence
-    const sentences = para.match(/[^.!?]+[.!?]+["']?|[^.!?]+$/g) || [para];
-    let currentChunk = '';
-
-    for (const sentence of sentences) {
-      const trimmedSentence = sentence.trim();
-      if (!trimmedSentence) continue;
-
-      if ((currentChunk + ' ' + trimmedSentence).trim().length <= maxSegmentLen) {
-        currentChunk = currentChunk ? `${currentChunk} ${trimmedSentence}` : trimmedSentence;
-      } else {
-        if (currentChunk) segments.push(currentChunk);
-        currentChunk = trimmedSentence;
-      }
-    }
-
-    if (currentChunk) {
-      segments.push(currentChunk);
-    }
+  if (currentChunk) {
+    segments.push(currentChunk);
   }
 
   return segments.length > 0 ? segments : [clean];
@@ -433,27 +426,6 @@ export class TtsEngine {
     this.setSpeaking(true);
     this._totalSegments = segments.length;
 
-    // Cache of synthesized audio promises for pre-buffering
-    const audioPromises: Promise<string | null>[] = segments.map((seg, idx) => {
-      // Start synthesizing the first 2 segments immediately, then lazy load
-      if (idx <= 1) {
-        return this.synthesize(seg, options.voiceName, options.stylePrefix, options.useFastChain ?? true);
-      }
-      return null as any;
-    });
-
-    const getAudioPromise = (idx: number): Promise<string | null> => {
-      if (!audioPromises[idx]) {
-        audioPromises[idx] = this.synthesize(
-          segments[idx],
-          options.voiceName,
-          options.stylePrefix,
-          options.useFastChain ?? true
-        );
-      }
-      return audioPromises[idx];
-    };
-
     for (let i = 0; i < segments.length; i++) {
       if (myCancel.cancelled) break;
 
@@ -461,12 +433,12 @@ export class TtsEngine {
       this._currentSegmentText = segments[i];
       options.onSegmentStart?.(i, segments.length, segments[i]);
 
-      // Trigger pre-fetching for the next segment (i + 1)
-      if (i + 1 < segments.length) {
-        getAudioPromise(i + 1);
-      }
-
-      const b64 = await getAudioPromise(i);
+      const b64 = await this.synthesize(
+        segments[i],
+        options.voiceName,
+        options.stylePrefix,
+        options.useFastChain ?? true
+      );
       if (myCancel.cancelled) break;
 
       if (b64) {

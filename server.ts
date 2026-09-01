@@ -36,17 +36,22 @@ loadEnvFile(".env");
 // agent/research families and the omni/tts/live/native-audio variants that the
 // client routes by substring.
 const ALLOWED_MODELS = new Set([
-  "gemini-3-flash-preview",
-  "gemini-3.1-pro-preview",
+  "gemini-3.7-flash",
+  "gemini-3.7-pro",
   "gemini-3.1-flash-lite",
+  "gemini-3.1-pro-preview",
+  "gemini-2.5-flash",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-pro",
+  "gemini-3-flash-preview",
   "gemini-3.5-flash",
   "gemini-3.5-flash-lite",
   "gemini-3.6-flash",
-  "gemini-3.7-flash",
-  "gemini-3.7-pro",
   "gemini-3.1-flash-live-preview",
   "gemini-2.5-flash-native-audio-preview-12-2025",
   "gemini-3.1-flash-tts-preview",
+  "gemini-2.5-pro-preview-tts",
+  "gemini-2.5-flash-preview-tts",
   "gemini-pro-latest",
   // Legacy models accepted for older cached clients
   "gemini-1.5-flash",
@@ -55,11 +60,6 @@ const ALLOWED_MODELS = new Set([
   "gemini-2.0-flash-001",
   "gemini-2.0-flash-exp",
   "gemini-2.0-pro-exp-02-05",
-  "gemini-2.5-flash",
-  "gemini-2.5-flash-lite",
-  "gemini-2.5-pro",
-  "gemini-2.5-pro-preview-tts",
-  "gemini-2.5-flash-preview-tts",
 ]);
 
 const ALLOWED_AGENT_PATTERN = /^(antigravity|deep-research)-[a-z0-9._-]+$/i;
@@ -211,24 +211,31 @@ function getFallbackModel(currentModel: string, config?: any): string | null {
     if (currentModel === 'gemini-3.1-flash-tts-preview') {
       return 'gemini-2.5-flash-preview-tts';
     }
+    if (currentModel === 'gemini-2.5-flash-preview-tts') {
+      return 'gemini-2.5-pro-preview-tts';
+    }
     if (currentModel === 'gemini-2.5-pro-preview-tts') {
-      return 'gemini-2.5-flash-preview-tts';
+      return null;
     }
     return null;
   }
 
-  if (currentModel === 'gemini-3.1-pro-preview') {
-    return 'gemini-3.5-flash';
-  }
-  if (currentModel === 'gemini-3.6-flash' || currentModel === 'gemini-3.5-flash' || currentModel === 'gemini-3-flash-preview') {
+  // Fast-first ladder prioritizing quick, low-latency models
+  if (currentModel === 'gemini-3.1-pro-preview' || currentModel === 'gemini-2.5-pro') {
     return 'gemini-3.1-flash-lite';
   }
-  if (currentModel === 'gemini-3.1-flash-lite') {
-    return 'gemini-3.5-flash-lite';
+  if (currentModel === 'gemini-3.7-flash' || currentModel === 'gemini-3.6-flash' || currentModel === 'gemini-3.5-flash' || currentModel === 'gemini-2.5-flash') {
+    return 'gemini-3.1-flash-lite';
   }
-  // Avoid falling back below the lite tier or from agent/research models
-  if (currentModel !== 'gemini-3.5-flash-lite' && !currentModel.startsWith('antigravity') && !currentModel.startsWith('deep-research')) {
-    return 'gemini-3.5-flash';
+  if (currentModel === 'gemini-3.1-flash-lite' || currentModel === 'gemini-3.5-flash-lite') {
+    return 'gemini-2.5-flash-lite';
+  }
+  if (currentModel === 'gemini-2.5-flash-lite') {
+    return 'gemini-2.5-flash';
+  }
+  // Avoid falling back from agent/research models unless transiently unavailable
+  if (!currentModel.startsWith('antigravity') && !currentModel.startsWith('deep-research')) {
+    return 'gemini-3.1-flash-lite';
   }
   return null;
 }
@@ -240,9 +247,12 @@ function isTransientError(err: any): boolean {
     status === 429 ||
     status === 503 ||
     status === 500 ||
+    status === 404 ||
+    status === 400 ||
     errMsg.includes('429') ||
     errMsg.includes('503') ||
     errMsg.includes('500') ||
+    errMsg.includes('404') ||
     errMsg.includes('UNAVAILABLE') ||
     errMsg.includes('RESOURCE_EXHAUSTED') ||
     errMsg.includes('quota') ||
@@ -251,6 +261,8 @@ function isTransientError(err: any): boolean {
     errMsg.includes('high demand') ||
     errMsg.includes('temporary') ||
     errMsg.includes('overloaded') ||
+    errMsg.includes('not found') ||
+    errMsg.includes('not supported') ||
     errMsg.includes('Service Unavailable')
   );
 }
@@ -305,21 +317,21 @@ async function startServer() {
           const isTransient = isTransientError(err);
           console.error(`Gemini generate error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
           
-          if (attempt >= maxAttempts || !isTransient) {
-            // Try fallback model if we have one and it's a transient/overload error
-            if (isTransient) {
-              const fallback = getFallbackModel(model, config);
-              if (fallback) {
-                console.warn(`Falling back from ${model} to ${fallback} due to demand/quota issues.`);
-                model = fallback;
-                attempt = 0; // Reset attempts for the fallback model
-                continue;
-              }
+          if (isTransient) {
+            const fallback = getFallbackModel(model, config);
+            if (fallback && fallback !== model) {
+              console.warn(`Falling back immediately from ${model} to ${fallback} due to demand/quota/transient issue.`);
+              model = fallback;
+              attempt = 0; // Reset attempts for the fallback model
+              continue;
             }
+          }
+
+          if (attempt >= maxAttempts || !isTransient) {
             throw err;
           }
           
-          const waitTime = delay + Math.random() * 2000;
+          const waitTime = delay + Math.random() * 1000;
           console.warn(`Retrying in ${Math.round(waitTime)}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           delay *= 2; // Exponential backoff
@@ -336,9 +348,17 @@ async function startServer() {
     // Everything after this point speaks SSE — including errors — so commit to
     // the stream headers up front and never fall back to JSON mid-flight.
     let clientGone = false;
-    req.on("close", () => { clientGone = true; });
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        clientGone = true;
+      }
+    });
+
     const sendEvent = (payload: unknown) => {
-      if (!clientGone && !res.destroyed) res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      if (!clientGone && !res.destroyed && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        if (typeof (res as any).flush === "function") (res as any).flush();
+      }
     };
     try {
       if (rejectModel(res, req.body?.model)) return;
@@ -360,58 +380,65 @@ async function startServer() {
 
       let attempt = 0;
       const maxAttempts = 3;
-      let stream: any = null;
-      let delay = 1500;
+      let delay = 1000;
+      let chunksSent = 0;
 
       while (attempt < maxAttempts) {
         if (clientGone) return;
         try {
-          stream = await ai.models.generateContentStream({
+          const stream = await ai.models.generateContentStream({
             model,
             contents,
             config
           });
-          break; // Success starting the stream!
+          
+          for await (const chunk of stream) {
+            if (clientGone) break;
+            chunksSent++;
+            const text = chunk.text || "";
+            sendEvent({
+              ...chunk,
+              text,
+              candidates: chunk.candidates || (text ? [{ content: { parts: [{ text }] } }] : undefined)
+            });
+          }
+          break; // Successfully streamed!
         } catch (err: any) {
+          // If we already sent chunks to the client, we cannot switch models mid-flight
+          if (chunksSent > 0) {
+            throw err;
+          }
+
           attempt++;
           const isTransient = isTransientError(err);
           console.error(`Gemini generate stream error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
           
-          if (attempt >= maxAttempts || !isTransient) {
-            if (isTransient) {
-              const fallback = getFallbackModel(model, config);
-              if (fallback) {
-                console.warn(`Falling back stream from ${model} to ${fallback} due to demand/quota issues.`);
-                model = fallback;
-                attempt = 0; // Reset attempts for fallback model
-                continue;
-              }
+          if (isTransient) {
+            const fallback = getFallbackModel(model, config);
+            if (fallback && fallback !== model) {
+              console.warn(`Falling back stream from ${model} to ${fallback} due to demand/quota/unavailable.`);
+              model = fallback;
+              attempt = 0; // Reset attempts for the fallback model
+              continue;
             }
+          }
+
+          if (attempt >= maxAttempts || !isTransient) {
             throw err;
           }
 
           if (clientGone) return;
-          const waitTime = delay + Math.random() * 1500;
-          console.warn(`Retrying stream start in ${Math.round(waitTime)}ms...`);
+          const waitTime = delay + Math.random() * 1000;
+          console.warn(`Retrying stream in ${Math.round(waitTime)}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           delay *= 2;
         }
       }
-      if (clientGone) return;
       
-      for await (const chunk of stream) {
-        // Stop draining the paid upstream stream as soon as the client goes
-        // away (tab closed, navigation, aborted fetch) — otherwise the server
-        // keeps generating tokens nobody will ever read.
-        if (clientGone) break;
-        sendEvent(chunk);
+      if (!clientGone && !res.destroyed && !res.writableEnded) {
+        res.write("data: [DONE]\n\n");
       }
-      if (!clientGone) {
-        sendEvent("[DONE]");
-        res.end();
-      } else {
-        res.end();
-      }
+      res.end();
     } catch (err: any) {
       console.error("Gemini generate stream final failure:", err);
       sendEvent({ error: err.message || String(err) });
@@ -455,20 +482,21 @@ async function startServer() {
           const isTransient = isTransientError(err);
           console.error(`Gemini interact error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
           
-          if (attempt >= maxAttempts || !isTransient) {
-            if (isTransient) {
-              const fallback = getFallbackModel(model);
-              if (fallback) {
-                console.warn(`Falling back interact from ${model} to ${fallback} due to demand/quota issues.`);
-                model = fallback;
-                attempt = 0;
-                continue;
-              }
+          if (isTransient) {
+            const fallback = getFallbackModel(model);
+            if (fallback && fallback !== model) {
+              console.warn(`Falling back interact immediately from ${model} to ${fallback} due to demand/quota issues.`);
+              model = fallback;
+              attempt = 0;
+              continue;
             }
+          }
+
+          if (attempt >= maxAttempts || !isTransient) {
             throw err;
           }
 
-          const waitTime = delay + Math.random() * 2000;
+          const waitTime = delay + Math.random() * 1000;
           console.warn(`Retrying interact in ${Math.round(waitTime)}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           delay *= 2;
@@ -485,9 +513,17 @@ async function startServer() {
     // Same SSE contract as /generate/stream: headers up front, errors as data
     // events, and upstream generation abandoned when the client disconnects.
     let clientGone = false;
-    req.on("close", () => { clientGone = true; });
+    res.on("close", () => {
+      if (!res.writableEnded) {
+        clientGone = true;
+      }
+    });
+
     const sendEvent = (payload: unknown) => {
-      if (!clientGone && !res.destroyed) res.write(`data: ${JSON.stringify(payload)}\n\n`);
+      if (!clientGone && !res.destroyed && !res.writableEnded) {
+        res.write(`data: ${JSON.stringify(payload)}\n\n`);
+        if (typeof (res as any).flush === "function") (res as any).flush();
+      }
     };
     try {
       if (rejectModel(res, req.body?.model, req.body?.agent)) return;
@@ -509,13 +545,13 @@ async function startServer() {
 
       let attempt = 0;
       const maxAttempts = 3;
-      let stream: any = null;
-      let delay = 1500;
+      let delay = 1000;
+      let chunksSent = 0;
 
       while (attempt < maxAttempts) {
         if (clientGone) return;
         try {
-          stream = await ai.interactions.create({
+          const stream = await ai.interactions.create({
             model,
             input,
             system_instruction,
@@ -526,40 +562,45 @@ async function startServer() {
             previous_interaction_id,
             stream: true
           });
+          
+          for await (const chunk of stream) {
+            if (clientGone) break;
+            chunksSent++;
+            sendEvent(chunk);
+          }
           break;
         } catch (err: any) {
+          if (chunksSent > 0) {
+            throw err;
+          }
+
           attempt++;
           const isTransient = isTransientError(err);
           console.error(`Gemini interact stream error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
           
-          if (attempt >= maxAttempts || !isTransient) {
-            if (isTransient) {
-              const fallback = getFallbackModel(model);
-              if (fallback) {
-                console.warn(`Falling back interact stream from ${model} to ${fallback} due to demand/quota issues.`);
-                model = fallback;
-                attempt = 0;
-                continue;
-              }
+          if (isTransient) {
+            const fallback = getFallbackModel(model);
+            if (fallback && fallback !== model) {
+              console.warn(`Falling back interact stream from ${model} to ${fallback} due to demand/quota issues.`);
+              model = fallback;
+              attempt = 0;
+              continue;
             }
+          }
+
+          if (attempt >= maxAttempts || !isTransient) {
             throw err;
           }
 
           if (clientGone) return;
-          const waitTime = delay + Math.random() * 1500;
-          console.warn(`Retrying interact stream start in ${Math.round(waitTime)}ms...`);
+          const waitTime = delay + Math.random() * 1000;
+          console.warn(`Retrying interact stream in ${Math.round(waitTime)}ms...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
           delay *= 2;
         }
       }
-      if (clientGone) return;
-      
-      for await (const chunk of stream) {
-        if (clientGone) break;
-        sendEvent(chunk);
-      }
-      if (!clientGone) {
-        sendEvent("[DONE]");
+      if (!clientGone && !res.destroyed && !res.writableEnded) {
+        res.write("data: [DONE]\n\n");
       }
       res.end();
     } catch (err: any) {

@@ -187,12 +187,12 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     if (picks.length === 0) return;
     setIsGeneratingLevelTwo(true);
     try {
-      const prompt = `The user selected these high-level story topics: [${picks.join(", ")}] for mode ${appMode} (mature=${matureEnabledInForge}). Generate 8 highly exciting, specific sub-themes, tropes, or story hooks (each 2 to 4 words, e.g. 'Enemies to Lovers', 'Corporate Rogue AI', 'Ancient Fae Bargain', 'Haunted Relic', 'Neon Rain Heist'). Return ONLY a JSON array of strings.`;
+      const prompt = `The user selected these high-level story topics: [${picks.join(", ")}] for mode ${appMode} (mature=${matureEnabledInForge}). Generate 8 highly exciting, specific sub-themes, tropes, or story hooks (each 2 to 4 words, e.g. 'Enemies to Lovers', 'Corporate Rogue AI', 'Ancient Fae Bargargain', 'Haunted Relic', 'Neon Rain Heist'). Return ONLY a JSON array of strings.`;
       const res = await fetch('/api/gemini/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gemini-3.1-flash-lite-preview',
+          model: 'gemini-3.1-flash-lite',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: { responseMimeType: 'application/json', responseSchema: { type: 'ARRAY', items: { type: 'STRING' } } }
         })
@@ -243,7 +243,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
     try {
       // Try Gemini flash-lite with fallback to offline
       const prompt = `Given subjects: ${picks.join(", ")} and mode ${appMode}. Suggest 6 more distinct subject matters (single words or 2-word phrases) not in [${picks.join(", ")}], tailored to mode. Return ONLY JSON array of strings.`;
-      const res = await fetch('/api/gemini/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model: 'gemini-3.1-flash-lite-preview', contents: [{ role:'user', parts:[{text: prompt}]} ], generationConfig:{ responseMimeType:'application/json', responseSchema:{ type:'ARRAY', items:{type:'STRING'}}}})});
+      const res = await fetch('/api/gemini/generate', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ model: 'gemini-3.1-flash-lite', contents: [{ role:'user', parts:[{text: prompt}]} ], generationConfig:{ responseMimeType:'application/json', responseSchema:{ type:'ARRAY', items:{type:'STRING'}}}})});
       if (res.ok) {
         const data = await res.json();
         const txt = data.candidates?.[0]?.content?.parts?.[0]?.text;
@@ -271,7 +271,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'gemini-3.1-flash-lite-preview',
+          model: 'gemini-3.1-flash-lite',
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
           generationConfig: {
             responseMimeType: 'application/json',

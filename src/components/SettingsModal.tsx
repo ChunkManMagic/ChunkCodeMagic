@@ -265,15 +265,15 @@ export function SettingsModal({ onClose }: SettingsModalProps) {
                     onChange={(e) => handleChange('activeModel', e.target.value)}
                     className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-colors"
                   >
-                    <optgroup label="Fast & General (Default)">
-                      <option value="gemini-3.6-flash">Gemini 3.6 Flash (Recommended for Interactive Stories)</option>
-                      <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-                      <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite</option>
-                      <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
-                      <option value="gemini-3-flash-preview">Gemini 3 Flash Preview</option>
+                    <optgroup label="Ultra-Fast & Responsive (Recommended)">
+                      <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (Fastest • Instant Sub-Second Responses)</option>
+                      <option value="gemini-3.7-flash">Gemini 3.7 Flash (Creative Narrative & Depth)</option>
+                      <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash-Lite (Lightweight & Low Latency)</option>
+                      <option value="gemini-2.5-flash">Gemini 2.5 Flash (Balanced Standard)</option>
                     </optgroup>
                     <optgroup label="Deep Reasoning (Pro Models)">
-                      <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+                      <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (Complex Reasoning)</option>
+                      <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
                     </optgroup>
                     <optgroup label="Autonomous Agents">
                       <option value="antigravity-preview-05-2026">Antigravity Preview</option>

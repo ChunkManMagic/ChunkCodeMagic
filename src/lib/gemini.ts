@@ -191,10 +191,19 @@ export function getGenAI() {
 
               for (const line of lines) {
                 if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                  let data: any = null;
                   try {
-                    const data = JSON.parse(line.slice(6));
+                    data = JSON.parse(line.slice(6));
+                  } catch (e) {
+                    // Ignore parse errors for incomplete chunks
+                    continue;
+                  }
+                  if (data) {
                     if (data.error) {
-                      throw new Error(data.error);
+                      const msg = typeof data.error === 'object'
+                        ? (data.error.message || JSON.stringify(data.error))
+                        : String(data.error);
+                      throw new Error(msg);
                     }
                     if (data.event_type === "step.delta") {
                        if (data.delta?.type === "text") {
@@ -204,8 +213,6 @@ export function getGenAI() {
                          };
                        }
                     }
-                  } catch (e) {
-                    // Ignore parse errors for incomplete chunks
                   }
                 }
               }
@@ -245,18 +252,31 @@ export function getGenAI() {
 
               for (const line of lines) {
                 if (line.startsWith('data: ') && line !== 'data: [DONE]') {
+                  let data: any = null;
                   try {
-                    const data = JSON.parse(line.slice(6));
+                    data = JSON.parse(line.slice(6));
+                  } catch (e) {
+                    // Ignore parse errors for incomplete chunks
+                    continue;
+                  }
+                  if (data) {
                     if (data.error) {
-                      throw new Error(data.error);
+                      const msg = typeof data.error === 'object'
+                        ? (data.error.message || JSON.stringify(data.error))
+                        : String(data.error);
+                      throw new Error(msg);
                     }
                     // the standard streaming chunk format:
-                    if (!data.text && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                    if (!data.text && data.candidates && data.candidates[0]?.content?.parts) {
+                      const parts = data.candidates[0].content.parts;
+                      data.text = parts
+                        .filter((p: any) => typeof p.text === 'string')
+                        .map((p: any) => p.text)
+                        .join('');
+                    } else if (!data.text && typeof data.candidates?.[0]?.content?.parts?.[0]?.text === 'string') {
                       data.text = data.candidates[0].content.parts[0].text;
                     }
                     yield data;
-                  } catch (e) {
-                    // Ignore parse errors for incomplete chunks
                   }
                 }
               }
@@ -314,38 +334,54 @@ async function withRetry<T>(fn: () => Promise<T>, retries = 3, delay = 1500): Pr
       throw new Error("Gemini is not available in your current location.");
     }
 
+    // If it's a 503 or high demand error, throw immediately so the caller's fallback mechanism can switch to the fast alternative without delay
+    const isDemandSpike = 
+      status === 503 ||
+      errorMessage.includes('503') ||
+      errorMessage.includes('high demand') ||
+      errorMessage.includes('UNAVAILABLE') ||
+      errorMessage.includes('Service Unavailable') ||
+      errorMessage.includes('overloaded');
+
+    if (isDemandSpike) {
+      throw error;
+    }
+
     const isTransient = 
       status === 429 || 
       status === 500 || 
-      status === 503 ||
       errorMessage.includes('429') || 
       errorMessage.includes('500') || 
-      errorMessage.includes('503') || 
-      errorMessage.includes('UNAVAILABLE') || 
       errorMessage.includes('quota') || 
       errorMessage.includes('limit') || 
       errorMessage.includes('exhausted') ||
-      errorMessage.includes('high demand') ||
-      errorMessage.includes('temporary') ||
-      errorMessage.includes('overloaded') ||
-      errorMessage.includes('Service Unavailable');
+      errorMessage.includes('temporary');
 
     if (retries > 0 && isTransient) {
-      const waitTime = delay + Math.random() * 2000;
+      const waitTime = delay + Math.random() * 500;
       console.warn(`Transient error hit (status ${status}), retrying in ${Math.round(waitTime)}ms... (${retries} retries left)`);
       await new Promise(resolve => setTimeout(resolve, waitTime));
-      return withRetry(fn, retries - 1, delay * 2.5);
+      return withRetry(fn, retries - 1, delay * 2);
     }
     
     throw error;
   }
 }
 
+function getQuickFallbackModel(activeModel: string): string {
+  if (activeModel === 'gemini-3.1-flash-lite' || activeModel === 'gemini-2.5-flash-lite') {
+    return 'gemini-2.5-flash';
+  }
+  return 'gemini-3.1-flash-lite';
+}
+
 function isFallbackable(err: any): boolean {
   const errMsg = String(err?.message || err || '');
   const status = err?.status || err?.code;
   return (
+    status === 400 ||
     status === 403 ||
+    status === 404 ||
     status === 429 ||
     status === 500 ||
     status === 503 ||
@@ -353,7 +389,11 @@ function isFallbackable(err: any): boolean {
     errMsg.includes('PERMISSION_DENIED') ||
     errMsg.includes('RESOURCE_EXHAUSTED') ||
     errMsg.includes('UNAVAILABLE') ||
+    errMsg.includes('not found') ||
+    errMsg.includes('not supported') ||
+    errMsg.includes('400') ||
     errMsg.includes('403') ||
+    errMsg.includes('404') ||
     errMsg.includes('429') ||
     errMsg.includes('500') ||
     errMsg.includes('503') ||
@@ -985,7 +1025,7 @@ async function generateStructuredData(prompt: string, systemPrompt: string, sche
       String(err).includes('429') ||
       String(err).includes('403');
 
-    const fallbackModel = 'gemini-3.5-flash';
+    const fallbackModel = getQuickFallbackModel(settings.activeModel);
     if (isFallbackableError && settings.activeModel !== fallbackModel) {
       console.warn(`Structured Data: Fallback to ${fallbackModel} due to error with ${settings.activeModel}:`, err.message);
       response = await withRetry(() => ai.models.generateContent({
@@ -1236,10 +1276,11 @@ ${getToneDirective()}${getMatureContentDirective()}`;
       String(err).includes('429') ||
       String(err).includes('403');
 
-      if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
-        console.warn(`Profile Generation: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
+      const fallbackModel = getQuickFallbackModel(settings.activeModel);
+      if (isFallbackableError && settings.activeModel !== fallbackModel) {
+        console.warn(`Profile Generation: Fallback to ${fallbackModel} due to error with ${settings.activeModel}:`, err.message);
         response = await withRetry(() => ai.models.generateContent({
-          model: 'gemini-3.5-flash',
+          model: fallbackModel,
           contents,
           config: schemaConfig
         }));
@@ -1794,10 +1835,11 @@ Updated Summary:`;
   } catch (err: any) {
     const isFallbackableError = isFallbackable(err);
 
-    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
-      console.warn(`summarizeHistory: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
+    const fallbackModel = getQuickFallbackModel(settings.activeModel);
+    if (isFallbackableError && settings.activeModel !== fallbackModel) {
+      console.warn(`summarizeHistory: Fallback to ${fallbackModel} due to error with ${settings.activeModel}:`, err.message);
       response = await withRetry(() => ai.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: fallbackModel,
         contents: prompt
       }));
     } else {
@@ -1839,38 +1881,47 @@ export async function* generateTextReplyStream(
   }
 
   const ai = getGenAI();
-  
-  let responseStream;
+  const contents = [...buildHistory(history), { role: "user", parts: [{ text: userInput }] }];
+  const config = { 
+    systemInstruction,
+    temperature: 0.9
+  };
+
+  let chunksEmitted = 0;
   try {
-    const contents = [...buildHistory(history), { role: "user", parts: [{ text: userInput }] }];
-    responseStream = await ai.models.generateContentStream({
+    const responseStream = await ai.models.generateContentStream({
       model: settings.activeModel,
       contents,
-      config: { 
-        systemInstruction,
-        temperature: 0.9
-      }
+      config
     });
+    for await (const chunk of responseStream) {
+      chunksEmitted++;
+      yield chunk.text || "";
+    }
+    return;
   } catch (err: any) {
-    const isFallbackableError = isFallbackable(err);
+    if (chunksEmitted > 0) {
+      throw err;
+    }
 
-    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
-      console.warn(`generateTextReplyStream: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
-      responseStream = await ai.models.generateContentStream({
-        model: 'gemini-3.5-flash',
-        contents: [...buildHistory(history), { role: "user", parts: [{ text: userInput }] }],
-        config: { 
-          systemInstruction,
-          temperature: 0.9
-        }
+    const isFallbackableError = isFallbackable(err);
+    const fallbackModel = (settings.activeModel === 'gemini-3.1-flash-lite' || settings.activeModel === 'gemini-2.5-flash-lite')
+      ? 'gemini-2.5-flash'
+      : 'gemini-3.1-flash-lite';
+
+    if (isFallbackableError && settings.activeModel !== fallbackModel) {
+      console.warn(`generateTextReplyStream: Fallback to ${fallbackModel} due to error with ${settings.activeModel}:`, err.message);
+      const fallbackStream = await ai.models.generateContentStream({
+        model: fallbackModel,
+        contents,
+        config
       });
+      for await (const chunk of fallbackStream) {
+        yield chunk.text || "";
+      }
     } else {
       throw err;
     }
-  }
-  
-  for await (const chunk of responseStream) {
-    yield chunk.text || "";
   }
 }
 
@@ -2039,10 +2090,11 @@ ${guideInstruction}
   } catch (err: any) {
     const isFallbackableError = isFallbackable(err);
 
-    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
-      console.warn(`suggestNextAction: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
+    const fallbackModel = getQuickFallbackModel(settings.activeModel);
+    if (isFallbackableError && settings.activeModel !== fallbackModel) {
+      console.warn(`suggestNextAction: Fallback to ${fallbackModel} due to error with ${settings.activeModel}:`, err.message);
       chat = ai.chats.create({
-        model: 'gemini-3.5-flash',
+        model: fallbackModel,
         config: { 
           systemInstruction,
           temperature: 0.85 
@@ -2089,10 +2141,11 @@ RULES:
   } catch (err: any) {
     const isFallbackableError = isFallbackable(err);
 
-    if (isFallbackableError && settings.activeModel !== 'gemini-3.5-flash') {
-      console.warn(`refineInput: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
+    const fallbackModel = getQuickFallbackModel(settings.activeModel);
+    if (isFallbackableError && settings.activeModel !== fallbackModel) {
+      console.warn(`refineInput: Fallback to ${fallbackModel} due to error with ${settings.activeModel}:`, err.message);
       chat = ai.chats.create({
-        model: 'gemini-3.5-flash',
+        model: fallbackModel,
         config: { systemInstruction },
         history: buildHistory(history)
       });
@@ -2128,10 +2181,14 @@ Text: ${text.slice(0, 4000)}`;
 
   // Valid Google Gemini TTS models
   const TTS_MODEL_CHAIN = [
+    'gemini-3.1-flash-tts-preview',
     'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-pro-preview-tts',
   ];
   const TTS_MODEL_CHAIN_FAST = [
+    'gemini-3.1-flash-tts-preview',
     'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-pro-preview-tts',
   ];
 
   const chain = useFastChain ? TTS_MODEL_CHAIN_FAST : TTS_MODEL_CHAIN;
@@ -2180,7 +2237,9 @@ Text: ${text.slice(0, 4000)}`;
 export async function generateSpeechWithDirectorPrompt(text: string, voiceName?: string, stylePrefix?: string | null, useFastChain: boolean = false): Promise<string | null> {
   const prompt = `${stylePrefix ? stylePrefix + '\n\n' : ''}${text.slice(0, 4000)}`;
   const TTS_CHAIN = [
+    'gemini-3.1-flash-tts-preview',
     'gemini-2.5-flash-preview-tts',
+    'gemini-2.5-pro-preview-tts',
   ];
   const ai = getGenAI();
   const config = {
