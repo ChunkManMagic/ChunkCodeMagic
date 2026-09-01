@@ -197,11 +197,14 @@ function base64ToBytes(b64: string): Uint8Array {
 
 // PCM16 mono 24kHz -> AudioBuffer
 function pcmToAudioBuffer(bytes: Uint8Array, ctx: AudioContext): AudioBuffer {
-  // bytes are little-endian PCM16
-  const int16 = new Int16Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 2));
-  const buf = ctx.createBuffer(1, int16.length, SAMPLE_RATE);
+  // Ensure safe 2-byte alignment without RangeError
+  const alignedLength = Math.floor(bytes.byteLength / 2);
+  const dataView = new DataView(bytes.buffer, bytes.byteOffset, alignedLength * 2);
+  const buf = ctx.createBuffer(1, alignedLength, SAMPLE_RATE);
   const ch = buf.getChannelData(0);
-  for (let i = 0; i < int16.length; i++) ch[i] = int16[i] / 32768;
+  for (let i = 0; i < alignedLength; i++) {
+    ch[i] = dataView.getInt16(i * 2, true) / 32768;
+  }
   return buf;
 }
 

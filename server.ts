@@ -212,10 +212,10 @@ function getFallbackModel(currentModel: string, config?: any): string | null {
       return 'gemini-2.5-flash-preview-tts';
     }
     if (currentModel === 'gemini-2.5-flash-preview-tts') {
-      return 'gemini-2.5-pro-preview-tts';
+      return 'gemini-3.1-flash-tts-preview';
     }
     if (currentModel === 'gemini-2.5-pro-preview-tts') {
-      return null;
+      return 'gemini-3.1-flash-tts-preview';
     }
     return null;
   }
@@ -317,10 +317,23 @@ async function startServer() {
           const isTransient = isTransientError(err);
           console.error(`Gemini generate error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
           
+          const isAudioRequest =
+            config?.responseModalities?.includes('AUDIO') ||
+            model.includes('-tts') ||
+            model.includes('native-audio') ||
+            model.includes('live');
+
           if (isTransient) {
+            // For audio/TTS requests, give flash model a quick retry before switching models
+            if (isAudioRequest && attempt < 2) {
+              const waitTime = 800 + Math.random() * 400;
+              console.warn(`TTS transient spike on ${model}, retrying attempt ${attempt + 1} in ${Math.round(waitTime)}ms...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              continue;
+            }
             const fallback = getFallbackModel(model, config);
             if (fallback && fallback !== model) {
-              console.warn(`Falling back immediately from ${model} to ${fallback} due to demand/quota/transient issue.`);
+              console.warn(`Falling back from ${model} to ${fallback} due to demand/quota/transient issue.`);
               model = fallback;
               attempt = 0; // Reset attempts for the fallback model
               continue;
