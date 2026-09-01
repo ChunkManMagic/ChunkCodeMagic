@@ -2236,7 +2236,10 @@ Text: ${text.slice(0, 4000)}`;
 // Backwards-compatible wrapper for callers that expect stylePrefix usage (Director Prompt)
 export async function generateSpeechWithDirectorPrompt(text: string, voiceName?: string, stylePrefix?: string | null, useFastChain: boolean = false): Promise<string | null> {
   const prompt = `${stylePrefix ? stylePrefix + '\n\n' : ''}${text.slice(0, 4000)}`;
-  const TTS_CHAIN = [
+  const TTS_CHAIN = useFastChain ? [
+    'gemini-3.1-flash-tts-preview',
+    'gemini-2.5-flash-preview-tts',
+  ] : [
     'gemini-3.1-flash-tts-preview',
     'gemini-2.5-flash-preview-tts',
     'gemini-2.5-pro-preview-tts',

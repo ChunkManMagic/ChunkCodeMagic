@@ -41,6 +41,13 @@ export interface PlayerProfile {
   coreBeliefs?: string;
   quirks?: string;
   relationship?: string;
+  pronouns?: string;
+  gender?: string;
+  age?: string;
+  attire?: string;
+  demeanor?: string;
+  psychologicalDrivers?: string;
+  relationshipDynamics?: string;
   // GAME MODE tracking (optional — only populated in Game mode sessions)
   currentHP?: number;
   maxHP?: number;
@@ -134,6 +141,7 @@ export interface CharacterProfile {
 
   // FICTIONLAB / NOVELAI PARITY FIELDS
   scenarioInstructions?: string; // Long-form Custom Scenario Instructions / director rules
+  customInstructions?: string;   // Alias for custom scenario/director instructions
   lorePieces?: LorePiece[];      // Structured Lore Pieces / Lorebook
   greetingMessage?: string;      // First AI message when story opens
 }
