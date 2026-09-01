@@ -42,7 +42,7 @@ export function useVoice(voiceName: string, _voiceSettings?: VoiceSettings, _sto
       const segments = splitIntoSpeechSegments(text);
       if (segments.length === 0) return;
 
-      const voiceNameToUse = settings.liveVoiceName || voiceName || 'Kore';
+      const voiceNameToUse = profile?.voiceName || settings.liveVoiceName || voiceName || 'Kore';
       const useFast = settings.voiceQuality !== 'quality';
 
       setIsPlaying(true);

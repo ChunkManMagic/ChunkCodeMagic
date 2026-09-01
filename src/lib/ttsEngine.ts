@@ -67,11 +67,14 @@ async function setCachedAudio(key: string, data: string): Promise<void> {
 
 // Ordered fallback chain: highest quality first — matches Android
 export const TTS_MODEL_CHAIN = [
+  'gemini-3.1-flash-tts-preview',
   'gemini-2.5-flash-preview-tts',
+  'gemini-2.5-pro-preview-tts',
 ] as const;
 
 // For real-time VoiceChat (speed over quality), start at Flash
 export const TTS_MODEL_CHAIN_FAST = [
+  'gemini-3.1-flash-tts-preview',
   'gemini-2.5-flash-preview-tts',
 ] as const;
 
@@ -166,12 +169,30 @@ export function splitIntoSpeechSegments(text: string, maxSegmentLen: number = 40
 // --- Web Audio playback (24kHz PCM16 mono, same format as Android AudioTrack) ---
 
 let audioCtx: AudioContext | null = null;
-function getAudioContext(): AudioContext {
+export function getAudioContext(): AudioContext {
   if (!audioCtx || audioCtx.state === 'closed') {
-    audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: SAMPLE_RATE });
+    const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+    audioCtx = new AudioContextClass({ sampleRate: SAMPLE_RATE });
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume().catch(() => {});
+  }
   return audioCtx;
+}
+
+// Unlock audio on mobile devices during any user tap
+if (typeof window !== 'undefined') {
+  const unlockAudio = () => {
+    try {
+      const ctx = getAudioContext();
+      if (ctx.state === 'suspended') {
+        ctx.resume().catch(() => {});
+      }
+    } catch {}
+  };
+  window.addEventListener('touchstart', unlockAudio, { passive: true, once: true });
+  window.addEventListener('touchend', unlockAudio, { passive: true, once: true });
+  window.addEventListener('click', unlockAudio, { passive: true, once: true });
 }
 
 function base64ToBytes(b64: string): Uint8Array {
@@ -200,7 +221,18 @@ export async function playPcmBase64(b64: string, onDone?: () => void, signal?: {
   try {
     const bytes = base64ToBytes(b64);
     const ctx = getAudioContext();
-    const buffer = pcmToAudioBuffer(bytes, ctx);
+    if (ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
+
+    let buffer: AudioBuffer;
+    // Check if it's a WAV container (starts with 'RIFF')
+    if (bytes.length > 4 && bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46) {
+      buffer = await ctx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+    } else {
+      buffer = pcmToAudioBuffer(bytes, ctx);
+    }
+
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.connect(ctx.destination);
@@ -218,8 +250,9 @@ export async function playPcmBytes(pcm: Uint8Array, onDone?: () => void): Promis
   if (!pcm || pcm.length < 44) return null;
   try {
     const ctx = getAudioContext();
-    // Heuristic: if pcm is already base64 string decoded bytes (raw PCM), convert directly.
-    // Android's PCM is raw; if we get raw bytes we treat same as above without base64 step.
+    if (ctx.state === 'suspended') {
+      await ctx.resume().catch(() => {});
+    }
     const buffer = pcmToAudioBuffer(pcm, ctx);
     const src = ctx.createBufferSource();
     src.buffer = buffer;
@@ -284,11 +317,11 @@ export async function synthesizeSpeech(
     ...(extraConfig || {}),
   };
 
-  // Per-model timeouts: Pro gets longer (it's slower but higher quality). Flash gets tighter window.
+  // Generous timeouts to prevent dropping to phone browser TTS under latency
   const timeoutMs = (model: string): number => {
-    if (model.includes('pro')) return 12000;
-    if (model.includes('flash')) return 6000;
-    return 5000;
+    if (model.includes('pro')) return 22000;
+    if (model.includes('flash')) return 16000;
+    return 14000;
   };
   const withTimeout = <T>(promise: Promise<T>, ms: number): Promise<T | null> => {
     return Promise.race([
@@ -303,7 +336,7 @@ export async function synthesizeSpeech(
         ai.models.generateContent({
           model,
           contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          config: configBase不易,
+          config: configBase,
         }) as Promise<any>,
         timeoutMs(model)
       );

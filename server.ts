@@ -201,13 +201,19 @@ function geminiGuard(req: express.Request, res: express.Response, next: express.
 }
 
 function getFallbackModel(currentModel: string, config?: any): string | null {
-  // If requesting audio, do not fallback to text-only models
+  // If requesting audio, fallback only to compatible audio models
   const isAudioRequest =
     config?.responseModalities?.includes('AUDIO') ||
     currentModel.includes('-tts') ||
     currentModel.includes('native-audio') ||
     currentModel.includes('live');
   if (isAudioRequest) {
+    if (currentModel === 'gemini-3.1-flash-tts-preview') {
+      return 'gemini-2.5-flash-preview-tts';
+    }
+    if (currentModel === 'gemini-2.5-pro-preview-tts') {
+      return 'gemini-2.5-flash-preview-tts';
+    }
     return null;
   }
 

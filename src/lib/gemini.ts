@@ -376,38 +376,46 @@ function buildPlayerBlock(profile: CharacterProfile): string {
   const ppPersonality = sanitizeUserInput(pp?.personality || 'Unknown');
   const ppBackstory = sanitizeUserInput(pp?.backstory || 'Unknown');
   const deepSheet = pp?.characterFlaws || pp?.secretMotive || pp?.speechPattern || pp?.likesAndDislikes || pp?.coreBeliefs || pp?.quirks || pp?.relationship
-    ? `\nDeep Character Sheet (the player's character is as fully realized as yours — respect it):
+    ? `\nPlayer Character Depth:
 ${pp.characterFlaws ? `- Flaws: ${pp.characterFlaws}` : ''}
 ${pp.secretMotive ? `- Secret Motive: ${pp.secretMotive}` : ''}
 ${pp.speechPattern ? `- Speech Pattern: ${pp.speechPattern}` : ''}
 ${pp.likesAndDislikes ? `- Likes/Dislikes: ${pp.likesAndDislikes}` : ''}
 ${pp.coreBeliefs ? `- Core Beliefs: ${pp.coreBeliefs}` : ''}
 ${pp.quirks ? `- Quirks: ${pp.quirks}` : ''}
-${pp.relationship ? `- Relationship to the world: ${pp.relationship}` : ''}
+${pp.relationship ? `- Relationship / Dynamics: ${pp.relationship}` : ''}
 `
     : '';
   const pTraits = pp?.traits;
-  const pTraitLine = pTraits && (pTraits.friendliness !== undefined || pTraits.assertiveness !== undefined || pTraits.empathy !== undefined)
-    ? `\nPlayer Personality Traits:\n- Friendliness: ${pTraits.friendliness ?? 50}/100\n- Assertiveness: ${pTraits.assertiveness ?? 50}/100\n- Empathy: ${pTraits.empathy ?? 50}/100\n`
+  const pTraitLines: string[] = [];
+  if (pTraits) {
+    Object.entries(pTraits).forEach(([trait, val]) => {
+      if (val !== undefined) {
+        pTraitLines.push(`- ${trait.charAt(0).toUpperCase() + trait.slice(1)}: ${val}/100`);
+      }
+    });
+  }
+  const pTraitBlock = pTraitLines.length > 0
+    ? `\nPlayer Personality Traits:\n${pTraitLines.join('\n')}\n`
     : '';
 
-  return `\nPLAYER CHARACTER:
+  return `\nPLAYER CHARACTER (The Human Player / Protagonist):
 Name: ${pp?.name || 'The Protagonist'}
-Description: ${pp?.description || 'A mysterious traveler'}
+Description: ${pp?.description || 'A central protagonist in the narrative'}
 Personality: ${ppPersonality}
 Backstory: ${ppBackstory}
-Appearance: ${pp?.appearance || 'Unknown'}
-Clothing: ${pp?.clothing || 'Unknown'}
+Appearance: ${pp?.appearance || 'Unspecified'}
+Clothing: ${pp?.clothing || 'Unspecified'}
 Accessories: ${pp?.accessories || 'None'}
-Hair: ${pp?.hairStyle || 'Unknown'} ${pp?.hairColor || ''}
-Eyes: ${pp?.eyeColor || 'Unknown'}
-${profile.mode === AppMode.GAME ? `Class: ${pp?.playerClass || 'Unknown'}\nRace: ${pp?.playerRace || 'Unknown'}\nHP: ${pp?.currentHP ?? '?'}/${pp?.maxHP ?? '?'}\nLevel: ${pp?.level ?? 1}\nXP: ${pp?.xp ?? 0}` : ''}
-${deepSheet}${pTraitLine}${inventoryBlock}`;
+Hair: ${pp?.hairStyle || ''} ${pp?.hairColor || ''}`.trim() + `
+Eyes: ${pp?.eyeColor || 'Unspecified'}
+${profile.mode === AppMode.GAME ? `Class: ${pp?.playerClass || 'Adventurer'}\nRace: ${pp?.playerRace || 'Human'}\nHP: ${pp?.currentHP ?? '?'}/${pp?.maxHP ?? '?'}\nLevel: ${pp?.level ?? 1}\nXP: ${pp?.xp ?? 0}` : ''}
+${deepSheet}${pTraitBlock}${inventoryBlock}`;
 }
 
 function buildCodexContext(codexEntries: CodexEntry[]): string {
   return codexEntries.length > 0
-    ? `\nWORLD CODEX (Lore & Rules - Most Relevant):\n${codexEntries.slice(-15).map(e => `[${e.category}: ${e.title}] - ${e.content}`).join('\n')}\n`
+    ? `\nWORLD CODEX & LORE REPOSITORY (Established Facts & Canon):\n${codexEntries.slice(-20).map(e => `[${e.category.toUpperCase()}: ${e.title}] - ${e.content}`).join('\n')}\n`
     : '';
 }
 
@@ -424,35 +432,42 @@ export function buildScenarioDirective(profile: CharacterProfile): string {
   lines.push("");
 
   lines.push("[WORLD & SETTING]");
-  lines.push(`Setting: ${profile.clothing || profile.worldAtmosphere || profile.name}`);
+  lines.push(`Setting / Environment: ${profile.worldAtmosphere || profile.clothing || profile.name}`);
   if (profile.timePeriod) lines.push(`Time Period / Era: ${profile.timePeriod}`);
   if (profile.keyLocations) lines.push(`Key Locations & Geography: ${profile.keyLocations}`);
-  if (profile.factions) lines.push(`Factions & Societies: ${profile.factions}`);
+  if (profile.factions) lines.push(`Factions, Powers & Societies: ${profile.factions}`);
   if (profile.magicOrTechnologyLevel) lines.push(`Magic / Technology Level: ${profile.magicOrTechnologyLevel}`);
   lines.push("");
 
-  lines.push("[NARRATIVE & STYLE]");
+  lines.push("[NARRATIVE MODE & STORYTELLING PHILOSOPHY]");
   if (profile.mode === AppMode.ROLEPLAY) {
-    lines.push("Mode: First-Person / In-Character Roleplay");
-    lines.push("POV: Second-person narrative interacting directly with the player.");
-    lines.push(`Portrayal: You are strictly directing and portraying '${profile.name}'. Keep dialog and actions completely in character.`);
-    lines.push("Responses: Write rich sensory and narrative descriptions with conversational depth, always leaving room for the user to respond.");
+    lines.push("Mode: Deep First-Person Character Roleplay");
+    lines.push("Perspective: Second-person narrative interacting directly with the player (\"you\").");
+    lines.push(`Portrayal: You embody '${profile.name}' with complete psychological depth, distinct conversational voice, internal motivations, and emotional reactivity.`);
+    lines.push("Narrative Standard: Write immersive, sensory-rich prose. Combine distinct dialogue cadence with expressive physical actions, environmental awareness, and subtle emotional cues. Leave natural room for the player to react.");
   } else if (profile.mode === AppMode.SCENARIO) {
-    lines.push("Mode: Tabletop / Campaign Scenario Game Master (GM)");
-    lines.push("POV: Second-person Game Master perspective addressing the player.");
-    lines.push("Role: Act as the Game Master (GM), describing the world, environment, NPCs, hazards, and reactions to player choices.");
-    lines.push("Responses: Provide vivid, detailed situations and sensory descriptions. Explicitly manage pacing and tension, driving the plot incrementally based on player choices while allowing freedom for unique actions.");
+    lines.push("Mode: Interactive Campaign Scenario & World Simulator");
+    lines.push("Perspective: Second-person Game Master (GM) addressing the player.");
+    lines.push("Role: Act as the Game Master (GM), describing the dynamic living world, environmental physics, hazards, NPCs, and unfolding consequences.");
+    lines.push("Narrative Standard: Deliver vivid descriptions with cinematic pacing. Maintain tension, respect cause and effect, present escalating stakes, and allow the player freedom to innovate.");
   } else {
     // AppMode.GAME
-    lines.push("Mode: Tabletop RPG Dungeon Master");
-    lines.push("POV: Second-person Dungeon Master perspective addressing the player.");
-    lines.push("Role: Adjudicate rules, track consequences, present challenges, and simulate dice outcomes.");
-    lines.push("Responses: Fast, reactive, fair, rewarding player cleverness and clearly conveying danger.");
+    lines.push("Mode: Tabletop RPG Dungeon Master & Rules Adjudicator");
+    lines.push("Perspective: Second-person Dungeon Master perspective addressing the player.");
+    lines.push("Role: Adjudicate rules, track tactical choices, present challenges, and simulate dice outcomes.");
+    if (profile.gameSystem) lines.push(`Game System / Ruleset: ${profile.gameSystem}`);
+    if (profile.questObjective) lines.push(`Current Quest / Objective: ${profile.questObjective}`);
+    if (profile.rulesComplexity) lines.push(`Rules Complexity: ${profile.rulesComplexity}`);
+    if (profile.difficultyLevel) lines.push(`Difficulty / Lethality: ${profile.difficultyLevel}`);
+    if (profile.partyComposition) lines.push(`Party Composition: ${profile.partyComposition}`);
+    if (profile.startingEquipment) lines.push(`Starting Equipment / Resources: ${profile.startingEquipment}`);
+    if (profile.currentCampaignArc) lines.push(`Current Campaign Arc: ${profile.currentCampaignArc}`);
+    lines.push("Narrative Standard: Fast, reactive, tactically clear, rewarding player strategy while making danger tangible.");
   }
   if (profile.dungeonMasterStyle) lines.push(`GM / Narration Style: ${profile.dungeonMasterStyle}`);
   lines.push("");
 
-  lines.push("[ATMOSPHERE & LORE]");
+  lines.push("[ATMOSPHERE, CONFLICT & STAKES]");
   if (profile.storyTone) lines.push(`Tone: ${profile.storyTone}`);
   if (profile.worldAtmosphere) lines.push(`Atmosphere: ${profile.worldAtmosphere}`);
   if (profile.incitingIncident) lines.push(`Inciting Incident: ${profile.incitingIncident}`);
@@ -460,28 +475,48 @@ export function buildScenarioDirective(profile: CharacterProfile): string {
   if (profile.scenarioStakes) lines.push(`Stakes: ${profile.scenarioStakes}`);
   lines.push("");
 
-  lines.push("[CHARACTER DIALOGUE & BEHAVIOR]");
+  lines.push("[CHARACTER DIALOGUE, PSYCHOLOGY & BEHAVIOR]");
   if (profile.mode === AppMode.ROLEPLAY) {
     lines.push(`Primary Character: ${profile.name}`);
     if (profile.personality) lines.push(`Personality: ${profile.personality}`);
-    if (profile.backstory) lines.push(`Backstory: ${profile.backstory}`);
-    if (profile.appearance) lines.push(`Appearance: ${profile.appearance}`);
-    if (profile.quirks) lines.push(`Quirks: ${profile.quirks}`);
-    if (profile.characterFlaws) lines.push(`Flaws: ${profile.characterFlaws}`);
-    if (profile.speechPattern) lines.push(`Speech Pattern: ${profile.speechPattern}`);
-    if (profile.coreBeliefs) lines.push(`Core Beliefs: ${profile.coreBeliefs}`);
-    if (profile.secretMotive) lines.push(`Secret Motive: ${profile.secretMotive}`);
-    if (profile.currentMood) lines.push(`Current Mood: ${profile.currentMood}`);
+    if (profile.backstory) lines.push(`Backstory & History: ${profile.backstory}`);
+    if (profile.appearance) lines.push(`Visual Appearance: ${profile.appearance}`);
+    if (profile.clothing) lines.push(`Attire & Clothing: ${profile.clothing}`);
+    if (profile.accessories) lines.push(`Accessories & Carried Gear: ${profile.accessories}`);
+    if (profile.hairStyle || profile.hairColor) lines.push(`Hair: ${profile.hairStyle || ''} ${profile.hairColor || ''}`.trim());
+    if (profile.eyeColor) lines.push(`Eyes: ${profile.eyeColor}`);
+    if (profile.relationship) lines.push(`Relationship to Player: ${profile.relationship}`);
+    
+    // Personality Trait Dimensions
+    if (profile.traits) {
+      const traitEntries = Object.entries(profile.traits).filter(([_, v]) => v !== undefined);
+      if (traitEntries.length > 0) {
+        lines.push("Core Trait Sliders (1-100 scale guide):");
+        traitEntries.forEach(([trait, val]) => {
+          lines.push(`- ${trait.charAt(0).toUpperCase() + trait.slice(1)}: ${val}/100`);
+        });
+      }
+    }
+
+    if (profile.likesAndDislikes) lines.push(`Likes & Dislikes: ${profile.likesAndDislikes}`);
+    if (profile.quirks) lines.push(`Mannerisms & Quirks: ${profile.quirks}`);
+    if (profile.characterFlaws) lines.push(`Flaws & Insecurities: ${profile.characterFlaws}`);
+    if (profile.speechPattern) lines.push(`Speech Pattern, Accent & Cadence: ${profile.speechPattern}`);
+    if (profile.coreBeliefs) lines.push(`Core Beliefs & Values: ${profile.coreBeliefs}`);
+    if (profile.secretMotive) lines.push(`Secret Motive / Hidden Agenda: ${profile.secretMotive}`);
+    if (profile.currentMood) lines.push(`Current Emotional State: ${profile.currentMood}`);
   } else {
     if (profile.additionalCharacters && profile.additionalCharacters.length > 0) {
-      lines.push("Key Characters in Play:");
-      profile.additionalCharacters.forEach(c => lines.push(`- ${c.name} (${c.description})`));
+      lines.push("Key Characters / NPCs in Play:");
+      profile.additionalCharacters.forEach(c => {
+        lines.push(`- ${c.name}: ${c.description}${c.personality ? ` | Personality: ${c.personality}` : ''}${c.appearance ? ` | Looks: ${c.appearance}` : ''}`);
+      });
     }
     if (profile.name && profile.personality) {
       lines.push(`Featured Guide / Persona: ${profile.name} (${profile.personality})`);
     }
   }
-  lines.push("NPC Behavior: NPCs must behave with distinct motivations, consistency, and psychological realism according to their beliefs and relationship to the player.");
+  lines.push("NPC Behavior Principle: Every character acts with psychological realism, personal agency, and consistent motivations. They are not mindless assistants; they push back, hold secrets, experience fear, desire, curiosity, or suspicion.");
   lines.push("");
 
   lines.push("[TONE, GENRE & EMOTION]");
@@ -491,44 +526,39 @@ export function buildScenarioDirective(profile: CharacterProfile): string {
   if (matureDirective) lines.push(matureDirective);
   lines.push("");
 
-  lines.push("[CORE STORY RULES]");
-  lines.push("1. Continuity & World: Adhere strictly to the established world facts, geography, and consequences. Actions have logical ramifications.");
-  lines.push("2. Immersion & Integrity: Stay completely in narrative voice or in character. Never refer to yourself as an AI assistant, language model, or virtual agent.");
-  lines.push("3. Dynamic World: NPCs, environment, and factions react organically to what occurs.");
-  lines.push("4. Affinity System: If any NPC/character's opinion, trust, or affection towards the player changes during an interaction, append a tag formatted as [AFFINITY: CharacterName +Delta] or [AFFINITY: CharacterName -Delta] at the end of your response.");
+  lines.push("[HIGH-LITERARY QUALITY & ANTI-GENERIC DIRECTIVES]");
+  lines.push("1. Show, Don't Tell: Avoid shallow clichés (e.g. \"A chill ran down your spine\", \"You feel a surge of power\", \"Little did you know\"). Describe tangible physical sensation, shifts in lighting, spatial acoustics, scents, and subtle micro-expressions instead.");
+  lines.push("2. No Echoing / Paraphrasing: Do NOT repeat the player's action back to them before responding. React directly and drive the scene forward.");
+  lines.push("3. Conversational Momentum & Tension: Characters should have distinct cadence, hesitation, humor, or sharp wit. Avoid sycophantic agreement or sterile AI-like politeness.");
+  lines.push("4. World Continuity & Physics: Adhere strictly to established lore, geography, injuries, and consequences. If an action is risky or irreversible, portray the realistic fallout.");
+  lines.push("5. Affinity Tracking: If any NPC's trust, romantic attraction, respect, or hostility toward the player shifts, append a tag formatted as [AFFINITY: CharacterName +Delta] or [AFFINITY: CharacterName -Delta] at the very end of your response.");
   lines.push("");
 
   lines.push("[STRICT PLAYER AUTONOMY RULE]");
   lines.push("- Never, under any circumstances, speak, think, or act as the player.");
   lines.push("- Do not assume the player's thoughts, feelings, intentions, or dialogue.");
-  lines.push("- Do not describe the player doing something unless they explicitly typed it in their action.");
-  lines.push("- Do not skip time or force the player into irreversible situations without their input.");
-  lines.push("- Always end responses in a way that invites the player to act next.");
+  lines.push("- Do not describe the player taking actions unless they explicitly commanded it in their input.");
+  lines.push("- Do not fast-forward time or resolve player conflicts without giving them the opportunity to react.");
+  lines.push("- Always conclude your turn at a compelling moment that invites the player's next move.");
   lines.push("");
 
   lines.push("[DIRECTOR INSTRUCTION HANDLING]");
-  lines.push("- Messages tagged as [DIRECTOR INSTRUCTION] are meta-rules or player guidance.");
-  lines.push("- Follow them strictly, but never narrate them in-character.");
-  lines.push("- Do not reference them in the story; treat them as invisible constraints.");
+  lines.push("- Messages tagged with [DIRECTOR INSTRUCTION] or [LIVE SESSION INSTRUCTIONS] are meta-level authorial directives.");
+  lines.push("- Obey these constraints seamlessly without ever mentioning or narrating them in-character.");
   if (profile.mode === AppMode.ROLEPLAY) {
-    lines.push("- You MUST start every single response with your character's current mood in brackets, like this: [MOOD: Happy] or [MOOD: Suspicious]. Then, write your response.");
+    lines.push("- In Roleplay mode, you MUST start your response with your character's current emotion in brackets, like: [MOOD: Intense] or [MOOD: Guarded], immediately followed by your narrative.");
   }
   lines.push("");
 
-  // Ported from Android ChatViewModel.buildScenarioDirective voice performance direction
+  // Voice performance direction
   const voiceEnabled = !!(profile.voiceArchetype?.trim() || profile.voiceStyle?.trim() || profile.voicePacing?.trim() || profile.voiceAccent?.trim());
   if (voiceEnabled) {
     lines.push("[VOICE PERFORMANCE DIRECTION]");
-    lines.push("This story's dialogue will be spoken aloud by an AI voice actor.");
-    lines.push("To increase realism, embed appropriate inline audio tags in dialogue:");
-    lines.push("- Use [whispers], [shouting], [laughs], [sighs], [gasps], [trembling],");
-    lines.push("  [panicked], [mischievously], [excitedly], [bored], [crying], [tired],");
-    lines.push("  [nervously], [angrily], [sadly], [warmly], [mockingly] etc.");
-    lines.push("- Tags go inline: \"I told you [whispers] never to come here.\"");
-    lines.push("- Use sparingly for maximum impact. Never over-tag.");
-    lines.push("- For narration, prefer pacing/mood tags: [slowly], [urgently], [gravely]");
-    lines.push("- Tags appear in transcript text and are interpreted by the TTS as");
-    lines.push("  performance cues. Do NOT explain or call attention to them.");
+    lines.push("Dialogue in this story will be synthesized aloud by an AI voice engine.");
+    lines.push("To enhance vocal realism, incorporate appropriate inline expression cues within dialogue:");
+    lines.push("- Available cues: [whispers], [shouting], [laughs], [sighs], [gasps], [trembling], [panicked], [mischievously], [excitedly], [bored], [crying], [tired], [nervously], [angrily], [sadly], [warmly], [mockingly]");
+    lines.push("- Example: \"I told you [whispers] never to open that door.\"");
+    lines.push("- Use cues judiciously to accentuate key dramatic beats. Do NOT over-tag every sentence.");
   }
 
   return lines.join("\n");
@@ -540,7 +570,8 @@ export function buildSystemInstruction(
   currentSummary: string,
   customInstructions?: string,
   scenarioInstructions?: string,
-  sessionUserPersona?: string
+  sessionUserPersona?: string,
+  pinnedMessages?: any[]
 ): string {
   // Sanitize user inputs
   profile = {
@@ -564,7 +595,7 @@ export function buildSystemInstruction(
     : '';
 
   const sessionInstBlock = customInstructions?.trim()
-    ? `\n\n[SESSION INSTRUCTIONS & PREFERENCES]\n${customInstructions.trim()}`
+    ? `\n\n[SESSION INSTRUCTIONS & AUTHORIAL PREFERENCES]\n${customInstructions.trim()}`
     : '';
 
   const userPersonaBlock = sessionUserPersona?.trim()
@@ -574,19 +605,23 @@ export function buildSystemInstruction(
   const playerBlock = buildPlayerBlock(profile);
 
   const additionalChars = profile.additionalCharacters?.length 
-    ? `\n\n[ADDITIONAL CHARACTERS / NPCs]:\n${profile.additionalCharacters.map(c => `- ${c.name} (${c.description}): ${c.personality || ''} ${c.appearance || ''}`).join('\n')}`
+    ? `\n\n[ADDITIONAL CHARACTERS & NPCS IN SCENE]:\n${profile.additionalCharacters.map(c => `- ${c.name} (${c.description}): ${c.personality || ''} ${c.appearance || ''}`).join('\n')}`
+    : '';
+
+  const pinnedBlock = pinnedMessages && pinnedMessages.length > 0
+    ? `\n\n[PERMANENT STORY MEMORIES & PINNED EVENTS (Must Never Be Forgotten)]:\n${pinnedMessages.map((m, idx) => `[Memory ${idx + 1} (${m.role === 'user' ? 'Player' : profile.name})]: ${typeof m.text === 'string' ? m.text : JSON.stringify(m.text || m)}`).join('\n')}`
     : '';
 
   const summaryBlock = currentSummary?.trim()
-    ? `\n\n[STORY SUMMARY SO FAR]:\n${currentSummary.trim()}`
+    ? `\n\n[STORY SUMMARY & MAJOR ARC MILESTONES]:\n${currentSummary.trim()}`
     : '';
 
   const codexBlock = codexEntries.length > 0
-    ? `\n\n[Relevant Codex / Discovered Lore Entries]:\n${codexEntries.slice(-15).map(e => `- ${e.title} (${e.category}): ${e.content}`).join('\n')}`
+    ? `\n\n[RELEVANT CODEX & DISCOVERED LORE]:\n${codexEntries.slice(-20).map(e => `- [${e.category.toUpperCase()}] ${e.title}: ${e.content}`).join('\n')}`
     : '';
 
   const lorePiecesBlock = profile.lorePieces?.length
-    ? `\n\n[DISCOVERED LORE PIECES]:\n${profile.lorePieces.map(p => `- ${p.type}: ${p.name} — ${p.summary || p.detailedLore}`).join('\n')}`
+    ? `\n\n[LOREBOOK CANON PIECES]:\n${profile.lorePieces.map(p => `- ${p.type.toUpperCase()}: ${p.name} — ${p.summary || p.detailedLore}`).join('\n')}`
     : '';
 
   return directive +
@@ -595,6 +630,7 @@ export function buildSystemInstruction(
     userPersonaBlock +
     playerBlock +
     additionalChars +
+    pinnedBlock +
     summaryBlock +
     codexBlock +
     lorePiecesBlock;
@@ -1771,9 +1807,25 @@ Updated Summary:`;
   return response.text?.trim() || previousSummary;
 }
 
-export async function* generateTextReplyStream(history: any[], profile: CharacterProfile, userInput: string, codexEntries: CodexEntry[] = [], currentSummary: string = "", customInstructions?: string) {
+export async function* generateTextReplyStream(
+  history: any[], 
+  profile: CharacterProfile, 
+  userInput: string, 
+  codexEntries: CodexEntry[] = [], 
+  currentSummary: string = "", 
+  customInstructions?: string,
+  pinnedMessages?: any[]
+) {
   const settings = getSettings();
-  const systemInstruction = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
+  const systemInstruction = buildSystemInstruction(
+    profile, 
+    codexEntries, 
+    currentSummary, 
+    customInstructions, 
+    profile.scenarioInstructions, 
+    undefined, 
+    pinnedMessages
+  );
 
   if (settings.activeTextProvider === 'OpenRouter') {
     // Guarantee the Codex context reaches OpenRouter even if the shared
@@ -1794,7 +1846,10 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
     responseStream = await ai.models.generateContentStream({
       model: settings.activeModel,
       contents,
-      config: { systemInstruction }
+      config: { 
+        systemInstruction,
+        temperature: 0.9
+      }
     });
   } catch (err: any) {
     const isFallbackableError = isFallbackable(err);
@@ -1804,7 +1859,10 @@ export async function* generateTextReplyStream(history: any[], profile: Characte
       responseStream = await ai.models.generateContentStream({
         model: 'gemini-3.5-flash',
         contents: [...buildHistory(history), { role: "user", parts: [{ text: userInput }] }],
-        config: { systemInstruction }
+        config: { 
+          systemInstruction,
+          temperature: 0.9
+        }
       });
     } else {
       throw err;
@@ -1828,7 +1886,8 @@ export async function suggestMultipleActions(
   codexEntries: CodexEntry[] = [], 
   currentSummary: string = "", 
   guide?: string, 
-  customInstructions?: string
+  customInstructions?: string,
+  pinnedMessages?: any[]
 ): Promise<ActionSuggestion[]> {
   const modeInstruction = profile.mode === AppMode.GAME
     ? `You are assisting a player in a tabletop RPG. Generate 3 DISTINCT, compelling next options for THEIR character:
@@ -1847,7 +1906,15 @@ export async function suggestMultipleActions(
 
   const guideInstruction = guide ? `\n[DIRECTOR HINT]: Guide suggestions according to: "${guide}".\n` : '';
 
-  const baseSys = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
+  const baseSys = buildSystemInstruction(
+    profile, 
+    codexEntries, 
+    currentSummary, 
+    customInstructions, 
+    profile.scenarioInstructions, 
+    undefined, 
+    pinnedMessages
+  );
   const systemInstruction = `${baseSys}
 
 [TASK DIRECTIVE — SUGGEST 3 PLAYER ACTIONS]
@@ -1872,6 +1939,7 @@ ${guideInstruction}
       ],
       config: {
         systemInstruction,
+        temperature: 0.85,
         responseMimeType: "application/json",
         responseSchema: {
           type: Type.ARRAY,
@@ -1898,7 +1966,7 @@ ${guideInstruction}
 
   // Fallback to single suggestion
   try {
-    const single = await suggestNextAction(history, profile, codexEntries, currentSummary, guide, customInstructions);
+    const single = await suggestNextAction(history, profile, codexEntries, currentSummary, guide, customInstructions, pinnedMessages);
     if (single) {
       return [{
         label: "AI Suggestion",
@@ -1917,7 +1985,8 @@ export async function suggestNextAction(
   codexEntries: CodexEntry[] = [], 
   currentSummary: string = "", 
   guide?: string, 
-  customInstructions?: string
+  customInstructions?: string,
+  pinnedMessages?: any[]
 ): Promise<string> {
   const modeInstruction = profile.mode === AppMode.GAME
     ? `You are assisting a player in a tabletop RPG. Suggest one compelling next action for THEIR character. It must be written in the first person (or the player's preferred style) and be ready to send as a message. It should feel like a real game decision (attack, investigate, negotiate, use an item, cast a spell, etc.).`
@@ -1927,7 +1996,15 @@ export async function suggestNextAction(
 
   const guideInstruction = guide ? `\n[DIRECTOR INSTRUCTION]: Shape the suggestion according to this hint: "${guide}".\n` : '';
 
-  const baseSys = buildSystemInstruction(profile, codexEntries, currentSummary, customInstructions);
+  const baseSys = buildSystemInstruction(
+    profile, 
+    codexEntries, 
+    currentSummary, 
+    customInstructions, 
+    profile.scenarioInstructions, 
+    undefined, 
+    pinnedMessages
+  );
   const systemInstruction = `${baseSys}
 
 [TASK DIRECTIVE — SUGGEST PLAYER ACTION]
@@ -1952,7 +2029,10 @@ ${guideInstruction}
   try {
     chat = ai.chats.create({
       model: settings.activeModel,
-      config: { systemInstruction },
+      config: { 
+        systemInstruction,
+        temperature: 0.85 
+      },
       history: buildHistory(history)
     });
     response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));
@@ -1963,7 +2043,10 @@ ${guideInstruction}
       console.warn(`suggestNextAction: Fallback to gemini-3.5-flash due to error with ${settings.activeModel}:`, err.message);
       chat = ai.chats.create({
         model: 'gemini-3.5-flash',
-        config: { systemInstruction },
+        config: { 
+          systemInstruction,
+          temperature: 0.85 
+        },
         history: buildHistory(history)
       });
       response = await withRetry(() => chat.sendMessage({ message: `Based on the current situation and my character profile, what is the best next action or dialogue for me to take? Provide the text I should send.` }));

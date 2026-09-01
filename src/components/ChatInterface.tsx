@@ -313,13 +313,15 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
     try {
       const history = messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
       const settings = getSettings();
+      const pinnedMessages = messages.filter(m => m.isPinned);
       const multiSuggestions = await suggestMultipleActions(
         history, 
         profile, 
         codexEntries, 
         storySummary, 
         sanitizeInstruction(input.trim()), 
-        sanitizeInstruction(settings.customRefineInstructions) || undefined
+        sanitizeInstruction(settings.customRefineInstructions) || undefined,
+        pinnedMessages
       );
       if (multiSuggestions && multiSuggestions.length > 0) {
         setSuggestions(multiSuggestions);
@@ -511,8 +513,10 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       let currentSummary = storySummary;
       let unsummarizedMessages = baseMessages.filter(m => !m.isSummarized);
       
-      if (unsummarizedMessages.length > 20) {
-        const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 15);
+      // Preserve deep conversation texture in modern high-context LLMs:
+      // Keep up to 45 recent turns unsummarized; summarize older ones into running arc summary
+      if (unsummarizedMessages.length > 45) {
+        const toSummarize = unsummarizedMessages.slice(0, unsummarizedMessages.length - 30);
         const historyToSummarize = toSummarize.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
         
         currentSummary = await summarizeHistory(historyToSummarize, currentSummary);
@@ -523,7 +527,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
           .filter(m => summarizedIds.has(m.id));
         await updateMessages(updatedMessages);
         
-        unsummarizedMessages = unsummarizedMessages.slice(-15);
+        unsummarizedMessages = unsummarizedMessages.slice(-30);
       }
 
       const historyForAi = unsummarizedMessages.map(m => {
@@ -533,6 +537,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         }
         return { role: m.role, parts: [{ text }] };
       });
+
+      const pinnedMessages = messages.filter(m => m.isPinned);
       
       let aiMessageId: string;
       let targetMessage: Message | undefined;
@@ -564,7 +570,8 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
         userInput, 
         codexEntries, 
         currentSummary,
-        effectiveInstructions
+        effectiveInstructions,
+        pinnedMessages
       );
       
       for await (const chunk of stream) {
@@ -775,8 +782,7 @@ Name: ${pp.name}
 Description: ${pp.description || 'Not specified'}
 Personality: ${pp.personality || 'Not specified'}
 Appearance: ${pp.appearance || 'Not specified'}
-${profile.mode === AppMode.GAME ? `Class: ${pp.playerClass || 'Unknown'} • Race: ${pp.playerRace || 'Unknown'} • HP: ${pp.currentHP ?? '?'}/${pp.maxHP ?? '?'}` : ''}
-
+${pp.pronouns ? `Pronouns: ${pp.pronouns}\n` : ''}${pp.gender ? `Gender: ${pp.gender}\n` : ''}${pp.age ? `Age: ${pp.age}\n` : ''}${pp.attire ? `Attire & Clothing: ${pp.attire}\n` : ''}${pp.demeanor ? `Demeanor & Mannerisms: ${pp.demeanor}\n` : ''}${pp.psychologicalDrivers ? `Psychological Drivers & Fears: ${pp.psychologicalDrivers}\n` : ''}${pp.relationshipDynamics ? `Relationship Dynamics with ${profile.name}: ${pp.relationshipDynamics}\n` : ''}${profile.mode === AppMode.GAME ? `Class: ${pp.playerClass || 'Unknown'} • Race: ${pp.playerRace || 'Unknown'} • HP: ${pp.currentHP ?? '?'}/${pp.maxHP ?? '?'}\n` : ''}
 `
       : '';
 
@@ -784,6 +790,27 @@ ${profile.mode === AppMode.GAME ? `Class: ${pp.playerClass || 'Unknown'} • Rac
       ? `STORY SO FAR (recent summary — stay consistent with it):
 ${storySummary}
 
+`
+      : '';
+
+    const pinnedMessages = messages.filter(m => m.isPinned);
+    const pinnedBlock = pinnedMessages.length > 0
+      ? `CANON MEMORIES & ANCHOR EVENTS (Pinned):
+${pinnedMessages.map(m => `• [${m.role === 'user' ? 'Player Action/Statement' : `${profile.name} Event`}]: ${m.text}`).join('\n')}
+
+`
+      : '';
+
+    const loreBlock = codexEntries && codexEntries.length > 0
+      ? `CODEX & WORLD LORE (Ground truth entries):
+${codexEntries.map(e => `• [${e.category.toUpperCase()}] ${e.title}: ${e.content}`).join('\n')}
+
+`
+      : '';
+
+    const scenarioBlock = (profile.scenarioInstructions || profile.customInstructions || sessionInstructions)
+      ? `SCENARIO DIRECTIVES:
+${profile.scenarioInstructions ? `Scenario Rules: ${profile.scenarioInstructions}\n` : ''}${profile.customInstructions ? `Custom Rules: ${profile.customInstructions}\n` : ''}${sessionInstructions ? `Current Session Goal: ${sessionInstructions}\n` : ''}
 `
       : '';
 
@@ -821,14 +848,14 @@ Speech pattern: ${profile.speechPattern || 'Natural'} — keep your spoken respo
 Current mood: ${profile.currentMood || 'Neutral'}
 World / atmosphere: ${profile.worldAtmosphere || 'Not specified'}
 ${profile.additionalCharacters?.length ? `NPCs present that you may voice: ${profile.additionalCharacters.map(c => c.name).join(', ')}` : ''}
-${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getMatureContentDirective()}LIVE NARRATION RULES:
+${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getMatureContentDirective()}LIVE NARRATION RULES:
 - Treat the moment as if it is happening in person, inside the scene. React to the player as someone physically there with you.
 - NARRATE ACTIONS ALONGSIDE SPEAKING: describe physical actions, gestures, expressions, sounds, and environment details as they happen, then speak the dialogue. Blend narration and speech in every turn so it feels like the scene is unfolding live.
 - Format narrated actions in asterisks and keep spoken dialogue as plain text, e.g.: *She steps closer, her voice dropping low.* "I've been waiting for you."
 - Let the world react: weather, noises, light, other NPCs, and shifting tension should be narrated as they occur.
 - Keep turns tight and cinematic — a few sentences of narration plus the dialogue is enough; expand only when the moment truly demands more.
 - Never break character and never act for the player: do NOT decide their actions, speak their lines, or describe their inner thoughts. Narrate around them and react to what they do.`;
-  }, [profile, storySummary, messages]);
+  }, [profile, storySummary, messages, codexEntries, sessionInstructions]);
 
   const handleLiveRewind = useCallback(async () => {
     const ids = liveTurnMessageIds.current;
@@ -852,6 +879,15 @@ ${summaryBlock}${recentBlock}${voicePerformanceBlock}${getToneDirective()}${getM
       liveVoice.stop();
       return;
     }
+    // Clean audio & recognition cutoff to prevent audio crosstalk
+    defaultTtsEngine.stop();
+    try { window.speechSynthesis.cancel(); } catch {}
+    if (recognitionRef.current) {
+      try { recognitionRef.current.stop(); } catch {}
+    }
+    setIsLiveMode(false);
+    setIsMicActive(false);
+
     liveTurnMessageIds.current = [];
     liveVoice.setOnTurnEnd(async (userText, modelText) => {
       if (!userText && !modelText) return;

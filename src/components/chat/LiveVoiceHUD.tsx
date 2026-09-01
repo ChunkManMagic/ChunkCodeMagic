@@ -413,8 +413,7 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
               {onRewind && (
                 <button
                   onClick={() => {
-                    liveVoice.rewind();
-                    onRewind();
+                    liveVoice.rewind(onRewind);
                   }}
                   className="px-2.5 py-1.5 rounded-xl bg-purple-500/15 text-purple-400 hover:bg-purple-500/25 border border-purple-500/25 text-[10px] font-bold flex items-center gap-1 transition-all"
                   title="Rewind Last Turn"
