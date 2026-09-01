@@ -1258,45 +1258,38 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
           >
             <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
-          {getSettings().voiceMode === 'tts' ? (
-            <div className="px-3 py-2 rounded-xl text-[10px] font-bold glass-input text-zinc-300 flex items-center gap-2 shrink-0 whitespace-nowrap">
-              <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
-              <span>NARRATION ON</span>
-            </div>
-          ) : (
-            <button
-              onClick={() => {
-                const voiceMode = getSettings().voiceMode || 'live';
-                if (voiceMode === 'voice_chat') {
-                  setShowVoiceChat(v => !v);
-                  if (liveVoice.isActive) liveVoice.stop();
-                } else {
-                  startLiveVoiceSession();
-                }
-              }}
-              className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
-                liveVoice.isActive || showVoiceChat
-                  ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
-                  : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
-              }`}
-              title={getSettings().voiceMode === 'voice_chat' ? 'Voice Chat (STT + TTS)' : 'Live Voice (Real-time Spoken Conversation with Gemini)'}
-              aria-label="Toggle Voice"
-            >
-              {liveVoice.isActive || showVoiceChat ? (
-                <div className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                  <span className="text-emerald-400 font-bold">
-                    {liveVoice.isConnecting ? 'CONNECTING...' : showVoiceChat ? 'VOICE CHAT' : 'LIVE CALL'}
-                  </span>
-                </div>
-              ) : (
-                <>
-                  <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
-                  <span>{getSettings().voiceMode === 'voice_chat' ? 'VOICE CHAT' : 'LIVE VOICE'}</span>
-                </>
-              )}
-            </button>
-          )}
+          <button
+            onClick={() => {
+              const voiceMode = getSettings().voiceMode || 'live';
+              if (voiceMode === 'voice_chat') {
+                setShowVoiceChat(v => !v);
+                if (liveVoice.isActive) liveVoice.stop();
+              } else {
+                startLiveVoiceSession();
+              }
+            }}
+            className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
+              liveVoice.isActive || showVoiceChat
+                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
+                : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
+            }`}
+            title={getSettings().voiceMode === 'voice_chat' ? 'Voice Chat (STT + TTS)' : 'Live Voice (Real-time Spoken Conversation with Gemini)'}
+            aria-label="Toggle Voice"
+          >
+            {liveVoice.isActive || showVoiceChat ? (
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span className="text-emerald-400 font-bold">
+                  {liveVoice.isConnecting ? 'CONNECTING...' : showVoiceChat ? 'VOICE CHAT' : 'LIVE CALL'}
+                </span>
+              </div>
+            ) : (
+              <>
+                <Radio className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-emerald-400" />
+                <span>{getSettings().voiceMode === 'voice_chat' ? 'VOICE CHAT' : 'LIVE VOICE'}</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
 
