@@ -116,21 +116,29 @@ export function isModelNotFound(e: any): boolean {
 }
 
 /**
+ * Strips bracketed roll/action text, Markdown asterisks and underscores, and outer quotes.
+ */
+export function cleanTextForSpeech(text: string): string {
+  if (!text) return '';
+  return text
+    .replace(/<ooc>[\s\S]*?<\/ooc>/gi, '')
+    .replace(/\[DIRECTOR INSTRUCTION\]:[\s\S]*?(?:$|(?=\n\n))/gi, '')
+    .replace(/\[Director's Note(?: for AI)?: [\s\S]*?\]/gi, '')
+    .replace(/\[(?:Action|Roll|Director|Dice|Context|OOC|Narrator).*?\]/gis, '')
+    .replace(/\[.*?\]/g, '')
+    .replace(/[*_~`#]/g, '')
+    .replace(/^["'“‘\s]+|["'”’\s]+$/g, '')
+    .trim();
+}
+
+/**
  * Prepares clean narration text without splitting normal messages into multiple quota-consuming requests.
  * Strips out OOC tags, raw dice rolls, and markdown styling while preserving dialogues.
  */
 export function splitIntoSpeechSegments(text: string, maxSegmentLen: number = 3500): string[] {
   if (!text) return [];
 
-  // Strip OOC tags, director blocks, dice tags, and markdown markup
-  const clean = text
-    .replace(/<ooc>[\s\S]*?<\/ooc>/gi, '')
-    .replace(/\[DIRECTOR INSTRUCTION\]:[\s\S]*?(?:$|(?=\n\n))/gi, '')
-    .replace(/\[Director's Note(?: for AI)?: [\s\S]*?\]/gi, '')
-    .replace(/\[ROLL:.*?\]/gi, '')
-    .replace(/[*#_~`]/g, '')
-    .trim();
-
+  const clean = cleanTextForSpeech(text);
   if (!clean) return [];
 
   // If within single request capacity, do not split
@@ -267,10 +275,10 @@ export async function playPcmBytes(pcm: Uint8Array, onDone?: () => void): Promis
 export function speakWithBrowser(text: string, _voiceName?: string, rate: number = 1): void {
   try {
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    const clean = cleanTextForSpeech(text);
+    if (!clean) return;
+    const u = new SpeechSynthesisUtterance(clean);
     u.rate = rate;
-    // Strip audio tags for browser TTS so they aren't spoken literally
-    u.text = text.replace(/\[.*?\]/g, '').trim();
     window.speechSynthesis.speak(u);
   } catch {}
 }
@@ -483,7 +491,12 @@ export class TtsEngine {
     onDone?: () => void,
     onSegmentStart?: (index: number, total: number, segmentText: string) => void
   ): Promise<void> {
-    const segments = splitIntoSpeechSegments(text);
+    const clean = cleanTextForSpeech(text);
+    if (!clean) {
+      onDone?.();
+      return;
+    }
+    const segments = splitIntoSpeechSegments(clean);
     if (segments.length > 1) {
       return this.speakSegments(segments, {
         voiceName,
@@ -497,7 +510,7 @@ export class TtsEngine {
     const withOuterTimeout = <T>(p: Promise<T>, ms: number): Promise<T | null> =>
       Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), ms))]);
     const b64 = (await withOuterTimeout(
-      this.synthesize(text, voiceName, stylePrefix, useFastChain),
+      this.synthesize(clean, voiceName, stylePrefix, useFastChain),
       30000
     )) as string | null;
     if (b64) {
@@ -506,8 +519,8 @@ export class TtsEngine {
       // browser fallback
       const settings = getSettings();
       const rate = (settings as any)?.ttsSpeed ?? 1;
-      speakWithBrowser(text, voiceName, rate);
-      const words = text.split(/\s+/).length;
+      speakWithBrowser(clean, voiceName, rate);
+      const words = clean.split(/\s+/).length;
       const estMs = Math.max(800, (words / 2.5) * 1000);
       setTimeout(() => {
         this.setSpeaking(false);

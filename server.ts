@@ -208,11 +208,8 @@ function getFallbackModel(currentModel: string, config?: any): string | null {
     if (currentModel === 'gemini-3.1-flash-tts-preview') {
       return 'gemini-2.5-flash-preview-tts';
     }
-    if (currentModel === 'gemini-2.5-flash-preview-tts') {
-      return 'gemini-3.1-flash-tts-preview';
-    }
-    if (currentModel === 'gemini-2.5-pro-preview-tts') {
-      return 'gemini-3.1-flash-tts-preview';
+    if (currentModel === 'gemini-2.5-flash-preview-tts' || currentModel === 'gemini-2.5-pro-preview-tts') {
+      return null;
     }
     return null;
   }
@@ -636,7 +633,8 @@ async function startServer() {
   // silently burn the main text-model quota.
   app.post("/api/gemini/live/token", async (req, res) => {
     try {
-      if (rejectModel(res, req.body?.model)) return;
+      const targetModel = req.body?.model || "gemini-3.1-flash-live-preview";
+      if (rejectModel(res, targetModel)) return;
       const dedicatedKey = (process.env.GEMINI_LIVE_API_KEY || "").trim();
       const apiKey = dedicatedKey || (process.env.GEMINI_API_KEY || "").trim();
       if (!apiKey) {
@@ -649,7 +647,7 @@ async function startServer() {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const { model, config } = req.body || {};
+      const { config } = req.body || {};
 
       const token = await ai.authTokens.create({
         config: {
@@ -659,7 +657,7 @@ async function startServer() {
           expireTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
           newSessionExpireTime: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
           liveConnectConstraints: {
-            model,
+            model: targetModel,
             config,
           },
         },
