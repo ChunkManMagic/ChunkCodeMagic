@@ -905,8 +905,8 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                       2. Sub-Themes ({selectedSubThemes.length})
                     </button>
                     <button
-                      onClick={() => { if (selectedSubjects.length > 0 || idea.trim()) advanceToLevelThree(); }}
-                      disabled={selectedSubjects.length === 0 && !idea.trim()}
+                      onClick={() => { if (selectedSubjects.length > 0) advanceToLevelThree(); }}
+                      disabled={selectedSubjects.length === 0}
                       className={`py-2 px-3 rounded-xl text-xs font-bold transition-all border ${
                         wizardLevel === 'questions'
                           ? 'bg-emerald-500/20 border-emerald-500 text-emerald-300'
