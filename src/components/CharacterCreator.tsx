@@ -180,7 +180,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
 
   const advanceToLevelThree = () => {
     setWizardLevel('questions');
-    generateCustomizationQuestions();
+    generateQuestionsFromCards();
   };
 
   const generateLevelTwoSubThemes = async (picks: string[] = selectedSubjects) => {
@@ -261,8 +261,8 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
   const [userQuestionAnswers, setUserQuestionAnswers] = useState<Record<string, string>>({});
   const [isGeneratingQuestions, setIsGeneratingQuestions] = useState(false);
 
-  const generateCustomizationQuestions = async () => {
-    const topic = idea.trim() || selectedSubjects.join(", ");
+  const generateCustomizationQuestions = async (topicOverride?: string) => {
+    const topic = topicOverride || idea.trim() || selectedSubjects.join(", ");
     if (!topic) return;
     setIsGeneratingQuestions(true);
     try {
@@ -313,6 +313,22 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
       ]);
     } finally {
       setIsGeneratingQuestions(false);
+    }
+  };
+
+  const generateQuestionsFromCards = async () => {
+    const cardsTopic = [
+      selectedSubjects.length > 0 ? `Core Topics: ${selectedSubjects.join(', ')}` : '',
+      selectedSubThemes.length > 0 ? `Key Sub-themes: ${selectedSubThemes.join(', ')}` : ''
+    ].filter(Boolean).join(' | ');
+    if (cardsTopic) {
+      await generateCustomizationQuestions(cardsTopic);
+    }
+  };
+
+  const generateQuestionsFromPrompt = async () => {
+    if (idea.trim()) {
+      await generateCustomizationQuestions(idea.trim());
     }
   };
 
@@ -1021,9 +1037,9 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                   {wizardLevel === 'questions' && (
                     <div className="space-y-3 pt-1">
                       <div className="flex justify-between items-center">
-                        <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Level 3: 5 Tailoring Questions</p>
+                        <p className="text-xs font-bold text-emerald-400 uppercase tracking-wider">Level 3: 5 Tailoring Questions (From Chosen Cards)</p>
                         <button
-                          onClick={generateCustomizationQuestions}
+                          onClick={generateQuestionsFromCards}
                           disabled={isGeneratingQuestions}
                           className="text-xs text-emerald-400 hover:text-white flex items-center gap-1"
                         >
@@ -1034,7 +1050,7 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                       {isGeneratingQuestions ? (
                         <div className="py-6 flex items-center justify-center gap-2 text-xs text-zinc-400">
                           <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
-                          <span>Generating tailored questions…</span>
+                          <span>Generating questions from chosen cards…</span>
                         </div>
                       ) : quickQuestions.length > 0 ? (
                         <div className="space-y-3">
@@ -1064,11 +1080,11 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                         </div>
                       ) : (
                         <button
-                          onClick={generateCustomizationQuestions}
+                          onClick={generateQuestionsFromCards}
                           className="w-full py-3 rounded-2xl bg-white/5 hover:bg-white/10 text-zinc-300 text-xs font-bold flex items-center justify-center gap-2"
                         >
                           <Sparkles className="w-4 h-4 text-emerald-400" />
-                          Generate 5 Customization Questions
+                          Generate 5 Questions from Selected Cards
                         </button>
                       )}
 
@@ -1152,12 +1168,12 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
                 {/* ── 5 Optional Quick Customization Questions ── */}
                 <div className="flex justify-between items-center px-1">
                   <button
-                    onClick={generateCustomizationQuestions}
-                    disabled={(!idea.trim() && selectedSubjects.length === 0) || isGeneratingQuestions}
+                    onClick={generateQuestionsFromPrompt}
+                    disabled={!idea.trim() || isGeneratingQuestions}
                     className="px-4 py-2 rounded-xl bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 border border-emerald-500/20 text-xs font-bold transition-all flex items-center gap-2 disabled:opacity-40"
                   >
                     {isGeneratingQuestions ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                    {quickQuestions.length === 0 ? "✨ Generate 5 Customization Questions" : "Refresh 5 Questions"}
+                    {quickQuestions.length === 0 ? "✨ Generate 5 Questions from Idea" : "Refresh Questions"}
                   </button>
                   {Object.keys(userQuestionAnswers).length > 0 && (
                     <button
