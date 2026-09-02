@@ -124,7 +124,6 @@ export function cleanTextForSpeech(text: string): string {
     .replace(/\[DIRECTOR INSTRUCTION\]:[\s\S]*?(?:$|(?=\n\n))/gi, '')
     .replace(/\[Director's Note(?: for AI)?: [\s\S]*?\]/gi, '')
     .replace(/\[(?:Action|Roll|Director|Dice|Context|OOC|Narrator).*?\]/gis, '')
-    .replace(/\[.*?\]/g, '')
     .replace(/[*_~`#]/g, '')
     .replace(/^["'“‘\s]+|["'”’\s]+$/g, '')
     .trim();
