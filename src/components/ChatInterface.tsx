@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
-import { Send, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Package, User, Cloud, Download, Pin, Radio, Terminal } from 'lucide-react';
+import { Send, Square, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Package, User, Cloud, Download, Pin, Radio, Terminal } from 'lucide-react';
 import { useVoice } from '../hooks/useVoice';
 import { useLiveVoice } from '../hooks/useLiveVoice';
 import { useAmbientSoundscape } from '../hooks/useAmbientSoundscape';
@@ -125,6 +125,11 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [sessionInstructions, setSessionInstructions] = useState('');
   const [showSessionInstructions, setShowSessionInstructions] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
+  const abortRef = useRef<boolean>(false);
+  const handleStopStreaming = useCallback(() => {
+    abortRef.current = true;
+    setIsTyping(false);
+  }, []);
   const [isRefining, setIsRefining] = useState(false);
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [isAutoRead, setIsAutoRead] = useState(false);
@@ -510,6 +515,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const generateReply = useCallback(async (baseMessages: Message[], userInput: string, userMsgId: string, existingMessageId?: string) => {
     setIsTyping(true);
+    abortRef.current = false;
     try {
       let currentSummary = storySummary;
       let unsummarizedMessages = baseMessages.filter(m => !m.isSummarized);
@@ -576,6 +582,9 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
       );
       
       for await (const chunk of stream) {
+        if (abortRef.current) {
+          break;
+        }
         fullReply += chunk;
         
         const moodMatch = fullReply.match(/^\s*(?:\*\*|_)*\[MOOD:\s*(.*?)\](?:\*\*|_)*\s*/i);
@@ -2078,9 +2087,26 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
                   className="w-full glass-input rounded-xl px-4 py-2 text-xs text-zinc-300 placeholder-zinc-600 focus:ring-1 focus:ring-emerald-500/30 transition-all"
                 />
               </div>
-              <button title="Send Message" onClick={() => handleSendText()} disabled={(!input.trim() && !directorNote.trim()) || isTyping} className="p-3 sm:p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-2xl shadow-xl transition-all">
-                <Send className="w-5 h-5 sm:w-6 sm:h-6" />
-              </button>
+              {isTyping ? (
+                <button
+                  type="button"
+                  title="Stop generating"
+                  onClick={handleStopStreaming}
+                  className="p-3 sm:p-4 bg-red-600 hover:bg-red-500 text-white rounded-2xl shadow-xl transition-all flex items-center justify-center animate-pulse"
+                >
+                  <Square className="w-5 h-5 sm:w-6 sm:h-6 fill-current" />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  title="Send Message"
+                  onClick={() => handleSendText()}
+                  disabled={!input.trim() && !directorNote.trim()}
+                  className="p-3 sm:p-4 bg-emerald-600 hover:bg-emerald-500 disabled:bg-zinc-800 disabled:text-zinc-600 text-white rounded-2xl shadow-xl transition-all"
+                >
+                  <Send className="w-5 h-5 sm:w-6 sm:h-6" />
+                </button>
+              )}
             </div>
           </div>
         </div>
