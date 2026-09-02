@@ -25,22 +25,41 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
   const spokenIds = useRef<Set<string>>(new Set());
   const ttsRef = useRef<TtsEngine | null>(null);
   const recognitionRef = useRef<any>(null);
+  const isMountedRef = useRef(true);
+  const sttWatchdogRef = useRef<any>(null);
 
   if (!ttsRef.current) ttsRef.current = new TtsEngine();
 
   // Cleanup on dialog close or unmount
   useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!isOpen) {
+      if (sttWatchdogRef.current) {
+        clearTimeout(sttWatchdogRef.current);
+        sttWatchdogRef.current = null;
+      }
       try { recognitionRef.current?.abort(); } catch {}
       try { ttsRef.current?.stop(); } catch {}
-      setPhase('idle');
-      setAwaitingReply(false);
-      setSttError(null);
+      if (isMountedRef.current) {
+        setPhase('idle');
+        setAwaitingReply(false);
+        setSttError(null);
+      }
     }
   }, [isOpen]);
 
   useEffect(() => {
     return () => {
+      if (sttWatchdogRef.current) {
+        clearTimeout(sttWatchdogRef.current);
+        sttWatchdogRef.current = null;
+      }
       try { recognitionRef.current?.abort(); } catch {}
       try { ttsRef.current?.stop(); } catch {}
     };
@@ -57,13 +76,20 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
   }, [phase]);
 
   const launchSTT = useCallback(() => {
+    if (!isMountedRef.current) return;
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
-      setSttError('Speech recognition is not supported by your current browser. Please try Chrome, Edge, or Safari.');
-      setPhase('idle');
+      if (isMountedRef.current) {
+        setSttError('Speech recognition is not supported by your current browser. Please try Chrome, Edge, or Safari.');
+        setPhase('idle');
+      }
       return;
     }
-    setSttError(null);
+    if (isMountedRef.current) setSttError(null);
+    if (sttWatchdogRef.current) {
+      clearTimeout(sttWatchdogRef.current);
+      sttWatchdogRef.current = null;
+    }
     if (recognitionRef.current) {
       try { recognitionRef.current.abort(); } catch {}
     }
@@ -72,26 +98,51 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     rec.interimResults = false;
     rec.maxAlternatives = 1;
     rec.continuous = false;
-    setPhase('listening');
+    if (isMountedRef.current) setPhase('listening');
+
+    // 10-second watchdog timer for mobile browsers where onend/onerror may hang
+    sttWatchdogRef.current = setTimeout(() => {
+      if (isMountedRef.current && phaseRef.current === 'listening') {
+        try { rec.abort(); } catch {}
+        setPhase('idle');
+      }
+    }, 10000);
+
+    const clearWatchdog = () => {
+      if (sttWatchdogRef.current) {
+        clearTimeout(sttWatchdogRef.current);
+        sttWatchdogRef.current = null;
+      }
+    };
+
     rec.onresult = (e: any) => {
+      clearWatchdog();
       const heard = e.results?.[0]?.[0]?.transcript?.trim();
-      if (heard) {
+      if (heard && isMountedRef.current) {
         setTranscript(heard);
         setPhase('thinking');
         setAwaitingReply(true);
         try {
           const r = onSendMessage(heard);
-          if (r instanceof Promise) r.catch(() => setPhase('idle'));
+          if (r instanceof Promise) {
+            r.catch(() => {
+              if (isMountedRef.current) setPhase('idle');
+            });
+          }
         } catch {
-          setPhase('idle');
+          if (isMountedRef.current) setPhase('idle');
         }
-      } else {
+      } else if (isMountedRef.current) {
         setPhase('idle');
       }
     };
-    rec.onerror = () => setPhase('idle');
+    rec.onerror = () => {
+      clearWatchdog();
+      if (isMountedRef.current) setPhase('idle');
+    };
     rec.onend = () => {
-      if (phaseRef.current === 'listening') {
+      clearWatchdog();
+      if (isMountedRef.current && phaseRef.current === 'listening') {
         setPhase('idle');
       }
     };
@@ -99,7 +150,8 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     try {
       rec.start();
     } catch {
-      setPhase('idle');
+      clearWatchdog();
+      if (isMountedRef.current) setPhase('idle');
     }
   }, [onSendMessage]);
 
@@ -110,6 +162,7 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     if (!last || last.role === 'user') return;
     if (spokenIds.current.has(last.id)) return;
     spokenIds.current.add(last.id);
+    if (!isMountedRef.current) return;
     setAwaitingReply(false);
     setReplyText(last.text);
     setPhase('speaking');
@@ -122,19 +175,23 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
       try {
         const tts = ttsRef.current!;
         await tts.speak(last.text, voiceName, directorPrompt || null, useFast, () => {
-          setPhase('idle');
-          if (handsFreeRef.current && isOpen) {
-            setTimeout(() => {
-              if (handsFreeRef.current) launchSTT();
-            }, 400);
+          if (isMountedRef.current) {
+            setPhase('idle');
+            if (handsFreeRef.current && isOpen) {
+              setTimeout(() => {
+                if (handsFreeRef.current && isMountedRef.current) launchSTT();
+              }, 400);
+            }
           }
         });
       } catch {
-        setPhase('idle');
-        if (handsFreeRef.current && isOpen) {
-          setTimeout(() => {
-            if (handsFreeRef.current) launchSTT();
-          }, 400);
+        if (isMountedRef.current) {
+          setPhase('idle');
+          if (handsFreeRef.current && isOpen) {
+            setTimeout(() => {
+              if (handsFreeRef.current && isMountedRef.current) launchSTT();
+            }, 400);
+          }
         }
       }
     })();

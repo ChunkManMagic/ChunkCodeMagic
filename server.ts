@@ -495,7 +495,7 @@ async function startServer() {
           console.error(`Gemini interact error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
           
           if (isTransient) {
-            const fallback = getFallbackModel(model);
+            const fallback = getFallbackModel(model, req.body?.config);
             if (fallback && fallback !== model) {
               console.warn(`Falling back interact immediately from ${model} to ${fallback} due to demand/quota issues.`);
               model = fallback;
@@ -591,7 +591,7 @@ async function startServer() {
           console.error(`Gemini interact stream error on model ${model} (attempt ${attempt}/${maxAttempts}):`, err.message || err);
           
           if (isTransient) {
-            const fallback = getFallbackModel(model);
+            const fallback = getFallbackModel(model, req.body?.config);
             if (fallback && fallback !== model) {
               console.warn(`Falling back interact stream from ${model} to ${fallback} due to demand/quota issues.`);
               model = fallback;

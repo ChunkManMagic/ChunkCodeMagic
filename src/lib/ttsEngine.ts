@@ -76,7 +76,6 @@ export const TTS_MODEL_CHAIN = [
 export const TTS_MODEL_CHAIN_FAST = [
   'gemini-3.1-flash-tts-preview',
   'gemini-2.5-flash-preview-tts',
-  'gemini-2.5-pro-preview-tts',
 ] as const;
 
 export interface GeminiVoice {
@@ -282,6 +281,38 @@ export function speakWithBrowser(text: string, _voiceName?: string, rate: number
     window.speechSynthesis.speak(u);
   } catch {}
 }
+
+export function speakWithBrowserAsync(text: string, _voiceName?: string, rate: number = 1): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      window.speechSynthesis.cancel();
+      const clean = cleanTextForSpeech(text);
+      if (!clean) {
+        resolve();
+        return;
+      }
+      const u = new SpeechSynthesisUtterance(clean);
+      u.rate = rate;
+      let finished = false;
+      const done = () => {
+        if (!finished) {
+          finished = true;
+          resolve();
+        }
+      };
+      u.onend = done;
+      u.onerror = done;
+      // Safety timeout in case browser never fires onend (e.g. mobile Safari bug)
+      const words = clean.split(/\s+/).length;
+      const maxMs = Math.max(2000, (words / 1.5) * 1000 + 4000);
+      setTimeout(done, maxMs);
+      window.speechSynthesis.speak(u);
+    } catch {
+      resolve();
+    }
+  });
+}
+
 export function stopBrowserTts() {
   try { window.speechSynthesis.cancel(); } catch {}
 }
@@ -372,6 +403,8 @@ export class TtsEngine {
   private _isSpeaking = false;
   private currentSource: AudioBufferSourceNode | null = null;
   private cancelFlag = { cancelled: false };
+  private _browserTtsTimer: any = null;
+  private _browserTtsPoll: any = null;
   onSpeakingChanged?: (speaking: boolean) => void;
 
   get isSpeaking() { return this._isSpeaking; }
@@ -399,7 +432,6 @@ export class TtsEngine {
       this.currentSource = src;
       if (!src) {
         this.setSpeaking(false);
-        onDone?.();
       }
     } catch {
       this.setSpeaking(false);
@@ -432,8 +464,8 @@ export class TtsEngine {
     }
 
     this.stop();
-    this.cancelFlag = { cancelled: false };
-    const myCancel = this.cancelFlag;
+    const myCancel = { cancelled: false };
+    this.cancelFlag = myCancel;
     this.setSpeaking(true);
     this._totalSegments = segments.length;
 
@@ -459,17 +491,10 @@ export class TtsEngine {
           });
         });
       } else {
-        // Fallback to browser TTS for this segment
-        await new Promise<void>((resolve) => {
-          const settings = getSettings();
-          const rate = (settings as any)?.ttsSpeed ?? 1;
-          speakWithBrowser(segments[i], options.voiceName, rate);
-          const words = segments[i].split(/\s+/).length;
-          const estMs = Math.max(800, (words / 2.5) * 1000);
-          setTimeout(() => {
-            resolve();
-          }, estMs);
-        });
+        // Fallback to browser TTS for this segment with proper end-event listening
+        const settings = getSettings();
+        const rate = (settings as any)?.ttsSpeed ?? 1;
+        await speakWithBrowserAsync(segments[i], options.voiceName, rate);
       }
     }
 
@@ -517,28 +542,59 @@ export class TtsEngine {
       await this.playBase64(b64, onDone);
     } else {
       // browser fallback
+      if (this._browserTtsTimer) {
+        clearTimeout(this._browserTtsTimer);
+        this._browserTtsTimer = null;
+      }
+      if (this._browserTtsPoll) {
+        clearInterval(this._browserTtsPoll);
+        this._browserTtsPoll = null;
+      }
+
       const settings = getSettings();
       const rate = (settings as any)?.ttsSpeed ?? 1;
       speakWithBrowser(clean, voiceName, rate);
       const words = clean.split(/\s+/).length;
       const estMs = Math.max(800, (words / 2.5) * 1000);
-      setTimeout(() => {
+      this.setSpeaking(true);
+
+      this._browserTtsTimer = setTimeout(() => {
+        this._browserTtsTimer = null;
+        if (this._browserTtsPoll) {
+          clearInterval(this._browserTtsPoll);
+          this._browserTtsPoll = null;
+        }
         this.setSpeaking(false);
         onDone?.();
       }, estMs);
-      this.setSpeaking(true);
-      const poll = setInterval(() => {
+
+      this._browserTtsPoll = setInterval(() => {
         if (!window.speechSynthesis.speaking) {
-          clearInterval(poll);
+          if (this._browserTtsPoll) {
+            clearInterval(this._browserTtsPoll);
+            this._browserTtsPoll = null;
+          }
+          if (this._browserTtsTimer) {
+            clearTimeout(this._browserTtsTimer);
+            this._browserTtsTimer = null;
+          }
           this.setSpeaking(false);
+          onDone?.();
         }
       }, 200);
-      setTimeout(() => clearInterval(poll), estMs + 2000);
     }
   }
 
   stop() {
     this.cancelFlag.cancelled = true;
+    if (this._browserTtsTimer) {
+      clearTimeout(this._browserTtsTimer);
+      this._browserTtsTimer = null;
+    }
+    if (this._browserTtsPoll) {
+      clearInterval(this._browserTtsPoll);
+      this._browserTtsPoll = null;
+    }
     try { this.currentSource?.stop(); } catch {}
     this.currentSource = null;
     try { window.speechSynthesis.cancel(); } catch {}
