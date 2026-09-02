@@ -25,12 +25,12 @@ service cloud.firestore {
     // ===============================================================
     function isValidUser(data) {
       return data.uid is string && data.uid == request.auth.uid &&
-             data.email is string && data.email.size() > 0;
+             (data.email == null || (data.email is string && data.email.size() > 0));
     }
 
     function isValidScenario(data) {
       return data.id is string && data.profile is map &&
-             data.lastUpdated is int;
+             data.lastUpdated is number;
     }
 
     function isValidMessage(data) {

@@ -439,20 +439,30 @@ export default function App() {
   };
 
   const handleDuplicateScenario = (scenario: Scenario) => {
-    localStorage.setItem(STORAGE_KEYS.DRAFT_DATA, JSON.stringify(scenario.profile));
-    localStorage.setItem(STORAGE_KEYS.DRAFT_MODE, scenario.profile.mode);
-    localStorage.setItem(STORAGE_KEYS.DRAFT_SETUP_TYPE, 'detailed');
-    localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, 'idle');
-    localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, '');
+    // Strip avatarBase64 to prevent 5MB localStorage quota crashes
+    const { avatarBase64: _discard, ...cleanProfile } = scenario.profile as any;
     
-    // Also save a rescue backup just in case
-    localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
-      step: 'idle',
-      appMode: scenario.profile.mode,
-      setupType: 'detailed',
-      idea: '',
-      detailedProfile: scenario.profile
-    }));
+    // Save to IndexedDB as primary reliable storage
+    set(STORAGE_KEYS.DRAFT_DATA, cleanProfile).catch(() => {});
+
+    try {
+      localStorage.setItem(STORAGE_KEYS.DRAFT_DATA, JSON.stringify(cleanProfile));
+      localStorage.setItem(STORAGE_KEYS.DRAFT_MODE, scenario.profile.mode);
+      localStorage.setItem(STORAGE_KEYS.DRAFT_SETUP_TYPE, 'detailed');
+      localStorage.setItem(STORAGE_KEYS.DRAFT_STEP, 'idle');
+      localStorage.setItem(STORAGE_KEYS.DRAFT_IDEA, '');
+      
+      // Also save a rescue backup without heavy media payloads
+      localStorage.setItem(STORAGE_KEYS.RESCUE_BACKUP, JSON.stringify({
+        step: 'idle',
+        appMode: scenario.profile.mode,
+        setupType: 'detailed',
+        idea: '',
+        detailedProfile: cleanProfile
+      }));
+    } catch (e) {
+      console.warn("localStorage quota exceeded, relying on IndexedDB draft storage", e);
+    }
 
     setCurrentScenarioId(null);
     setIsCreating(true);

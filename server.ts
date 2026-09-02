@@ -264,9 +264,9 @@ function isTransientError(err: any): boolean {
 async function startServer() {
   const app = express();
   app.set("trust proxy", 1);
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json({ limit: "2mb" }));
+  app.use(express.json({ limit: "15mb" }));
 
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok" });
@@ -636,12 +636,13 @@ async function startServer() {
       const targetModel = req.body?.model || "gemini-3.1-flash-live-preview";
       if (rejectModel(res, targetModel)) return;
       const dedicatedKey = (process.env.GEMINI_LIVE_API_KEY || "").trim();
-      const apiKey = dedicatedKey || (process.env.GEMINI_API_KEY || "").trim();
+      const allowFallback = process.env.LIVE_ALLOW_MAIN_KEY_FALLBACK === "true";
+      const apiKey = dedicatedKey || (allowFallback ? (process.env.GEMINI_API_KEY || "").trim() : "");
       if (!apiKey) {
         return res.status(500).json({
           error: {
             message:
-              "GEMINI_API_KEY is not set on the server. Please configure your API key in Settings > Secrets.",
+              "GEMINI_LIVE_API_KEY is not set on the server, and main key fallback is disabled. Set GEMINI_LIVE_API_KEY or LIVE_ALLOW_MAIN_KEY_FALLBACK=true.",
           },
         });
       }
