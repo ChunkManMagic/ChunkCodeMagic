@@ -130,6 +130,7 @@ export interface LiveVoiceOptions {
   onError?: (message: string) => void;
   /** Fired when the failure looks like quota/rate-limit exhaustion so callers can fall back to turn-by-turn voice. */
   onQuotaExhausted?: (message: string) => void;
+  onReconnect?: (history: { user: string; model: string }[]) => void;
 }
 
 interface SessionHandle {
@@ -370,19 +371,27 @@ let contextReviverInstalled = false;
 function installContextReviver() {
   if (contextReviverInstalled || typeof window === "undefined") return;
   contextReviverInstalled = true;
-  // A suspended/interrupted AudioContext can only be resumed from a user
-  // gesture on some Android builds. Re-resume on any interaction or when the
-  // tab becomes visible again so the AI's next reply isn't silent.
-  const revive = () => {
+  // On visibilitychange to 'hidden', suspend or destroy the AudioContext.
+  // On returning to 'visible', do not auto-resume — wait for a user gesture before resuming.
+  const reviveOnGesture = () => {
     const ctx = active?.audioContext;
-    if (ctx && ctx.state !== "running") {
+    if (ctx && ctx.state !== "running" && ctx.state !== "closed") {
       ctx.resume().catch(() => {});
     }
   };
-  window.addEventListener("pointerdown", revive, { passive: true });
-  window.addEventListener("pointerup", revive, { passive: true });
-  window.addEventListener("keydown", revive, { passive: true });
-  document.addEventListener("visibilitychange", revive);
+  const onVisibilityChange = () => {
+    if (document.visibilityState === "hidden") {
+      const ctx = active?.audioContext;
+      if (ctx && ctx.state === "running") {
+        ctx.suspend().catch(() => {});
+      }
+    }
+  };
+  window.addEventListener("pointerdown", reviveOnGesture, { passive: true });
+  window.addEventListener("pointerup", reviveOnGesture, { passive: true });
+  window.addEventListener("keydown", reviveOnGesture, { passive: true });
+  window.addEventListener("touchend", reviveOnGesture, { passive: true });
+  document.addEventListener("visibilitychange", onVisibilityChange);
 }
 
 function setupAudioPlayback(handle: SessionHandle): AudioContext {
@@ -1095,6 +1104,9 @@ async function connectSession(
     callbacks: {
       onopen: () => {
         handle.status = "connected";
+        if (handle.turnHistory.length > 0) {
+          handle.options?.onReconnect?.([...handle.turnHistory]);
+        }
         emitState(handle);
         startAudioMeterLoop(handle);
       },
@@ -1378,6 +1390,9 @@ async function reconnectNow(): Promise<void> {
       teardownSession(stale);
       active = handle;
       handle.status = "connected";
+      if (handle.turnHistory.length > 0) {
+        handle.options?.onReconnect?.([...handle.turnHistory]);
+      }
       reconnectAttempts = 0;
       isReconnecting = false;
       emitState(handle);
@@ -1728,4 +1743,8 @@ export function getLiveVoiceState(): LiveVoiceState {
     bargeInEnabled: active.bargeInEnabled,
     isReconnecting,
   };
+}
+
+export function getLiveVoiceTurnHistory(): { user: string; model: string }[] {
+  return active?.turnHistory ? [...active.turnHistory] : [];
 }

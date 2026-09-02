@@ -591,14 +591,35 @@ export function buildScenarioDirective(profile: CharacterProfile): string {
   lines.push("");
 
   // Voice performance direction
-  const voiceEnabled = !!(profile.voiceArchetype?.trim() || profile.voiceStyle?.trim() || profile.voicePacing?.trim() || profile.voiceAccent?.trim());
+  const voiceEnabled = !!(
+    profile.voiceArchetype?.trim() ||
+    profile.voiceStyle?.trim() ||
+    profile.voicePacing?.trim() ||
+    profile.voiceAccent?.trim() ||
+    profile.voiceName?.trim()
+  );
   if (voiceEnabled) {
-    lines.push("[VOICE PERFORMANCE DIRECTION]");
-    lines.push("Dialogue in this story will be synthesized aloud by an AI voice engine.");
-    lines.push("To enhance vocal realism, incorporate appropriate inline expression cues within dialogue:");
-    lines.push("- Available cues: [whispers], [shouting], [laughs], [sighs], [gasps], [trembling], [panicked], [mischievously], [excitedly], [bored], [crying], [tired], [nervously], [angrily], [sadly], [warmly], [mockingly]");
-    lines.push("- Example: \"I told you [whispers] never to open that door.\"");
-    lines.push("- Use cues judiciously to accentuate key dramatic beats. Do NOT over-tag every sentence.");
+    const hasExpressionCues = lines.some((l) => l.includes('[whispers]') && l.includes('[laughs]'));
+    if (!hasExpressionCues) {
+      lines.push("[VOICE PERFORMANCE DIRECTION]");
+      lines.push("Dialogue in this story will be synthesized aloud by an AI voice engine.");
+      if (profile.voiceArchetype?.trim()) {
+        lines.push(`Voice Archetype: ${profile.voiceArchetype.trim()}`);
+      }
+      if (profile.voiceStyle?.trim()) {
+        lines.push(`Vocal Style: ${profile.voiceStyle.trim()}`);
+      }
+      if (profile.voicePacing?.trim()) {
+        lines.push(`Pacing: ${profile.voicePacing.trim()}`);
+      }
+      if (profile.voiceAccent?.trim()) {
+        lines.push(`Accent: ${profile.voiceAccent.trim()}`);
+      }
+      lines.push("To enhance vocal realism, incorporate appropriate inline expression cues within dialogue:");
+      lines.push("- Available cues: [whispers], [shouting], [laughs], [sighs], [gasps], [trembling], [panicked], [mischievously], [excitedly], [bored], [crying], [tired], [nervously], [angrily], [sadly], [warmly], [mockingly]");
+      lines.push("- Example: \"I told you [whispers] never to open that door.\"");
+      lines.push("- Use cues judiciously to accentuate key dramatic beats. Do NOT over-tag every sentence.");
+    }
   }
 
   return lines.join("\n");

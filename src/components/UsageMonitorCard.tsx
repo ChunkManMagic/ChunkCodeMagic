@@ -1,13 +1,46 @@
+import { useState, useEffect } from 'react';
 import { UsageSnapshot } from '../hooks/useApiUsageMonitor';
+
+function getTimeRemainingUntilMidnightPT(): string {
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Los_Angeles',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+  });
+  const parts = formatter.formatToParts(now);
+  let hour = 0, minute = 0, second = 0;
+  for (const part of parts) {
+    if (part.type === 'hour') hour = parseInt(part.value, 10);
+    if (part.type === 'minute') minute = parseInt(part.value, 10);
+    if (part.type === 'second') second = parseInt(part.value, 10);
+  }
+  hour = hour % 24;
+  const secondsRemaining = (24 * 3600) - (hour * 3600 + minute * 60 + second);
+  const h = Math.floor(secondsRemaining / 3600);
+  const m = Math.floor((secondsRemaining % 3600) / 60);
+  return `Resets in ${h}h ${m}m (midnight PT)`;
+}
 
 export function UsageMonitorCard({ usageState }: { usageState: UsageSnapshot }) {
   const modelsToShow = usageState.models.filter(m => m.dailyCount > 0 || m.isNearDailyLimit);
+  const [countdown, setCountdown] = useState<string>(getTimeRemainingUntilMidnightPT);
+
+  useEffect(() => {
+    setCountdown(getTimeRemainingUntilMidnightPT());
+    const timer = setInterval(() => {
+      setCountdown(getTimeRemainingUntilMidnightPT());
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
 
   return (
     <div className="w-full p-4 rounded-2xl bg-white/[0.04] border border-white/10 space-y-3">
       <div>
         <h4 className="text-sm font-bold text-white">API Usage Monitor</h4>
-        <p className="text-xs text-zinc-400">Free tier · Resets midnight Pacific</p>
+        <p className="text-xs text-zinc-400">Free tier · {countdown}</p>
       </div>
 
       {modelsToShow.length === 0 ? (

@@ -542,6 +542,15 @@ export function stopAmbientSoundscape(): void {
 // enough because the one-shot loops (pings/chimes) keep scheduling events on
 // the frozen clock and burst-play them all at once on resume.
 let hiddenPausedPreset: AmbientPresetId | null = null;
+let ambientGestureListenerAttached = false;
+
+function resumeAmbientOnGesture(): void {
+  if (hiddenPausedPreset && typeof document !== 'undefined' && !document.hidden) {
+    const preset = hiddenPausedPreset;
+    hiddenPausedPreset = null;
+    startAmbientSoundscape(preset);
+  }
+}
 
 function handleVisibilityChange(): void {
   if (typeof document === 'undefined') return;
@@ -550,10 +559,24 @@ function handleVisibilityChange(): void {
       hiddenPausedPreset = activePreset;
       stopAmbientSoundscape();
     }
+    if (ctx && ctx.state !== 'closed') {
+      ctx.suspend().catch(() => {});
+    }
   } else if (hiddenPausedPreset) {
-    const preset = hiddenPausedPreset;
-    hiddenPausedPreset = null;
-    startAmbientSoundscape(preset);
+    // On returning to 'visible', do not auto-resume — wait for a user gesture before rebuilding the audio graph.
+    if (!ambientGestureListenerAttached && typeof window !== 'undefined') {
+      ambientGestureListenerAttached = true;
+      const onGesture = () => {
+        resumeAmbientOnGesture();
+        window.removeEventListener('pointerdown', onGesture);
+        window.removeEventListener('keydown', onGesture);
+        window.removeEventListener('touchend', onGesture);
+        ambientGestureListenerAttached = false;
+      };
+      window.addEventListener('pointerdown', onGesture, { passive: true });
+      window.addEventListener('keydown', onGesture, { passive: true });
+      window.addEventListener('touchend', onGesture, { passive: true });
+    }
   }
 }
 

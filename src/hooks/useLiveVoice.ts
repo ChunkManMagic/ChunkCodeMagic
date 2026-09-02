@@ -13,6 +13,7 @@ import {
   interruptAiSpeech,
   rewindLiveVoice,
   getLiveVoiceState,
+  getLiveVoiceTurnHistory,
   sendTextMessage,
   forceSendTurn,
   LiveVoiceOptions,
@@ -46,6 +47,14 @@ export function useLiveVoice() {
 
   const handleStateChange = useCallback((next: LiveVoiceState) => {
     setState(next);
+    // In reconnectNow() / scheduleReconnect() reconnect path, ensure transcriptTurns is
+    // re-synced from the library's turnHistory before accepting new WebSocket frames
+    if (next.status === 'connected') {
+      const history = getLiveVoiceTurnHistory();
+      if (history.length > 0) {
+        setTranscriptTurns([...history]);
+      }
+    }
   }, []);
 
   const handleAudioLevels = useCallback((inLvl: number, outLvl: number) => {
@@ -91,6 +100,11 @@ export function useLiveVoice() {
             }
             setUserTranscript('');
             setModelTranscript('');
+          },
+          onReconnect: (history) => {
+            if (history && history.length > 0) {
+              setTranscriptTurns([...history]);
+            }
           },
         });
         if (typeof navigator !== 'undefined' && 'vibrate' in navigator) {

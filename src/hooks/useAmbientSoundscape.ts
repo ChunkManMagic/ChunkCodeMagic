@@ -56,17 +56,42 @@ export function useAmbientSoundscape(profile: CharacterProfile, isLiveVoiceActiv
     setAmbientDucked(isLiveVoiceActive);
   }, [isLiveVoiceActive]);
 
-  // Autoplay policy can leave a freshly created context suspended until a
-  // user gesture; resume on the first interaction.
+  // On visibilitychange to 'hidden', stop ambient soundscape and suspend context.
+  // On returning to 'visible', do not auto-resume — wait for a user gesture before rebuilding the audio graph.
   useEffect(() => {
-    const resume = () => resumeAmbient();
-    window.addEventListener('pointerdown', resume);
-    window.addEventListener('keydown', resume);
-    window.addEventListener('touchend', resume);
-    return () => {
-      window.removeEventListener('pointerdown', resume);
-      window.removeEventListener('keydown', resume);
-      window.removeEventListener('touchend', resume);
+    let pausedOnHidden = false;
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        const state = getAmbientState();
+        if (state.active) {
+          pausedOnHidden = true;
+          stopAmbientSoundscape();
+        }
+      }
+      // On returning to 'visible', do NOT auto-resume — wait for user gesture
     };
-  }, []);
+
+    const onGesture = () => {
+      if (pausedOnHidden && document.visibilityState === 'visible') {
+        pausedOnHidden = false;
+        if (enabled) {
+          startAmbientSoundscape(preset);
+        }
+      } else {
+        resumeAmbient();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pointerdown', onGesture, { passive: true });
+    window.addEventListener('keydown', onGesture, { passive: true });
+    window.addEventListener('touchend', onGesture, { passive: true });
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pointerdown', onGesture);
+      window.removeEventListener('keydown', onGesture);
+      window.removeEventListener('touchend', onGesture);
+    };
+  }, [enabled, preset]);
 }

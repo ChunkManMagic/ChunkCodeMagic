@@ -13,6 +13,7 @@ import { useChatState } from '../hooks/useChatState';
 import { useProfileUpdate } from '../hooks/useProfileUpdate';
 import { InventorySidebar } from './chat/InventorySidebar';
 import { CodexSidebar } from './chat/CodexSidebar';
+import { ErrorBoundary } from './ErrorBoundary';
 import { MessageBubble } from './chat/MessageBubble';
 import { parseMessageContent } from './chat/messageContent';
 import { PinnedMessagesPanel } from './chat/PinnedMessagesPanel';
@@ -1297,46 +1298,50 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
         {/* Inventory Sidebar */}
         <AnimatePresence>
           {showInventory && profile.mode === AppMode.GAME && (
-            <InventorySidebar
-              inventory={inventory}
-              messages={messages}
-              setShowInventory={setShowInventory}
-              isAutoInventoryEnabled={isAutoInventoryEnabled}
-              setIsAutoInventoryEnabled={setIsAutoInventoryEnabled}
-              isScanningInventory={isScanningInventory}
-              handleAutoUpdateInventory={handleAutoUpdateInventory}
-              isGeneratingItemImage={isGeneratingItemImage}
-              handleGenerateItemImage={handleGenerateItemImage}
-              addOrUpdateItem={addOrUpdateItem}
-              removeItem={removeItem}
-            />
+            <ErrorBoundary fallbackTitle="Inventory Error" onReset={() => setShowInventory(false)}>
+              <InventorySidebar
+                inventory={inventory}
+                messages={messages}
+                setShowInventory={setShowInventory}
+                isAutoInventoryEnabled={isAutoInventoryEnabled}
+                setIsAutoInventoryEnabled={setIsAutoInventoryEnabled}
+                isScanningInventory={isScanningInventory}
+                handleAutoUpdateInventory={handleAutoUpdateInventory}
+                isGeneratingItemImage={isGeneratingItemImage}
+                handleGenerateItemImage={handleGenerateItemImage}
+                addOrUpdateItem={addOrUpdateItem}
+                removeItem={removeItem}
+              />
+            </ErrorBoundary>
           )}
         </AnimatePresence>
 
         {/* Codex Sidebar */}
         <AnimatePresence>
           {showCodex && (
-            <CodexSidebar
-              codexEntries={codexEntries}
-              setCodexEntries={setCodexEntries}
-              messages={messages}
-              setShowCodex={setShowCodex}
-              isAutoProfileEnabled={isAutoProfileEnabled}
-              setIsAutoProfileEnabled={setIsAutoProfileEnabled}
-              isAutoCodexEnabled={isAutoCodexEnabled}
-              setIsAutoCodexEnabled={setIsAutoCodexEnabled}
-              isAutoPopulatingCodex={isAutoPopulatingCodex}
-              handleAutoPopulateCodex={handleAutoPopulateCodex}
-              isUpdatingProfile={isUpdatingProfile}
-              handleAutoUpdateProfile={handleAutoUpdateProfile}
-              isRefiningCodexEntry={isRefiningCodexEntry}
-              handleRefineCodexEntry={handleRefineCodexEntry}
-              isGeneratingCodexImage={isGeneratingCodexImage}
-              handleGenerateCodexImage={handleGenerateCodexImage}
-              newCodexEntry={newCodexEntry}
-              setNewCodexEntry={setNewCodexEntry}
-              setConfirmModal={setConfirmModal}
-            />
+            <ErrorBoundary fallbackTitle="Codex Error" onReset={() => setShowCodex(false)}>
+              <CodexSidebar
+                codexEntries={codexEntries}
+                setCodexEntries={setCodexEntries}
+                messages={messages}
+                setShowCodex={setShowCodex}
+                isAutoProfileEnabled={isAutoProfileEnabled}
+                setIsAutoProfileEnabled={setIsAutoProfileEnabled}
+                isAutoCodexEnabled={isAutoCodexEnabled}
+                setIsAutoCodexEnabled={setIsAutoCodexEnabled}
+                isAutoPopulatingCodex={isAutoPopulatingCodex}
+                handleAutoPopulateCodex={handleAutoPopulateCodex}
+                isUpdatingProfile={isUpdatingProfile}
+                handleAutoUpdateProfile={handleAutoUpdateProfile}
+                isRefiningCodexEntry={isRefiningCodexEntry}
+                handleRefineCodexEntry={handleRefineCodexEntry}
+                isGeneratingCodexImage={isGeneratingCodexImage}
+                handleGenerateCodexImage={handleGenerateCodexImage}
+                newCodexEntry={newCodexEntry}
+                setNewCodexEntry={setNewCodexEntry}
+                setConfirmModal={setConfirmModal}
+              />
+            </ErrorBoundary>
           )}
         </AnimatePresence>
 
