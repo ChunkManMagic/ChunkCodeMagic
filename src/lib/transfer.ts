@@ -97,13 +97,15 @@ function toExportCharacterProfile(profile: CharacterProfile): ExportCharacterPro
     startingEquipment: profile.startingEquipment,
     currentCampaignArc: profile.currentCampaignArc,
     currentMood: profile.currentMood,
-    keyCharacters: undefined,
-    currentPlot: undefined,
-    genre: undefined,
-    premise: undefined,
-    themes: undefined,
-    suggestedPlayerName: undefined,
-    suggestedPlayerDescription: undefined
+    worldSetting: profile.worldSetting,
+    flaws: profile.flaws,
+    keyCharacters: profile.keyCharacters,
+    currentPlot: profile.currentPlot,
+    genre: profile.genre,
+    premise: profile.premise,
+    themes: profile.themes,
+    suggestedPlayerName: profile.suggestedPlayerName,
+    suggestedPlayerDescription: profile.suggestedPlayerDescription
   };
 }
 
@@ -231,9 +233,9 @@ function fromExportCharacterProfile(exported: ExportCharacterProfile): Character
     eyeColor: exported.eyeColor,
     voiceName: exported.voiceName || 'en-US-Standard-A',
     voiceSettings: exported.voiceSettings ? {
-      pitch: exported.voiceSettings.pitch,
-      speed: exported.voiceSettings.speed,
-      accent: exported.voiceSettings.accent
+      pitch: exported.voiceSettings.pitch || '0',
+      speed: exported.voiceSettings.speed || '1.0',
+      accent: exported.voiceSettings.accent || 'none'
     } : { pitch: '0', speed: '1.0', accent: 'none' },
     traits,
     storyTone: exported.storyTone || '',
@@ -246,7 +248,7 @@ function fromExportCharacterProfile(exported: ExportCharacterProfile): Character
     speechPattern: exported.speechPattern,
     likesAndDislikes: exported.likesAndDislikes,
     coreBeliefs: exported.coreBeliefs,
-    quirks: exported.quirks,
+    quirks: Array.isArray(exported.quirks) ? exported.quirks.join(', ') : exported.quirks,
     worldAtmosphere: exported.worldAtmosphere,
     keyLocations: exported.keyLocations,
     scenarioStakes: exported.scenarioStakes,
@@ -263,7 +265,16 @@ function fromExportCharacterProfile(exported: ExportCharacterProfile): Character
     partyComposition: exported.partyComposition,
     startingEquipment: exported.startingEquipment,
     currentCampaignArc: exported.currentCampaignArc,
-    currentMood: exported.currentMood
+    currentMood: exported.currentMood,
+    worldSetting: exported.worldSetting,
+    flaws: typeof exported.flaws === 'string' ? exported.flaws : Array.isArray(exported.flaws) ? exported.flaws.join(', ') : undefined,
+    keyCharacters: exported.keyCharacters,
+    currentPlot: exported.currentPlot,
+    genre: exported.genre,
+    premise: exported.premise,
+    themes: exported.themes,
+    suggestedPlayerName: exported.suggestedPlayerName,
+    suggestedPlayerDescription: exported.suggestedPlayerDescription
   };
 }
 

@@ -102,6 +102,15 @@ export interface CharacterProfile {
   playerProfile: PlayerProfile;
   inventory?: InventoryItem[];
   additionalCharacters?: AdditionalCharacter[];
+  worldSetting?: string;
+  flaws?: string;
+  keyCharacters?: string[];
+  currentPlot?: string;
+  genre?: string;
+  premise?: string;
+  themes?: string[];
+  suggestedPlayerName?: string;
+  suggestedPlayerDescription?: string;
   // ROLEPLAY MODE
   characterFlaws?: string;
   secretMotive?: string;

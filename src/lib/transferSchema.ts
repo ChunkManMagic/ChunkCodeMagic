@@ -40,9 +40,9 @@ export interface ExportPlayerProfile {
 }
 
 export interface ExportVoiceSettings {
-  pitch: string;
-  speed: string;
-  accent: string;
+  pitch?: string;
+  speed?: string;
+  accent?: string;
 }
 
 export interface ExportAdditionalCharacter {
@@ -79,7 +79,9 @@ export interface ExportCharacterProfile {
   speechPattern?: string;
   likesAndDislikes?: string;
   coreBeliefs?: string;
-  quirks?: string;
+  quirks?: string | string[];
+  flaws?: string | string[];
+  worldSetting?: string;
   worldAtmosphere?: string;
   keyLocations?: string;
   scenarioStakes?: string;

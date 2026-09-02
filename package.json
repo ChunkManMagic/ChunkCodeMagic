@@ -9,6 +9,7 @@
     "start": "node dist/server.cjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "test": "tsx scripts/transfer-roundtrip.test.ts",
     "preview": "vite preview"
   },
   "dependencies": {
