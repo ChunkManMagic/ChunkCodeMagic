@@ -201,6 +201,9 @@ function getFallbackModel(currentModel: string, config?: any): string | null {
   // If requesting audio, fallback only to compatible audio models
   const isAudioRequest =
     config?.responseModalities?.includes('AUDIO') ||
+    config?.response_modalities?.includes('AUDIO') ||
+    (Array.isArray(config?.responseModalities) && config.responseModalities.some((m: string) => String(m).toUpperCase() === 'AUDIO')) ||
+    (Array.isArray(config?.response_modalities) && config.response_modalities.some((m: string) => String(m).toUpperCase() === 'AUDIO')) ||
     currentModel.includes('-tts') ||
     currentModel.includes('native-audio') ||
     currentModel.includes('live');
