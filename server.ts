@@ -151,6 +151,16 @@ const RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const RATE_LIMIT_MAX_REQUESTS = 40;
 const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
+// Periodic cleanup so request handlers never perform an O(N) sweep on rateBuckets
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of rateBuckets) {
+    if (v.resetAt <= now) {
+      rateBuckets.delete(k);
+    }
+  }
+}, 60 * 1000).unref();
+
 function geminiGuard(req: express.Request, res: express.Response, next: express.NextFunction) {
   const requiredToken = (process.env.API_ACCESS_TOKEN || "").trim();
   if (requiredToken) {
@@ -170,16 +180,8 @@ function geminiGuard(req: express.Request, res: express.Response, next: express.
     }
   }
 
-  // #7 Fix: req.ip is the proxy's own IP when behind Render's reverse proxy.
-  // Use the X-Forwarded-For header (first IP = real client) so different users
-  // aren't all rate-limited as the same IP, and one user can't burn another's quota.
-  const xForwardedFor = req.headers["x-forwarded-for"];
-  const clientIp = (typeof xForwardedFor === "string"
-    ? xForwardedFor.split(",")[0].trim()
-    : Array.isArray(xForwardedFor)
-    ? xForwardedFor[0].trim()
-    : null) || req.ip || "unknown";
-  const key = clientIp;
+  // Rely directly on req.ip (configured via app.set('trust proxy', 1))
+  const key = req.ip || "unknown";
   const now = Date.now();
   let bucket = rateBuckets.get(key);
   if (!bucket || bucket.resetAt <= now) {
@@ -187,11 +189,6 @@ function geminiGuard(req: express.Request, res: express.Response, next: express.
     rateBuckets.set(key, bucket);
   }
   bucket.count++;
-  if (rateBuckets.size > 5000) {
-    for (const [k, v] of rateBuckets) {
-      if (v.resetAt <= now) rateBuckets.delete(k);
-    }
-  }
   if (bucket.count > RATE_LIMIT_MAX_REQUESTS) {
     res.setHeader("Retry-After", Math.ceil((bucket.resetAt - now) / 1000));
     return res.status(429).json({ error: { message: "Too many requests. Please slow down." } });
@@ -269,6 +266,7 @@ function isTransientError(err: any): boolean {
 
 async function startServer() {
   const app = express();
+  app.set("trust proxy", 1);
   const PORT = 3000;
 
   app.use(express.json({ limit: "2mb" }));
@@ -450,12 +448,16 @@ async function startServer() {
       
       if (!clientGone && !res.destroyed && !res.writableEnded) {
         res.write("data: [DONE]\n\n");
+        res.end();
       }
-      res.end();
     } catch (err: any) {
       console.error("Gemini generate stream final failure:", err);
       sendEvent({ error: err.message || String(err) });
-      res.end();
+      if (!clientGone && !res.destroyed && !res.writableEnded) {
+        try {
+          res.end();
+        } catch {}
+      }
     }
   });
 
@@ -614,12 +616,16 @@ async function startServer() {
       }
       if (!clientGone && !res.destroyed && !res.writableEnded) {
         res.write("data: [DONE]\n\n");
+        res.end();
       }
-      res.end();
     } catch (err: any) {
       console.error("Gemini interact stream final failure:", err);
       sendEvent({ error: err.message || String(err) });
-      res.end();
+      if (!clientGone && !res.destroyed && !res.writableEnded) {
+        try {
+          res.end();
+        } catch {}
+      }
     }
   });
 

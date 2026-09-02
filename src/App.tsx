@@ -92,9 +92,14 @@ function ConfirmationModal({ isOpen, title, message, onConfirm, onCancel }: Conf
   );
 }
 
+interface ErrorBoundaryProps {
+  children: ReactNode;
+  onReset?: () => void;
+}
+
 // Error Boundary Component
-class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean, error: Error | null }> {
-  constructor(props: { children: ReactNode }) {
+class ErrorBoundary extends Component<ErrorBoundaryProps, { hasError: boolean; error: Error | null }> {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null };
   }
@@ -107,7 +112,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
     console.error("Uncaught error:", error, errorInfo);
   }
 
-  handleReset = () => {
+  handleReset = (resetCallback?: () => void) => {
+    if (typeof resetCallback === 'function') {
+      resetCallback();
+    } else if (this.props.onReset) {
+      this.props.onReset();
+    }
     this.setState({ hasError: false, error: null });
   };
 
@@ -123,7 +133,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
           
           <div className="flex flex-col sm:flex-row gap-3">
             <button 
-              onClick={this.handleReset}
+              onClick={() => this.handleReset()}
               className="px-6 py-2.5 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-500 transition-all text-sm"
             >
               Try again
@@ -154,6 +164,7 @@ export default function App() {
     deleteScenario 
   } = useFirestoreSync();
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [isDirty, setIsDirty] = useState(false);
   const [isScenariosLoaded, setIsScenariosLoaded] = useState(false);
   const [currentScenarioId, setCurrentScenarioId] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
@@ -177,82 +188,92 @@ export default function App() {
   
   // Sync scenarios from Firestore when user is logged in
   useEffect(() => {
+    let unsubscribe: (() => void) | undefined;
+    let isCancelled = false;
+
     if (isAuthReady && user) {
-      // Migrate local scenarios to Firestore
-      const migrateToFirestore = async () => {
+      // Wrap migrateToFirestore and syncScenarios setup inside a single async function
+      const initCloudSync = async () => {
         try {
           const migratedFlag = localStorage.getItem(`migrated_to_firestore_${user.uid}`);
-          if (migratedFlag) return;
-
-          const localScenarios: Scenario[] = await get(STORAGE_KEYS.SCENARIOS) || [];
-          const localScenariosStr = localStorage.getItem(STORAGE_KEYS.SCENARIOS);
-          if (localScenariosStr) {
-            try {
-              const ls = JSON.parse(localScenariosStr);
-              if (Array.isArray(ls)) {
-                // Merge and deduplicate
-                const seenIds = new Set(localScenarios.map(s => s.id));
-                for (const s of ls) {
-                  if (!seenIds.has(s.id)) {
-                    localScenarios.push(s);
-                    seenIds.add(s.id);
+          if (!migratedFlag) {
+            const localScenarios: Scenario[] = await get(STORAGE_KEYS.SCENARIOS) || [];
+            const localScenariosStr = localStorage.getItem(STORAGE_KEYS.SCENARIOS);
+            if (localScenariosStr) {
+              try {
+                const ls = JSON.parse(localScenariosStr);
+                if (Array.isArray(ls)) {
+                  // Merge and deduplicate
+                  const seenIds = new Set(localScenarios.map(s => s.id));
+                  for (const s of ls) {
+                    if (!seenIds.has(s.id)) {
+                      localScenarios.push(s);
+                      seenIds.add(s.id);
+                    }
                   }
                 }
-              }
-            } catch (e) {}
-          }
+              } catch (e) {}
+            }
 
-          if (localScenarios.length > 0) {
-            console.log("Checking for sync conflicts...");
-            
-            // Get current remote scenarios
-            const remoteSnap = await getDocs(collection(db, 'users', user.uid, 'scenarios'));
-            const remoteScenariosMap = new Map(remoteSnap.docs.map(doc => [doc.id, doc.data() as Scenario]));
-            
-            const conflicts: { local: Scenario, remote: Scenario }[] = [];
-            const freshMigrates: Scenario[] = [];
+            if (localScenarios.length > 0) {
+              console.log("Checking for sync conflicts...");
+              
+              // Get current remote scenarios
+              const remoteSnap = await getDocs(collection(db, 'users', user.uid, 'scenarios'));
+              const remoteScenariosMap = new Map(remoteSnap.docs.map(doc => [doc.id, doc.data() as Scenario]));
+              
+              const conflicts: { local: Scenario, remote: Scenario }[] = [];
+              const freshMigrates: Scenario[] = [];
 
-            for (const local of localScenarios) {
-              const remote = remoteScenariosMap.get(local.id);
-              if (remote) {
-                // Potential conflict if they differ significantly (e.g. timestamps or name)
-                const isDifferent = Math.abs(local.lastUpdated - remote.lastUpdated) > 5000 || 
-                                   local.profile.name !== remote.profile.name;
-                
-                if (isDifferent) {
-                  conflicts.push({ local, remote });
+              for (const local of localScenarios) {
+                const remote = remoteScenariosMap.get(local.id);
+                if (remote) {
+                  // Potential conflict if they differ significantly (e.g. timestamps or name)
+                  const isDifferent = Math.abs(local.lastUpdated - remote.lastUpdated) > 5000 || 
+                                     local.profile.name !== remote.profile.name;
+                  
+                  if (isDifferent) {
+                    conflicts.push({ local, remote });
+                  }
+                } else {
+                  freshMigrates.push(local);
                 }
-              } else {
-                freshMigrates.push(local);
               }
-            }
 
-            // Save non-conflicting ones
-            for (const scenario of freshMigrates) {
-              await saveScenario(scenario);
-            }
+              // Save non-conflicting ones
+              for (const scenario of freshMigrates) {
+                await saveScenario(scenario);
+              }
 
-            if (conflicts.length > 0) {
-              setConflictQueue(conflicts.slice(1));
-              setConflict(conflicts[0]);
+              if (conflicts.length > 0) {
+                setConflictQueue(conflicts.slice(1));
+                setConflict(conflicts[0]);
+              } else {
+                localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
+              }
             } else {
               localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
             }
-          } else {
-            localStorage.setItem(`migrated_to_firestore_${user.uid}`, 'true');
           }
         } catch (e) {
           console.error("Migration to Firestore failed", e);
         }
+
+        // Live cloud sync only begins after local data is securely pushed
+        if (!isCancelled) {
+          unsubscribe = syncScenarios((syncedScenarios) => {
+            setScenarios(syncedScenarios);
+            setIsScenariosLoaded(true);
+          });
+        }
       };
 
-      migrateToFirestore();
+      initCloudSync();
 
-      const unsubscribe = syncScenarios((syncedScenarios) => {
-        setScenarios(syncedScenarios);
-        setIsScenariosLoaded(true);
-      });
-      return () => unsubscribe();
+      return () => {
+        isCancelled = true;
+        if (unsubscribe) unsubscribe();
+      };
     } else if (isAuthReady && !user) {
       // If not logged in, we could load from IndexedDB or show login
       const loadLocal = async () => {
@@ -342,15 +363,18 @@ export default function App() {
     }
   }, [currentScenario?.profile.storyTone]);
 
-  // Debounced save to IndexedDB (and Firestore if logged in)
+  // Debounced save to IndexedDB only when local state is dirty (manual user change)
   useEffect(() => {
-    if (!isScenariosLoaded) return;
+    if (!isScenariosLoaded || !isDirty) return;
 
     setSaveStatus('saving');
     const timeoutId = setTimeout(() => {
       // Local save
       set(STORAGE_KEYS.SCENARIOS, scenarios)
-        .then(() => setSaveStatus('saved'))
+        .then(() => {
+          setSaveStatus('saved');
+          setIsDirty(false);
+        })
         .catch(e => {
           console.error("Failed to save scenarios to IndexedDB", e);
           setSaveStatus('error');
@@ -358,7 +382,7 @@ export default function App() {
     }, 1000);
 
     return () => clearTimeout(timeoutId);
-  }, [scenarios, isScenariosLoaded]);
+  }, [scenarios, isScenariosLoaded, isDirty]);
 
   // Save ID to IndexedDB
   useEffect(() => {
@@ -444,6 +468,7 @@ export default function App() {
         await deleteScenario(targetId);
       }
       setScenarios(prev => prev.filter(s => s.id !== targetId));
+      setIsDirty(true);
       await del(STORAGE_KEYS.SCENARIO_MESSAGES(targetId));
       localStorage.removeItem(STORAGE_KEYS.SCENARIO_MESSAGES(targetId));
       
@@ -570,6 +595,7 @@ export default function App() {
       }
 
       setScenarios(prev => [...prev, newScenario]);
+      setIsDirty(true);
     } catch (err) {
       console.error("Import error:", err);
       toastError("Failed to import story data.");
@@ -608,6 +634,7 @@ export default function App() {
       }
 
       setScenarios(prev => [...prev, newScenario]);
+      setIsDirty(true);
       setCurrentScenarioId(newScenario.id);
       setIsCreating(false);
       setShowDraft(false);
@@ -641,6 +668,7 @@ export default function App() {
     setScenarios(prev => prev.map(s => 
       s.id === currentScenarioId ? updatedScenario : s
     ));
+    setIsDirty(true);
     setIsEditing(false);
     toastSuccess("Character updated successfully!");
   };
@@ -678,6 +706,7 @@ export default function App() {
     }
 
     setScenarios(prev => [...prev, newScenario]);
+    setIsDirty(true);
     setCurrentScenarioId(newScenario.id);
     setIsCreating(false);
     setIsEditing(false);
@@ -699,6 +728,7 @@ export default function App() {
     setScenarios(prev => prev.map(s => 
       s.id === currentScenarioId ? updatedScenario : s
     ));
+    setIsDirty(true);
   };
   
   const handleUpdateAvatar = async (avatarBase64: string) => {
@@ -716,6 +746,7 @@ export default function App() {
     setScenarios(prev => prev.map(s => 
       s.id === currentScenarioId ? updatedScenario : s
     ));
+    setIsDirty(true);
   };
 
   const handleBranchScenario = async (slicedMessages: Message[], codexEntries: CodexEntry[], storySummary: string) => {
@@ -753,6 +784,7 @@ export default function App() {
     await set(STORAGE_KEYS.SCENARIO_SUMMARY(newScenarioId), branchData.summary);
 
     setScenarios(prev => [...prev, newScenario]);
+    setIsDirty(true);
     setCurrentScenarioId(newScenarioId);
     setBranchData(null);
     toastSuccess("Scenario branched into alternate timeline!");
@@ -1020,7 +1052,7 @@ export default function App() {
           </ErrorBoundary>
         ) : (isCreating || showDraft) && !currentScenarioId ? (
           <div className="flex-1 flex items-center justify-center py-10">
-            <ErrorBoundary>
+            <ErrorBoundary onReset={() => { setIsCreating(false); setShowDraft(false); }}>
               <Suspense fallback={<ScreenLoader />}>
                 <CharacterCreator 
                   scenarios={scenarios}
@@ -1035,7 +1067,7 @@ export default function App() {
           </div>
         ) : isEditing && currentScenario ? (
           <div className="flex-1 flex items-center justify-center py-10">
-            <ErrorBoundary>
+            <ErrorBoundary onReset={() => setIsEditing(false)}>
               <Suspense fallback={<ScreenLoader />}>
                 <CharacterEditor
                   profile={currentScenario.profile}
@@ -1049,7 +1081,7 @@ export default function App() {
           </div>
         ) : currentScenario ? (
           <div className="flex-1 min-h-0">
-            <ErrorBoundary>
+            <ErrorBoundary onReset={() => setCurrentScenarioId(null)}>
               <Suspense fallback={<ScreenLoader />}>
                 <ChatInterface 
                   profile={currentScenario.profile} 
