@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Sparkles, Loader2, User, Image as ImageIcon, Globe, Heart, Swords, ArrowLeft, ArrowRight, Settings2, RotateCcw, Volume2 } from 'lucide-react';
+import { Sparkles, Loader2, User, Image as ImageIcon, Globe, Heart, Swords, BookOpen, ArrowLeft, ArrowRight, Settings2, RotateCcw, Volume2 } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { getSmartSuggestions, generateCharacterProfile, generateAvatar, CharacterProfile, refineField, refineTraits, AppMode, refinePlayerProfile, InventoryItem, generateSpeech, refineText, refineProfile } from '../lib/gemini';
 import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES } from '../lib/ttsEngine';
@@ -782,10 +782,11 @@ export function CharacterCreator({ onCharacterCreated, onCancel, scenarios = [] 
               <div className="w-24" /> {/* Spacer */}
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
               {[
                 { id: AppMode.SCENARIO, label: 'Scenario', icon: Globe, desc: 'AI narrates a living world. You explore, choose, and shape the story.', color: 'emerald' },
                 { id: AppMode.ROLEPLAY, label: 'Roleplay', icon: Heart, desc: 'Deep one-on-one character interaction driven by personality and emotion.', color: 'blue' },
+                { id: AppMode.NARRATIVE, label: 'Novel Generator', icon: BookOpen, desc: 'Pure literary prose and storytelling without gameplay clutter or stat mechanics.', color: 'amber' },
                 { id: AppMode.GAME, label: 'Game', icon: Swords, desc: 'AI is your Dungeon Master — dice, combat, quests, and consequences.', color: 'purple' }
               ].map(m => (
                 <button

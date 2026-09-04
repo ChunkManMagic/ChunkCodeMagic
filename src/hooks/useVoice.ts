@@ -42,7 +42,7 @@ export function useVoice(voiceName: string, _voiceSettings?: VoiceSettings, _sto
       const segments = splitIntoSpeechSegments(text);
       if (segments.length === 0) return;
 
-      const voiceNameToUse = profile?.voiceName || settings.liveVoiceName || voiceName || 'Kore';
+      const voiceNameToUse = profile?.voiceName?.trim() || settings.liveVoiceName || voiceName || 'Kore';
       const useFast = settings.voiceQuality !== 'quality';
 
       setIsPlaying(true);
@@ -56,6 +56,9 @@ export function useVoice(voiceName: string, _voiceSettings?: VoiceSettings, _sto
 
       await defaultTtsEngine.speakSegments(segments, {
         voiceName: voiceNameToUse,
+        buildStylePrefix: profile
+          ? (seg) => buildDirectorPromptFromProfile(profile, '', '', seg) ?? null
+          : undefined,
         stylePrefix: directorPrompt,
         useFastChain: useFast,
         onSegmentStart: (idx, total) => {

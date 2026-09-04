@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { X, Mic, Volume2, Loader2, AlertCircle } from 'lucide-react';
-import { CharacterProfile } from '../../lib/types';
-import { TtsEngine, ALL_VOICES } from '../../lib/ttsEngine';
+import { TtsEngine, ALL_VOICES, cleanTextForSpeech } from '../../lib/ttsEngine';
 import { buildDirectorPromptFromProfile } from '../../lib/voiceDirector';
-import { getSettings } from '../../lib/types';
+import { getSettings, CharacterProfile } from '../../lib/types';
 
 interface VoiceChatDialogProps {
   isOpen: boolean;
@@ -77,6 +76,7 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
 
   const launchSTT = useCallback(() => {
     if (!isMountedRef.current) return;
+    if (phaseRef.current === 'speaking' || ttsRef.current?.isSpeaking) return;
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
       if (isMountedRef.current) {
@@ -164,22 +164,30 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
     spokenIds.current.add(last.id);
     if (!isMountedRef.current) return;
     setAwaitingReply(false);
-    setReplyText(last.text);
+
+    const cleanSpeech = cleanTextForSpeech(last.text);
+    if (!cleanSpeech) {
+      setPhase('idle');
+      return;
+    }
+    setReplyText(cleanSpeech);
     setPhase('speaking');
 
-    const voiceName = getSettings().liveVoiceName || profile.voiceName || 'Kore';
+    const voiceName = profile.voiceName?.trim() || getSettings().liveVoiceName || 'Kore';
     const useFast = (getSettings().voiceQuality || 'quality') !== 'quality';
-    const directorPrompt = buildDirectorPromptFromProfile(profile, storySummary, (profile as any).backstory || '', last.text) || undefined;
+    const directorPrompt = buildDirectorPromptFromProfile(profile, storySummary, (profile as any).backstory || '', cleanSpeech) || undefined;
 
     (async () => {
       try {
         const tts = ttsRef.current!;
-        await tts.speak(last.text, voiceName, directorPrompt || null, useFast, () => {
+        await tts.speak(cleanSpeech, voiceName, directorPrompt || null, useFast, () => {
           if (isMountedRef.current) {
             setPhase('idle');
             if (handsFreeRef.current && isOpen) {
               setTimeout(() => {
-                if (handsFreeRef.current && isMountedRef.current) launchSTT();
+                if (handsFreeRef.current && isMountedRef.current && phaseRef.current === 'idle' && !ttsRef.current?.isSpeaking) {
+                  launchSTT();
+                }
               }, 400);
             }
           }
@@ -189,7 +197,9 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
           setPhase('idle');
           if (handsFreeRef.current && isOpen) {
             setTimeout(() => {
-              if (handsFreeRef.current && isMountedRef.current) launchSTT();
+              if (handsFreeRef.current && isMountedRef.current && phaseRef.current === 'idle' && !ttsRef.current?.isSpeaking) {
+                launchSTT();
+              }
             }, 400);
           }
         }
@@ -214,9 +224,11 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
   // handsFree auto-loop
   useEffect(() => {
     if (!isOpen) return;
-    if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply) {
+    if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply && !ttsRef.current?.isSpeaking) {
       const id = setTimeout(() => {
-        if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply) launchSTT();
+        if (handsFreeRef.current && phaseRef.current === 'idle' && !awaitingReply && !ttsRef.current?.isSpeaking) {
+          launchSTT();
+        }
       }, 800);
       return () => clearTimeout(id);
     }
@@ -224,7 +236,7 @@ export function VoiceChatDialog({ isOpen, onClose, profile, storySummary, messag
 
   if (!isOpen) return null;
 
-  const voiceName = getSettings().liveVoiceName || profile.voiceName || 'Kore';
+  const voiceName = profile.voiceName?.trim() || getSettings().liveVoiceName || 'Kore';
   const voiceDesc = ALL_VOICES.find(v => v.name === voiceName)?.character || '';
 
   return (

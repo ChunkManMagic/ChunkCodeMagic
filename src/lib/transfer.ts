@@ -29,6 +29,7 @@ function toExportGameMode(mode: AppMode): ExportGameMode {
     case AppMode.ROLEPLAY: return ExportGameMode.ROLEPLAY;
     case AppMode.SCENARIO: return ExportGameMode.SCENARIO;
     case AppMode.GAME: return ExportGameMode.GAME;
+    case AppMode.NARRATIVE: return ExportGameMode.NARRATIVE;
   }
 }
 
@@ -38,7 +39,7 @@ function fromExportGameMode(mode?: ExportGameMode): AppMode {
     case ExportGameMode.ROLEPLAY: return AppMode.ROLEPLAY;
     case ExportGameMode.SCENARIO: return AppMode.SCENARIO;
     case ExportGameMode.GAME: return AppMode.GAME;
-    case ExportGameMode.NARRATIVE: return AppMode.SCENARIO;
+    case ExportGameMode.NARRATIVE: return AppMode.NARRATIVE;
     default: return AppMode.ROLEPLAY;
   }
 }

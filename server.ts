@@ -211,7 +211,10 @@ function getFallbackModel(currentModel: string, config?: any): string | null {
     if (currentModel === 'gemini-3.1-flash-tts-preview') {
       return 'gemini-2.5-flash-preview-tts';
     }
-    if (currentModel === 'gemini-2.5-flash-preview-tts' || currentModel === 'gemini-2.5-pro-preview-tts') {
+    if (currentModel === 'gemini-2.5-flash-preview-tts') {
+      return 'gemini-2.5-pro-preview-tts';
+    }
+    if (currentModel === 'gemini-2.5-pro-preview-tts') {
       return null;
     }
     return null;
@@ -471,8 +474,8 @@ async function startServer() {
       }
 
       const ai = new GoogleGenAI({ apiKey });
-      const { input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id } = req.body;
-      let model = req.body.model;
+      const { input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id, agent, environment } = req.body;
+      let model = req.body.model ?? agent;
 
       let attempt = 0;
       const maxAttempts = 3;
@@ -483,6 +486,8 @@ async function startServer() {
         try {
           interaction = await ai.interactions.create({
             model,
+            agent,
+            environment,
             input,
             system_instruction,
             response_format,
@@ -555,8 +560,8 @@ async function startServer() {
       res.flushHeaders();
 
       const ai = new GoogleGenAI({ apiKey });
-      const { input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id } = req.body;
-      let model = req.body.model;
+      const { input, system_instruction, response_format, generation_config, response_modalities, tools, previous_interaction_id, agent, environment } = req.body;
+      let model = req.body.model ?? agent;
 
       let attempt = 0;
       const maxAttempts = 3;
@@ -568,6 +573,8 @@ async function startServer() {
         try {
           const stream = await ai.interactions.create({
             model,
+            agent,
+            environment,
             input,
             system_instruction,
             response_format,
@@ -673,15 +680,16 @@ async function startServer() {
     }
   });
 
-  // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  const distPath = path.join(process.cwd(), "dist");
+  const hasDist = fs.existsSync(distPath) && fs.existsSync(path.join(distPath, "index.html"));
+
+  if (process.env.NODE_ENV !== "production" && !hasDist) {
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
     app.get("*all", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));

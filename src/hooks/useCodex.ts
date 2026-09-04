@@ -79,9 +79,71 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
     }
   }, [user, scenarioId, saveCodexEntriesBatch]);
 
+  const scanSilentLore = useCallback((text: string) => {
+    if (!text || text.length < 15) return;
+    const existingTitles = new Set(codexEntries.map(e => e.title.toLowerCase().trim()));
+    const newItems: CodexEntry[] = [];
+
+    // 1. Detect Locations: "in/at/near/to the [Capitalized Place]", "the [Name] Kingdom/Tower/Castle/Forest/Tavern/City/Ruins/Sanctuary"
+    const locationRegex = /\b(?:in|at|near|to|through|inside|into)\s+(?:the\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+(?:Tavern|Inn|Castle|Keep|Tower|Forest|Woods|City|Ruins|Sanctuary|Citadel|Palace|Temple|Dungeon|Kingdom|Valley|River|Mountain|Peak|Gate|Square|Harbor))/g;
+    let match: RegExpExecArray | null;
+    while ((match = locationRegex.exec(text)) !== null) {
+      const title = match[1].trim();
+      if (title && !existingTitles.has(title.toLowerCase()) && !newItems.some(i => i.title.toLowerCase() === title.toLowerCase())) {
+        existingTitles.add(title.toLowerCase());
+        newItems.push({
+          id: generateId(),
+          title,
+          category: 'Location',
+          content: `Discovered location mentioned in dialogue: "${title}".`
+        });
+      }
+    }
+
+    // 2. Detect Factions & Organizations: "the [Capitalized Words] Guild/Order/Syndicate/Clan/Brotherhood/Empire/Guard/Cabal"
+    const factionRegex = /\b(?:the\s+)?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\s+(?:Guild|Order|Syndicate|Clan|Brotherhood|Empire|Guard|Cabal|Cult|Faction|Fleet|Legion|Alliance))/g;
+    while ((match = factionRegex.exec(text)) !== null) {
+      const title = match[1].trim();
+      if (title && !existingTitles.has(title.toLowerCase()) && !newItems.some(i => i.title.toLowerCase() === title.toLowerCase())) {
+        existingTitles.add(title.toLowerCase());
+        newItems.push({
+          id: generateId(),
+          title,
+          category: 'Lore',
+          content: `Organization or faction referenced in the narrative: "${title}".`
+        });
+      }
+    }
+
+    // 3. Detect Named Characters / Entities: "[Name] the [Epithet]" or "Lord/Lady/Captain/Archmage [Name]"
+    const titleRegex = /\b((?:Lord|Lady|Captain|Archmage|Professor|King|Queen|Master|Commander|Doctor|Baron|Count|Prince|Princess)\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/g;
+    while ((match = titleRegex.exec(text)) !== null) {
+      const title = match[1].trim();
+      if (title && !existingTitles.has(title.toLowerCase()) && !newItems.some(i => i.title.toLowerCase() === title.toLowerCase()) && title.toLowerCase() !== profile.name.toLowerCase()) {
+        existingTitles.add(title.toLowerCase());
+        newItems.push({
+          id: generateId(),
+          title,
+          category: 'Lore',
+          content: `Person of significance encountered: "${title}".`
+        });
+      }
+    }
+
+    if (newItems.length > 0) {
+      addCodexEntriesBatch(newItems);
+      toastSuccess(`Codex updated: ${newItems.map(i => i.title).join(', ')}`);
+    }
+  }, [codexEntries, profile.name, addCodexEntriesBatch, toastSuccess]);
+
   const handleAutoPopulateCodex = useCallback(async (force = false, historyOverride?: { role: string; parts: { text: string }[] }[]) => {
     const currentHistory = historyOverride || messages.map(m => ({ role: m.role, parts: [{ text: m.text }] }));
     if (isAutoPopulatingCodex || currentHistory.length < 2) return;
+
+    // First run local zero-cost silent scanner on the latest turn
+    const latestMessageText = messages[messages.length - 1]?.text || '';
+    scanSilentLore(latestMessageText);
+
     if (!force && (!isAutoCodexEnabled || currentHistory.length % 12 !== 0)) return;
     
     setIsAutoPopulatingCodex(true);
@@ -107,7 +169,7 @@ export function useCodex(scenarioId: string, profile: CharacterProfile, messages
     } finally {
       setIsAutoPopulatingCodex(false);
     }
-  }, [messages, profile, codexEntries, isAutoPopulatingCodex, isAutoCodexEnabled, toastSuccess, toastError, addCodexEntriesBatch]);
+  }, [messages, profile, codexEntries, isAutoPopulatingCodex, isAutoCodexEnabled, toastSuccess, toastError, addCodexEntriesBatch, scanSilentLore]);
 
   const handleRefineCodexEntry = useCallback(async (entry: Partial<CodexEntry>) => {
     if (isRefiningCodexEntry || !entry.title || !entry.content) return entry;

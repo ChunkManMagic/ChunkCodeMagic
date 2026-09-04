@@ -120,12 +120,15 @@ export function isModelNotFound(e: any): boolean {
 export function cleanTextForSpeech(text: string): string {
   if (!text) return '';
   return text
-    .replace(/<ooc>[\s\S]*?<\/ooc>/gi, '')
+    .replace(/<(?:\w+|think|ooc|narrator)[\s\S]*?<\/(?:\w+|think|ooc|narrator)>/gi, '')
     .replace(/\[DIRECTOR INSTRUCTION\]:[\s\S]*?(?:$|(?=\n\n))/gi, '')
     .replace(/\[Director's Note(?: for AI)?: [\s\S]*?\]/gi, '')
     .replace(/\[(?:Action|Roll|Director|Dice|Context|OOC|Narrator).*?\]/gis, '')
+    .replace(/<\/?[a-zA-Z][^>]*>/gi, '')
+    .replace(/(?:^|\n)>\s*/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
     .replace(/[*_~`#]/g, '')
-    .replace(/^["'“‘\s]+|["'”’\s]+$/g, '')
+    .replace(/^["'“‘«\s]+|["'”’»\s]+$/g, '')
     .trim();
 }
 
@@ -339,7 +342,11 @@ export async function synthesizeSpeech(
 
   const ai = getGenAI();
   const chain = useFastChain ? TTS_MODEL_CHAIN_FAST : TTS_MODEL_CHAIN;
-  const prompt = `${stylePrefix ? stylePrefix + '\n\n' : ''}${text.slice(0, 4000)}`;
+  const prompt = stylePrefix
+    ? (stylePrefix.includes('### TRANSCRIPT')
+        ? stylePrefix.slice(0, 4000)
+        : `${stylePrefix}\n\n${text.slice(0, 4000)}`)
+    : text.slice(0, 4000);
 
   const configBase = {
     responseModalities: ['AUDIO'] as const,
@@ -392,6 +399,13 @@ export async function synthesizeSpeech(
       continue;
     }
   }
+
+  // If styled synthesis failed, retry once with pure clean text before giving up
+  if (stylePrefix) {
+    console.warn('[TtsEngine] Styled synthesis failed, retrying with clean text directly');
+    return synthesizeSpeech(text, voiceName, null, useFastChain, extraConfig);
+  }
+
   console.warn('[TtsEngine] All TTS models exhausted — caller falls back to browser TTS');
   return null;
 }
@@ -452,6 +466,7 @@ export class TtsEngine {
     options: {
       voiceName?: string;
       stylePrefix?: string | null;
+      buildStylePrefix?: (segmentText: string) => string | null;
       useFastChain?: boolean;
       onSegmentStart?: (index: number, total: number, segmentText: string) => void;
       onComplete?: () => void;
@@ -475,10 +490,14 @@ export class TtsEngine {
       this._currentSegmentText = segments[i];
       options.onSegmentStart?.(i, segments.length, segments[i]);
 
+      const prefixForSegment = options.buildStylePrefix
+        ? options.buildStylePrefix(segments[i])
+        : options.stylePrefix;
+
       const b64 = await this.synthesize(
         segments[i],
         options.voiceName,
-        options.stylePrefix,
+        prefixForSegment,
         options.useFastChain ?? true
       );
       if (myCancel.cancelled) break;
@@ -540,47 +559,13 @@ export class TtsEngine {
     if (b64) {
       await this.playBase64(b64, onDone);
     } else {
-      // browser fallback
-      if (this._browserTtsTimer) {
-        clearTimeout(this._browserTtsTimer);
-        this._browserTtsTimer = null;
-      }
-      if (this._browserTtsPoll) {
-        clearInterval(this._browserTtsPoll);
-        this._browserTtsPoll = null;
-      }
-
+      // browser fallback using speakWithBrowserAsync to prevent premature cutoff
       const settings = getSettings();
       const rate = (settings as any)?.ttsSpeed ?? 1;
-      speakWithBrowser(clean, voiceName, rate);
-      const words = clean.split(/\s+/).length;
-      const estMs = Math.max(800, (words / 2.5) * 1000);
       this.setSpeaking(true);
-
-      this._browserTtsTimer = setTimeout(() => {
-        this._browserTtsTimer = null;
-        if (this._browserTtsPoll) {
-          clearInterval(this._browserTtsPoll);
-          this._browserTtsPoll = null;
-        }
-        this.setSpeaking(false);
-        onDone?.();
-      }, estMs);
-
-      this._browserTtsPoll = setInterval(() => {
-        if (!window.speechSynthesis.speaking) {
-          if (this._browserTtsPoll) {
-            clearInterval(this._browserTtsPoll);
-            this._browserTtsPoll = null;
-          }
-          if (this._browserTtsTimer) {
-            clearTimeout(this._browserTtsTimer);
-            this._browserTtsTimer = null;
-          }
-          this.setSpeaking(false);
-          onDone?.();
-        }
-      }, 200);
+      await speakWithBrowserAsync(clean, voiceName, rate);
+      this.setSpeaking(false);
+      onDone?.();
     }
   }
 

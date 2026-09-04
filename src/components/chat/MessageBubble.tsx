@@ -1,4 +1,4 @@
-import { memo, useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import { motion } from 'motion/react';
 import { RotateCcw, Edit2, Volume2, RefreshCw, GitBranch, Pin, PinOff, Square, Activity, ArrowLeft, ArrowRight, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -24,6 +24,8 @@ function renderWithDiceRolls(text: string): React.ReactNode {
     </span>
   );
 }
+
+
 
 interface MessageBubbleProps {
   message: Message;

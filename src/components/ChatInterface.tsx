@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { useToast } from '../hooks/useToast';
-import { Send, Square, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Info, Book, Settings2, Sliders, RefreshCw, Package, User, Cloud, Download, Pin, Radio, Terminal } from 'lucide-react';
+import { Send, Square, Mic, MicOff, Loader2, Edit3, Wand2, X as CloseIcon, Volume2, VolumeX, Sparkles, Pause, SkipBack, Repeat, Globe, Heart, Swords, Book, BookOpen, Settings2, RefreshCw, Package, Cloud, Download, Pin, Radio, Terminal, MoreVertical, UserPlus, Compass, Eye, EyeOff } from 'lucide-react';
 import { useVoice } from '../hooks/useVoice';
 import { useLiveVoice } from '../hooks/useLiveVoice';
 import { useAmbientSoundscape } from '../hooks/useAmbientSoundscape';
@@ -13,6 +13,7 @@ import { useChatState } from '../hooks/useChatState';
 import { useProfileUpdate } from '../hooks/useProfileUpdate';
 import { InventorySidebar } from './chat/InventorySidebar';
 import { CodexSidebar } from './chat/CodexSidebar';
+import { VoiceStudioSidebar } from './chat/VoiceStudioSidebar';
 import { ErrorBoundary } from './ErrorBoundary';
 import { MessageBubble } from './chat/MessageBubble';
 import { parseMessageContent } from './chat/messageContent';
@@ -20,7 +21,7 @@ import { PinnedMessagesPanel } from './chat/PinnedMessagesPanel';
 import { LiveVoiceHUD } from './chat/LiveVoiceHUD';
 import { VoiceChatDialog } from './chat/VoiceChatDialog';
 import { ActionSuggestionsBar } from './chat/ActionSuggestionsBar';
-import { ALL_VOICES, ROLEPLAY_VOICES, NARRATOR_VOICES, BRIGHT_VOICES, defaultTtsEngine } from '../lib/ttsEngine';
+import { defaultTtsEngine } from '../lib/ttsEngine';
 import { refineInput, AppMode, generateTextReplyStream, suggestMultipleActions, type ActionSuggestion, generateId, summarizeHistory, generateContextualAvatar, detectMood } from '../lib/gemini';
 import { AdditionalCharacterModal } from './AdditionalCharacterModal';
 import { getSettings, Message, CharacterProfile, CodexEntry } from '../lib/types';
@@ -44,6 +45,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [showCodex, setShowCodex] = useState(false);
   const [showInventory, setShowInventory] = useState(false);
   const [showAddCharacter, setShowAddCharacter] = useState(false);
+  const [showStoryMenu, setShowStoryMenu] = useState(false);
   const [newCodexEntry, setNewCodexEntry] = useState<Partial<CodexEntry>>({ category: 'Lore' });
   const {
     isAutoProfileEnabled,
@@ -148,6 +150,7 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
   const [showModeDetails, setShowModeDetails] = useState(false);
   const [showPinnedPanel, setShowPinnedPanel] = useState(false);
   const [flashHighlightId, setFlashHighlightId] = useState<string | null>(null);
+  const [isZenMode, setIsZenMode] = useState(false);
 
   // Seed greeting message if chat is empty and profile defines a greetingMessage
   useEffect(() => {
@@ -274,9 +277,16 @@ export function ChatInterface({ profile, avatarBase64, scenarioId, onEditCharact
 
   const liveVoice = useLiveVoice();
 
-  // Procedural scene ambience matched to the atmosphere/tone, ducked while a
-  // live call runs so the mic doesn't pick it up.
-  useAmbientSoundscape(profile, liveVoice.isActive);
+  // Procedural scene ambience matched to the atmosphere/tone and recent story events,
+  // ducked while a live call runs so the mic doesn't pick it up.
+  const lastModelMsgText = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'model') return messages[i].text.slice(0, 400);
+    }
+    return '';
+  }, [messages]);
+
+  useAmbientSoundscape(profile, liveVoice.isActive, lastModelMsgText);
 
   const [error, setError] = useState<string | null>(null);
 
@@ -931,7 +941,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
     });
     liveVoice.start({
       systemInstruction: buildLiveVoicePrompt(),
-      voiceName: getSettings().liveVoiceName || profile.voiceName || 'Kore',
+      voiceName: profile.voiceName?.trim() || getSettings().liveVoiceName || 'Kore',
       temperature: getSettings().liveVoiceTemperature ?? 1.0,
       preferredModel: getSettings().liveVoiceModel,
       micMode: 'hold',
@@ -1033,21 +1043,30 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
     onUpdateProfile({ ...profile, ...updates });
   };
 
-  const voicePresets = [
-    { name: 'Cinematic', pitch: 'Normal', speed: 'Normal', tone: 'Dramatic', voice: 'Kore' },
-    { name: 'Deep Narrator', pitch: 'Low', speed: 'Slow', tone: 'Epic', voice: 'Charon' },
-    { name: 'Fast Action', pitch: 'Normal', speed: 'Fast', tone: 'Intense', voice: 'Fenrir' },
-    { name: 'Whisper', pitch: 'High', speed: 'Slow', tone: 'Mysterious', voice: 'Aoede' },
-    { name: 'Playful & Bright', pitch: 'Normal', speed: 'Normal', tone: 'Energetic', voice: 'Puck' },
-    { name: 'Gothic Fantasy', pitch: 'Low', speed: 'Slow', tone: 'Dark & Ominous', voice: 'Charon' },
-  ];
+  const pinnedCount = useMemo(() => messages.filter(m => m.isPinned).length, [messages]);
 
   return (
     <div className="flex flex-col h-full max-w-6xl mx-auto glass-panel rounded-[2rem] overflow-hidden shadow-2xl border border-white/5">
       {/* Header - fixed: LIVE VOICE cut off on mobile due to overflow-hidden + flex no-wrap */}
       <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-3 sm:px-8 sm:py-5 border-b border-white/5 bg-black/20 backdrop-blur-xl min-w-0">
         <div className="flex items-center gap-2 sm:gap-5 min-w-0 flex-1">
-          <div className="relative w-10 h-10 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl overflow-hidden border border-white/10 shadow-lg">
+          <div
+            onClick={onEditCharacter}
+            className={`relative w-10 h-10 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl overflow-hidden cursor-pointer transition-all duration-300 shadow-lg hover:scale-105 ${
+              liveVoice.isActive
+                ? 'ring-2 ring-emerald-400 ring-offset-2 ring-offset-black animate-pulse shadow-emerald-500/30'
+                : profile.currentMood?.toLowerCase().includes('angry') || profile.currentMood?.toLowerCase().includes('gritty')
+                ? 'ring-2 ring-red-500/70 ring-offset-1 ring-offset-black shadow-red-500/20'
+                : profile.currentMood?.toLowerCase().includes('flirt') || profile.currentMood?.toLowerCase().includes('romantic')
+                ? 'ring-2 ring-pink-500/70 ring-offset-1 ring-offset-black shadow-pink-500/20'
+                : profile.currentMood?.toLowerCase().includes('mysterious')
+                ? 'ring-2 ring-purple-500/70 ring-offset-1 ring-offset-black shadow-purple-500/20'
+                : profile.currentMood?.toLowerCase().includes('happy') || profile.currentMood?.toLowerCase().includes('excited')
+                ? 'ring-2 ring-amber-400/70 ring-offset-1 ring-offset-black shadow-amber-400/20'
+                : 'ring-1 ring-white/20 border border-white/10'
+            }`}
+            title="Click to view & edit Character Profile"
+          >
             <img src={avatarBase64} alt={profile.name} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
           </div>
           <div className="min-w-0 flex-1">
@@ -1056,16 +1075,20 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               <div className={`px-1.5 py-0.5 rounded-md bg-white/5 border border-white/10 flex items-center gap-1 ${
                 profile.mode === AppMode.SCENARIO ? 'border-blue-500/20 bg-blue-500/10' :
                 profile.mode === AppMode.GAME ? 'border-purple-500/20 bg-purple-500/10' :
+                profile.mode === AppMode.NARRATIVE ? 'border-amber-500/20 bg-amber-500/10' :
                 'border-pink-500/20 bg-pink-500/10'
               }`}>
                 {profile.mode === AppMode.SCENARIO
                   ? <Globe className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-blue-400" />
                   : profile.mode === AppMode.GAME
                   ? <Swords className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-purple-400" />
+                  : profile.mode === AppMode.NARRATIVE
+                  ? <BookOpen className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-amber-400" />
                   : <Heart className="w-2 h-2 sm:w-2.5 sm:h-2.5 text-pink-400" />}
                 <span className={`text-[8px] font-bold uppercase tracking-tighter ${
                   profile.mode === AppMode.SCENARIO ? 'text-blue-400' :
                   profile.mode === AppMode.GAME ? 'text-purple-400' :
+                  profile.mode === AppMode.NARRATIVE ? 'text-amber-400' :
                   'text-pink-400'
                 }`}>{profile.mode}</span>
               </div>
@@ -1084,28 +1107,44 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               <div className="hidden sm:flex items-center gap-3 bg-white/5 px-3 py-1.5 rounded-xl border border-white/5 w-fit">
                 <div className="flex flex-col">
                   <span className="text-[8px] font-bold text-zinc-500 uppercase tracking-widest leading-none mb-1">
-                    {profile.mode === AppMode.SCENARIO ? "Protagonist's Role" : profile.mode === AppMode.GAME ? "Party's Reputation" : "Relationship"}
+                    {profile.mode === AppMode.SCENARIO ? "Protagonist's Role" : profile.mode === AppMode.GAME ? "Party's Reputation" : profile.mode === AppMode.NARRATIVE ? "Narrative Style" : "Relationship"}
                   </span>
-                  <span className="text-xs font-bold text-white leading-none">{profile.relationship}</span>
+                  <span className="text-xs font-bold text-white leading-none">{profile.relationship || (profile.mode === AppMode.NARRATIVE ? 'Literary Prose' : 'Neutral')}</span>
                 </div>
-                <div className="w-24 sm:w-32 flex flex-col gap-1 ml-2 border-l border-white/10 pl-3">
-                  <div className="flex justify-between text-[8px] font-bold text-zinc-500 leading-none">
-                    <span>LEVEL</span>
-                    <span>{getRelationshipPercentage(profile.relationship)}%</span>
+                {profile.mode === AppMode.GAME ? (
+                  <div className="w-24 sm:w-32 flex flex-col gap-1 ml-2 border-l border-white/10 pl-3">
+                    <div className="flex justify-between text-[8px] font-bold text-zinc-500 leading-none">
+                      <span>LEVEL</span>
+                      <span>{profile.playerProfile?.level || 1}</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden relative">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${Math.min(100, ((profile.playerProfile?.xp || 0) % 100))}%` }}
+                        className="absolute inset-y-0 left-0 rounded-full bg-purple-500 shadow-[0_0_8px_rgba(168,85,247,0.4)]"
+                      />
+                    </div>
                   </div>
-                  <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden relative">
-                    <motion.div 
-                      initial={{ width: 0 }}
-                      animate={{ width: `${getRelationshipPercentage(profile.relationship)}%` }}
-                      className={`absolute inset-y-0 left-0 rounded-full ${
-                        profile.relationship.toLowerCase().includes('enemy') ? 'bg-red-500' :
-                        profile.relationship.toLowerCase().includes('rival') ? 'bg-amber-500' :
-                        profile.relationship.toLowerCase().includes('lover') ? 'bg-pink-500' :
-                        'bg-emerald-500'
-                      } shadow-[0_0_8px_rgba(16,185,129,0.3)]`}
-                    />
+                ) : profile.mode === AppMode.ROLEPLAY ? (
+                  <div className="w-24 sm:w-32 flex flex-col gap-1 ml-2 border-l border-white/10 pl-3">
+                    <div className="flex justify-between text-[8px] font-bold text-zinc-500 leading-none">
+                      <span>AFFINITY</span>
+                      <span>{getRelationshipPercentage(profile.relationship)}%</span>
+                    </div>
+                    <div className="w-full h-1.5 bg-black/40 rounded-full overflow-hidden relative">
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${getRelationshipPercentage(profile.relationship)}%` }}
+                        className={`absolute inset-y-0 left-0 rounded-full ${
+                          profile.relationship.toLowerCase().includes('enemy') ? 'bg-red-500' :
+                          profile.relationship.toLowerCase().includes('rival') ? 'bg-amber-500' :
+                          profile.relationship.toLowerCase().includes('lover') ? 'bg-pink-500' :
+                          'bg-emerald-500'
+                        } shadow-[0_0_8px_rgba(16,185,129,0.3)]`}
+                      />
+                    </div>
                   </div>
-                </div>
+                ) : null}
               </div>
             </div>
           </div>
@@ -1134,140 +1173,209 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
           >
             <Download className="w-4 h-4 sm:w-5 sm:h-5" />
           </button>
+          {/* World Codex */}
           <button
             onClick={() => setShowCodex(!showCodex)}
-            className={`p-2 rounded-xl transition-all ${showCodex ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+            className={`p-2 rounded-xl transition-all relative ${showCodex ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
             title="World Codex"
           >
             <Book className="w-4 h-4 sm:w-5 sm:h-5" />
+            {codexEntries.length > 0 && (
+              <span className="absolute -top-1 -right-1 bg-emerald-500 text-black text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
+                {codexEntries.length}
+              </span>
+            )}
           </button>
+
+          {/* Pinned Moments */}
           <button
             onClick={() => setShowPinnedPanel(!showPinnedPanel)}
-            className={`p-2 rounded-xl transition-all ${showPinnedPanel ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-500 hover:text-amber-400 hover:bg-white/5'}`}
+            className={`p-2 rounded-xl transition-all relative ${showPinnedPanel ? 'bg-amber-500/20 text-amber-400' : 'text-zinc-400 hover:text-amber-400 hover:bg-white/5'}`}
             title="Pinned Moments"
           >
             <Pin className="w-4 h-4 sm:w-5 sm:h-5" />
+            {pinnedCount > 0 && (
+              <span className="absolute -top-1 -right-1 bg-amber-500 text-black text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
+                {pinnedCount}
+              </span>
+            )}
           </button>
-          <button
-            onClick={() => setShowAddCharacter(true)}
-            className="p-2 rounded-xl text-zinc-500 hover:text-emerald-400 hover:bg-white/5 transition-all"
-            title="Add Character"
-          >
-            <User className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
+
+          {/* Game Inventory */}
           {profile.mode === AppMode.GAME && (
             <button
               onClick={() => setShowInventory(!showInventory)}
-              className={`p-2 rounded-xl transition-all ${showInventory ? 'bg-purple-500/20 text-purple-400' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
+              className={`p-2 rounded-xl transition-all relative ${showInventory ? 'bg-purple-500/20 text-purple-400' : 'text-zinc-400 hover:text-purple-300 hover:bg-white/5'}`}
               title="Inventory"
             >
               <Package className="w-4 h-4 sm:w-5 sm:h-5" />
+              {inventory.length > 0 && (
+                <span className="absolute -top-1 -right-1 bg-purple-500 text-white text-[9px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
+                  {inventory.length}
+                </span>
+              )}
             </button>
           )}
+
+          {/* Zen Mode Toggle (non-game modes) */}
+          {profile.mode !== AppMode.GAME && (
+            <button
+              onClick={() => setIsZenMode(z => !z)}
+              className={`p-2 rounded-xl transition-all ${
+                isZenMode ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/40 shadow-sm' : 'text-zinc-400 hover:text-indigo-400 hover:bg-white/5'
+              }`}
+              title={isZenMode ? "Exit Zen Cinematic Mode" : "Zen Cinematic Mode (Fullscreen Reader)"}
+              aria-label="Zen Mode"
+            >
+              {isZenMode ? <EyeOff className="w-4 h-4 sm:w-5 sm:h-5" /> : <Eye className="w-4 h-4 sm:w-5 sm:h-5" />}
+            </button>
+          )}
+
+
+
+          {/* Voice & Tone Studio Button */}
+          <button
+            onClick={() => setShowVoiceSettings(!showVoiceSettings)}
+            className={`p-2 rounded-xl transition-all ${
+              showVoiceSettings ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-sm' : 'text-zinc-400 hover:text-emerald-400 hover:bg-white/5'
+            }`}
+            title="Voice & Tone Studio"
+            aria-label="Voice & Tone Studio"
+          >
+            <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
+          </button>
+
+          {/* Story Tools Dropdown Menu */}
           <div className="relative">
             <button
-              onClick={() => setShowModeDetails(!showModeDetails)}
-              className={`p-2 rounded-xl transition-all ${showModeDetails ? 'bg-emerald-500/20 text-emerald-400' : 'text-zinc-500 hover:text-white hover:bg-white/5'}`}
-              title="Mode Details"
+              onClick={() => setShowStoryMenu(!showStoryMenu)}
+              className={`p-2 rounded-xl transition-all ${showStoryMenu ? 'bg-white/10 text-white' : 'text-zinc-400 hover:text-white hover:bg-white/5'}`}
+              title="Story & Character Options"
             >
-              <Info className="w-4 h-4 sm:w-5 sm:h-5" />
+              <MoreVertical className="w-4 h-4 sm:w-5 sm:h-5" />
             </button>
+
             <AnimatePresence>
-              {showModeDetails && (
+              {showStoryMenu && (
                 <motion.div
-                  initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                  initial={{ opacity: 0, y: 8, scale: 0.95 }}
                   animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: 10, scale: 0.95 }}
-                  className="absolute right-0 mt-2 w-64 glass-panel p-4 rounded-2xl shadow-2xl border border-white/10 z-50 space-y-4"
+                  exit={{ opacity: 0, y: 8, scale: 0.95 }}
+                  className="absolute right-0 mt-2 w-56 glass-panel p-2 rounded-2xl shadow-2xl border border-white/10 z-50 space-y-1 bg-zinc-950/95 backdrop-blur-xl"
                 >
-                  {profile.mode === AppMode.SCENARIO && (
-                    <>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Atmosphere</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.worldAtmosphere || 'Not specified'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Locations</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.keyLocations || 'Not specified'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Current Stakes</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.scenarioStakes || 'Not specified'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest mb-1">Core Conflict</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.scenarioConflict || 'Not specified'}</p>
-                      </div>
-                    </>
-                  )}
-                  {profile.mode === AppMode.ROLEPLAY && (
-                    <>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Character Flaws</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.characterFlaws || 'None specified'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Secret Motive</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.secretMotive || 'None specified'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Speech Pattern</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.speechPattern || 'Natural'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest mb-1">Core Beliefs</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.coreBeliefs || 'Not specified'}</p>
-                      </div>
-                    </>
-                  )}
-                  {profile.mode === AppMode.GAME && (
-                    <>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Game System</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.gameSystem || 'Flexible / Narrative'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Quest Objective</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.questObjective || 'Not specified'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">DM Style</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.dungeonMasterStyle || profile.personality || 'Not specified'}</p>
-                      </div>
-                      <div>
-                        <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest mb-1">Difficulty + Lethality</h4>
-                        <p className="text-xs text-zinc-300 leading-relaxed">{profile.difficultyLevel || 'Balanced'} (Lethality: {profile.traits?.lethality ?? 50}/100)</p>
-                      </div>
-                    </>
-                  )}
+                  <button
+                    onClick={() => {
+                      setShowStoryMenu(false);
+                      onEditCharacter();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-300 hover:text-white hover:bg-white/5 rounded-xl transition-colors"
+                  >
+                    <Edit3 className="w-4 h-4 text-blue-400" />
+                    <span>Edit Character Profile</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setShowStoryMenu(false);
+                      setShowAddCharacter(true);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-300 hover:text-white hover:bg-white/5 rounded-xl transition-colors"
+                  >
+                    <UserPlus className="w-4 h-4 text-emerald-400" />
+                    <span>Add Companion NPC</span>
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      setShowStoryMenu(false);
+                      setShowModeDetails(!showModeDetails);
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-300 hover:text-white hover:bg-white/5 rounded-xl transition-colors"
+                  >
+                    <Compass className="w-4 h-4 text-amber-400" />
+                    <span>Atmosphere & Stakes Details</span>
+                  </button>
+
+                  <div className="h-px bg-white/5 my-1" />
+
+                  <button
+                    onClick={() => {
+                      setShowStoryMenu(false);
+                      onCarryOver();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-zinc-300 hover:text-blue-400 hover:bg-blue-500/10 rounded-xl transition-colors"
+                  >
+                    <Repeat className="w-4 h-4 text-purple-400" />
+                    <span>Carry Over to New Story</span>
+                  </button>
                 </motion.div>
               )}
             </AnimatePresence>
           </div>
-          <button
-            onClick={onCarryOver}
-            className="p-2 rounded-xl text-zinc-500 hover:text-blue-400 hover:bg-white/5 transition-all"
-            title="Carry over to new scenario"
-          >
-            <Repeat className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
-          <button
-            onClick={onEditCharacter}
-            className="p-2 rounded-xl text-zinc-500 hover:text-white hover:bg-white/5 transition-all"
-            title="Edit Character"
-          >
-            <Edit3 className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
-          <button
-            onClick={() => setShowVoiceSettings(!showVoiceSettings)}
-            className={`p-2 rounded-xl transition-all ${
-              showVoiceSettings ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'text-zinc-500 hover:text-blue-400 hover:bg-white/5'
-            }`}
-            title="Voice Studio & Customizer"
-            aria-label="Voice Studio Settings"
-          >
-            <Settings2 className="w-4 h-4 sm:w-5 sm:h-5" />
-          </button>
+
+          {/* Mode Details Floating Modal if opened from Story Menu */}
+          <AnimatePresence>
+            {showModeDetails && (
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                className="absolute right-0 top-14 w-72 glass-panel p-4 rounded-2xl shadow-2xl border border-white/10 z-50 space-y-3 bg-zinc-950/95 backdrop-blur-2xl"
+              >
+                <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                  <span className="text-xs font-bold text-white flex items-center gap-1.5">
+                    <Compass className="w-3.5 h-3.5 text-emerald-400" />
+                    Narrative Details
+                  </span>
+                  <button onClick={() => setShowModeDetails(false)} className="text-zinc-500 hover:text-white text-xs">
+                    ✕
+                  </button>
+                </div>
+                {profile.mode === AppMode.SCENARIO && (
+                  <div className="space-y-2 text-xs">
+                    <div>
+                      <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Atmosphere</h4>
+                      <p className="text-zinc-300">{profile.worldAtmosphere || 'Not specified'}</p>
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Current Stakes</h4>
+                      <p className="text-zinc-300">{profile.scenarioStakes || 'Not specified'}</p>
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Core Conflict</h4>
+                      <p className="text-zinc-300">{profile.scenarioConflict || 'Not specified'}</p>
+                    </div>
+                  </div>
+                )}
+                {profile.mode === AppMode.ROLEPLAY && (
+                  <div className="space-y-2 text-xs">
+                    <div>
+                      <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Flaws</h4>
+                      <p className="text-zinc-300">{profile.characterFlaws || 'None specified'}</p>
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-bold text-blue-400 uppercase tracking-widest">Secret Motive</h4>
+                      <p className="text-zinc-300">{profile.secretMotive || 'None specified'}</p>
+                    </div>
+                  </div>
+                )}
+                {profile.mode === AppMode.GAME && (
+                  <div className="space-y-2 text-xs">
+                    <div>
+                      <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">Quest Objective</h4>
+                      <p className="text-zinc-300">{profile.questObjective || 'Not specified'}</p>
+                    </div>
+                    <div>
+                      <h4 className="text-[10px] font-bold text-purple-400 uppercase tracking-widest">DM Style</h4>
+                      <p className="text-zinc-300">{profile.dungeonMasterStyle || profile.personality || 'Not specified'}</p>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Primary Voice Call Button */}
           <button
             onClick={() => {
               const voiceMode = getSettings().voiceMode || 'live';
@@ -1278,7 +1386,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
                 startLiveVoiceSession();
               }
             }}
-            className={`px-3 py-2 sm:px-5 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
+            className={`px-3 py-2 sm:px-4 sm:py-2.5 rounded-xl text-[10px] sm:text-xs font-bold flex items-center gap-2 shrink-0 whitespace-nowrap transition-all ${
               liveVoice.isActive || showVoiceChat
                 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-lg shadow-emerald-500/10'
                 : 'glass-input text-zinc-300 hover:text-white hover:border-white/20'
@@ -1354,6 +1462,21 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
           )}
         </AnimatePresence>
 
+        {/* Voice & Tone Studio Sidebar */}
+        <AnimatePresence>
+          {showVoiceSettings && (
+            <ErrorBoundary fallbackTitle="Voice Studio Error" onReset={() => setShowVoiceSettings(false)}>
+              <VoiceStudioSidebar
+                profile={profile}
+                isOpen={showVoiceSettings}
+                onClose={() => setShowVoiceSettings(false)}
+                onUpdateVoice={handleUpdateVoice}
+                onPreview={(sampleText, vName) => handleReadAloud(sampleText, vName ? { ...profile, voiceName: vName } : profile)}
+              />
+            </ErrorBoundary>
+          )}
+        </AnimatePresence>
+
         <AdditionalCharacterModal
           isOpen={showAddCharacter}
           onClose={() => setShowAddCharacter(false)}
@@ -1380,56 +1503,71 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               />
             )}
           </AnimatePresence>
-          {/* Avatar Display */}
-          <div className="h-48 sm:h-64 border-b border-white/5 relative bg-black/20 flex items-center justify-center overflow-hidden shrink-0">
-            <motion.img
-              initial={{ opacity: 0, scale: 1.1 }}
-              animate={{ opacity: 1, scale: 1 }}
-              src={avatarBase64}
-              alt={profile.name}
-              className="w-full h-full object-cover opacity-20 blur-2xl"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute inset-0 flex items-center justify-center">
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }} 
-                animate={{ 
-                  opacity: 1, 
-                  y: 0,
-                  ...getMoodEffects().animate
-                }} 
-                transition={{
-                  duration: 4,
-                  repeat: Infinity,
-                  ease: "easeInOut"
-                }}
-                className="relative group"
-              >
-                <img 
-                  src={avatarBase64} 
-                  alt={profile.name} 
-                  className="h-40 w-40 sm:h-52 sm:w-52 object-cover rounded-3xl shadow-2xl border border-white/10 relative z-10 transition-all duration-1000" 
-                  style={{ filter: getMoodEffects().filter }}
-                  referrerPolicy="no-referrer" 
-                />
-                
-                {/* Loading overlay for Avatar Update */}
-                <AnimatePresence>
-                  {isUpdatingAvatar && (
-                    <motion.div 
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="absolute inset-0 z-20 bg-black/60 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center border border-emerald-500/30"
-                    >
-                      <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mb-2" />
-                      <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Updating Avatar...</span>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </motion.div>
+
+          {/* Floating Zen Mode Exit Button */}
+          {isZenMode && (
+            <button
+              onClick={() => setIsZenMode(false)}
+              className="absolute top-4 right-4 z-40 px-3 py-1.5 rounded-xl bg-black/60 hover:bg-black/80 border border-white/20 text-xs font-bold text-white flex items-center gap-2 backdrop-blur-md transition-all shadow-xl"
+              title="Exit Zen Mode"
+            >
+              <EyeOff className="w-3.5 h-3.5 text-indigo-400" />
+              <span>Exit Zen Mode</span>
+            </button>
+          )}
+
+          {/* Avatar Display - Hidden in Zen Mode */}
+          {!isZenMode && (
+            <div className="h-48 sm:h-64 border-b border-white/5 relative bg-black/20 flex items-center justify-center overflow-hidden shrink-0">
+              <motion.img
+                initial={{ opacity: 0, scale: 1.1 }}
+                animate={{ opacity: 1, scale: 1 }}
+                src={avatarBase64}
+                alt={profile.name}
+                className="w-full h-full object-cover opacity-20 blur-2xl"
+                referrerPolicy="no-referrer"
+              />
+              <div className="absolute inset-0 flex items-center justify-center">
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }} 
+                  animate={{ 
+                    opacity: 1, 
+                    y: 0, 
+                    ...getMoodEffects().animate
+                  }} 
+                  transition={{
+                    duration: 4,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
+                  className="relative group"
+                >
+                  <img 
+                    src={avatarBase64} 
+                    alt={profile.name} 
+                    className="h-40 w-40 sm:h-52 sm:w-52 object-cover rounded-3xl shadow-2xl border border-white/10 relative z-10 transition-all duration-1000" 
+                    style={{ filter: getMoodEffects().filter }}
+                    referrerPolicy="no-referrer" 
+                  />
+                  
+                  {/* Loading overlay for Avatar Update */}
+                  <AnimatePresence>
+                    {isUpdatingAvatar && (
+                      <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 z-20 bg-black/60 backdrop-blur-sm rounded-3xl flex flex-col items-center justify-center border border-emerald-500/30"
+                      >
+                        <Loader2 className="w-8 h-8 text-emerald-400 animate-spin mb-2" />
+                        <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-widest">Updating Avatar...</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+              </div>
             </div>
-          </div>
+          )}
 
           {/* Messages */}
           <div className="flex-1 overflow-y-auto pt-8 pb-4 px-4 sm:pt-12 sm:pb-8 sm:px-8 space-y-8 scroll-smooth custom-scrollbar">
@@ -1475,6 +1613,19 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
                       </p>
                       <p className="text-sm text-zinc-500 max-w-sm mx-auto">
                         Have the DM explain the rules and set the scene for your adventure, or take the initiative.
+                      </p>
+                    </div>
+                  </>
+                )}
+                {profile.mode === AppMode.NARRATIVE && (
+                  <>
+                    <BookOpen className="w-12 h-12 opacity-20 text-amber-400" />
+                    <div className="text-center space-y-2">
+                      <p className="text-lg font-serif italic tracking-wide text-zinc-300">
+                        The blank page awaits...
+                      </p>
+                      <p className="text-sm text-zinc-500 max-w-sm mx-auto">
+                        Generate an evocative opening chapter to establish the prose and world, or begin writing below.
                       </p>
                     </div>
                   </>
@@ -1579,8 +1730,9 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
             )}
           </AnimatePresence>
 
-          {/* Input Area */}
-          <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
+          {/* Input Area - Hidden in Zen Mode */}
+          {!isZenMode && (
+            <div className="p-4 sm:p-6 bg-black/20 backdrop-blur-2xl border-t border-white/5">
             <ActionSuggestionsBar
               suggestions={suggestions}
               isLoading={isSuggesting}
@@ -1659,202 +1811,6 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               )}
             </AnimatePresence>
 
-            <AnimatePresence>
-              {showVoiceSettings && (
-                <motion.div
-                  initial={{ opacity: 0, height: 0 }}
-                  animate={{ opacity: 1, height: 'auto' }}
-                  exit={{ opacity: 0, height: 0 }}
-                  className="overflow-hidden mb-4"
-                >
-                  <div className="glass-panel p-5 rounded-2xl border border-white/10 space-y-4 shadow-2xl">
-                    {/* Top Bar with Presets & Voice Preview */}
-                    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/5 pb-3">
-                      <div>
-                        <h4 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1.5">
-                          <Volume2 className="w-3.5 h-3.5" />
-                          Voice Customizer & Audio Studio
-                        </h4>
-                        <p className="text-[10px] text-zinc-500">Fine-tune character speech, accent, and storytelling delivery</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleReadAloud(`Greetings! This is a live voice preview for ${profile.name}. My tone is ${profile.storyTone || 'natural'}.`, profile)}
-                          className="px-3 py-1.5 rounded-xl bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border border-emerald-500/30 text-xs font-bold flex items-center gap-1.5 transition-all shadow-md"
-                          title="Hear a short audio sample of this voice configuration"
-                        >
-                          <Volume2 className="w-3.5 h-3.5" />
-                          <span>Preview Voice</span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Presets Row */}
-                    <div className="space-y-1.5">
-                      <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                        Quick Cinematic Presets
-                      </label>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-1.5">
-                        {voicePresets.map((preset) => (
-                          <button
-                            key={preset.name}
-                            type="button"
-                            onClick={() => {
-                              handleUpdateVoice({
-                                voiceName: preset.voice,
-                                voiceSettings: {
-                                  ...profile.voiceSettings,
-                                  pitch: preset.pitch,
-                                  speed: preset.speed,
-                                },
-                                storyTone: preset.tone,
-                              });
-                            }}
-                            className="px-2 py-1.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/5 hover:border-emerald-500/30 text-[10px] font-bold text-zinc-300 transition-all text-center"
-                          >
-                            {preset.name}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {/* Voice Persona Selector — 30 voices grouped */}
-                    <div className="space-y-3">
-                      <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                        Persona Voice Archetype — 30 Gemini Voices
-                      </label>
-                      {(() => {
-                        const groups: Array<[string, string[]]> = [
-                          ['Roleplay / Character', [...ROLEPLAY_VOICES]],
-                          ['Narration', [...NARRATOR_VOICES]],
-                          ['Bright / Companion', [...BRIGHT_VOICES]],
-                          ['All', ALL_VOICES.map(v=>v.name).filter(n=> ![...ROLEPLAY_VOICES, ...NARRATOR_VOICES, ...BRIGHT_VOICES].includes(n))],
-                        ];
-                        return groups.map(([label, names])=> (
-                        <div key={label}>
-                          <div className="text-[8px] font-bold uppercase tracking-widest text-zinc-600 mb-1">{label}</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                            {names.map((v: string)=>{
-                              const desc = ALL_VOICES.find(x=>x.name===v)?.character || '';
-                              const isSelected = (profile.voiceName||'Kore')===v;
-                              return (
-                                <button key={v} type="button" onClick={()=> handleUpdateVoice({ voiceName: v })} className={`p-2 rounded-xl text-left border transition-all ${isSelected ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300 shadow-md' : 'bg-white/5 border-white/5 text-zinc-400 hover:text-white'}`}>
-                                  <div className="text-xs font-bold text-white">{v}</div>
-                                  <div className="text-[9px] text-zinc-400 leading-tight">{desc}</div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      ));
-                      })()}
-                    </div>
-
-                    {/* Pitch, Speed, Accent, and Tone */}
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-white/5">
-                      <div className="space-y-2">
-                        <label className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                          <span>Pitch: {profile.voiceSettings?.pitch || 'Normal'}</span>
-                          <Sliders className="w-3 h-3 text-zinc-500" />
-                        </label>
-                        <div className="flex gap-1.5">
-                          {['Low', 'Normal', 'High'].map((p) => (
-                            <button
-                              key={p}
-                              type="button"
-                              onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, pitch: p } })}
-                              className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                                profile.voiceSettings?.pitch === p
-                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                  : 'bg-white/5 text-zinc-400 hover:text-zinc-200'
-                              }`}
-                            >
-                              {p}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="flex items-center justify-between text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                          <span>Speed: {profile.voiceSettings?.speed || 'Normal'}</span>
-                          <Sliders className="w-3 h-3 text-zinc-500" />
-                        </label>
-                        <div className="flex gap-1.5">
-                          {['Slow', 'Normal', 'Fast'].map((s) => (
-                            <button
-                              key={s}
-                              type="button"
-                              onClick={() => handleUpdateVoice({ voiceSettings: { ...profile.voiceSettings, speed: s } })}
-                              className={`flex-1 py-1.5 rounded-lg text-[10px] font-bold transition-all ${
-                                profile.voiceSettings?.speed === s
-                                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                  : 'bg-white/5 text-zinc-400 hover:text-zinc-200'
-                              }`}
-                            >
-                              {s}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div className="space-y-2">
-                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                          Accent & Delivery Style
-                        </label>
-                        <select
-                          value={profile.voiceSettings?.accent || 'None'}
-                          onChange={(e) =>
-                            handleUpdateVoice({
-                              voiceSettings: { ...profile.voiceSettings, accent: e.target.value },
-                            })
-                          }
-                          className="w-full glass-input rounded-xl px-3 py-1.5 text-xs text-white bg-black/40 focus:ring-1 focus:ring-emerald-500/30"
-                        >
-                          <option value="None">Natural / Neutral</option>
-                          <option value="British RP">British RP</option>
-                          <option value="Transatlantic">Transatlantic Classic</option>
-                          <option value="Celtic">Celtic / Scottish</option>
-                          <option value="French Lilt">French Lilt</option>
-                          <option value="Southern">Southern Drawl</option>
-                          <option value="Fantasy Melodic">Fantasy Melodic</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Narrative Tone & Suggestions */}
-                    <div className="space-y-2 pt-2 border-t border-white/5">
-                      <div className="flex items-center justify-between">
-                        <label className="text-[9px] font-bold text-zinc-400 uppercase tracking-widest">
-                          Narrative Tone & Emotional Flavor
-                        </label>
-                        <div className="flex flex-wrap gap-1">
-                          {['Dramatic', 'Suspenseful', 'Noir', 'Romantic', 'Playful', 'Dark Fantasy'].map((t) => (
-                            <button
-                              key={t}
-                              type="button"
-                              onClick={() => handleUpdateVoice({ storyTone: t })}
-                              className="px-1.5 py-0.5 rounded-md bg-white/5 hover:bg-white/10 text-[8px] font-bold text-zinc-400 hover:text-zinc-200"
-                            >
-                              {t}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <input
-                        type="text"
-                        value={profile.storyTone || ''}
-                        onChange={(e) => handleUpdateVoice({ storyTone: e.target.value })}
-                        placeholder="e.g. Dramatic, Epic, Whispered, Sarcastic..."
-                        className="w-full glass-input rounded-xl px-4 py-2 text-xs text-white placeholder-zinc-600 focus:ring-1 focus:ring-emerald-500/30"
-                      />
-                    </div>
-                  </div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-
             <div className="flex items-center gap-2 sm:gap-3 mb-4 px-2">
               <button
                 onClick={() => {
@@ -1870,26 +1826,30 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               >
                 {profile.mode === AppMode.ROLEPLAY ? 'FEELING' : profile.mode === AppMode.GAME ? 'EMOTE' : 'ACTION'}
               </button>
-              <button
-                onClick={() => handleRefine()}
-                disabled={!input.trim() || isRefining}
-                title="Let AI improve your message before sending"
-                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-l-lg border-y border-l transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
-                  isRefining ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
-                }`}
-              >
-                {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
-                REFINE
-              </button>
-              <button
-                onClick={() => setShowGuidedRefine(!showGuidedRefine)}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 py-1 rounded-r-lg border-y border-r transition-all tracking-widest flex items-center ${
-                  showGuidedRefine ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
-                }`}
-                title="Guided Refinement"
-              >
-                <Edit3 className="w-3 h-3" /><span className="hidden sm:inline">GUIDED</span>
-              </button>
+              {input.trim().length > 0 && (
+                <div className="flex items-center">
+                  <button
+                    onClick={() => handleRefine()}
+                    disabled={isRefining}
+                    title="Let AI polish your draft before sending"
+                    className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-l-lg border-y border-l transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
+                      isRefining ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20 shadow-sm'
+                    }`}
+                  >
+                    {isRefining ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wand2 className="w-3 h-3" />}
+                    REFINE
+                  </button>
+                  <button
+                    onClick={() => setShowGuidedRefine(!showGuidedRefine)}
+                    className={`text-[9px] sm:text-[10px] font-bold px-2 py-1 rounded-r-lg border-y border-r transition-all tracking-widest flex items-center ${
+                      showGuidedRefine ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                    }`}
+                    title="Guided Refinement"
+                  >
+                    <Edit3 className="w-3 h-3" /><span className="hidden sm:inline">GUIDED</span>
+                  </button>
+                </div>
+              )}
               <button
                 onClick={handleSuggest}
                 disabled={isSuggesting}
@@ -1899,7 +1859,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
                 }`}
               >
                 {isSuggesting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
-                {profile.mode === AppMode.ROLEPLAY ? 'SUGGEST DIALOGUE' : profile.mode === AppMode.GAME ? 'SUGGEST MOVE' : 'SUGGEST ACTION'}
+                {profile.mode === AppMode.ROLEPLAY ? 'SUGGEST DIALOGUE' : profile.mode === AppMode.GAME ? 'SUGGEST MOVE' : profile.mode === AppMode.NARRATIVE ? 'SUGGEST PROSE' : 'SUGGEST ACTION'}
                 <kbd className="hidden md:inline text-[8px] bg-white/10 px-1 py-0.2 rounded text-zinc-400 font-mono">^Space</kbd>
               </button>
               <button
@@ -1953,26 +1913,6 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               >
                 {isLiveMode ? <Mic className="w-3 h-3 text-red-400 animate-pulse" /> : <MicOff className="w-3 h-3" />}
                 {isLiveMode ? 'DICTATING' : 'DICTATE'}
-              </button>
-              <button
-                onClick={() => {
-                  const voiceMode = getSettings().voiceMode || 'live';
-                  if (voiceMode === 'voice_chat') {
-                    setShowVoiceChat(v => !v);
-                    if (liveVoice.isActive) liveVoice.stop();
-                  } else {
-                    startLiveVoiceSession();
-                  }
-                }}
-                className={`text-[9px] sm:text-[10px] font-bold px-2 sm:px-3 py-1 rounded-lg border transition-all tracking-widest flex items-center gap-1 sm:gap-2 ${
-                  liveVoice.isActive || showVoiceChat
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 shadow-sm shadow-emerald-500/20'
-                    : 'glass-input text-zinc-500 border-transparent hover:text-emerald-400'
-                }`}
-                title={getSettings().voiceMode === 'voice_chat' ? 'Voice Chat (STT + TTS)' : 'Live Voice (Gemini Multimodal Live Session)'}
-              >
-                <Radio className={`w-3 h-3 ${liveVoice.isActive || showVoiceChat ? 'text-emerald-400 animate-pulse' : ''}`} />
-                {liveVoice.isActive ? 'LIVE CALL' : showVoiceChat ? 'VOICE CHAT' : 'LIVE VOICE'}
               </button>
               <div className="text-[8px] sm:text-[10px] text-zinc-600 uppercase tracking-[0.2em] font-bold ml-auto hidden sm:block">
                 Playing as: <span className="text-zinc-400">{profile.playerProfile?.name || 'The Protagonist'}</span>
@@ -2109,6 +2049,7 @@ ${summaryBlock}${pinnedBlock}${loreBlock}${scenarioBlock}${recentBlock}${voicePe
               )}
             </div>
           </div>
+          )}
         </div>
       </div>
       {/* Dedicated Live Voice HUD */}

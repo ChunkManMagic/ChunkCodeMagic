@@ -613,8 +613,16 @@ export function getAmbientState(): AmbientState {
   };
 }
 
-export function mapToAmbientPreset(atmosphere: string, storyTone: string): AmbientPresetId {
-  const a = `${atmosphere || ''} ${storyTone || ''}`.toLowerCase();
+export function mapToAmbientPreset(atmosphere: string, storyTone: string, recentText?: string): AmbientPresetId {
+  // If recent text mentions specific dramatic environmental shift, prioritize it!
+  const r = (recentText || '').toLowerCase();
+  if (/(storm|thunder|lightning|downpour|heavy rain|tempest)/.test(r)) return 'storm';
+  if (/(tavern|inn\b|pub\b|saloon|bar\b|drinking hall)/.test(r)) return 'tavern';
+  if (/(cave|cavern|dungeon|underground|catacomb|mine shaft)/.test(r)) return 'cave';
+  if (/(ocean|waves crash|sea\b|on deck|ship|shore|beach)/.test(r)) return 'ocean';
+  if (/(starship|cockpit|station|airlock|space\b|warp)/.test(r)) return 'space';
+
+  const a = `${atmosphere || ''} ${storyTone || ''} ${r}`.toLowerCase();
   if (/(space|starship|spaceship|orbit|station|cyber|sci-fi|sci fi|futur|neon|cosmic)/.test(a)) return 'space';
   if (/(storm|thunder|rain|tempest|hurricane|downpour|monsoon)/.test(a)) return 'storm';
   if (/(ocean|sea|beach|coast|shore|ship|pirate|harbor|harbour|port)/.test(a)) return 'ocean';

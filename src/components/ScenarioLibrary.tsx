@@ -1,6 +1,6 @@
 import { useState, useRef, useMemo } from 'react';
 import { motion } from 'motion/react';
-import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, Sparkles, Edit3, Copy, Search, Filter, Upload, Download } from 'lucide-react';
+import { Plus, User, Clock, Trash2, ArrowRight, Globe, Heart, Swords, BookOpen, Sparkles, Edit3, Copy, Search, Filter, Upload, Download } from 'lucide-react';
 import { AppMode } from '../lib/gemini';
 import { Scenario } from '../lib/types';
 import { useToast } from '../hooks/useToast';
@@ -153,7 +153,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
           </div>
           <div className="flex items-center gap-2 overflow-x-auto w-full sm:w-auto pb-2 sm:pb-0 hide-scrollbar">
             <Filter className="w-4 h-4 text-zinc-500 mr-2 shrink-0" />
-            {(['ALL', AppMode.ROLEPLAY, AppMode.SCENARIO, AppMode.GAME] as const).map(mode => (
+            {(['ALL', AppMode.ROLEPLAY, AppMode.SCENARIO, AppMode.NARRATIVE, AppMode.GAME] as const).map(mode => (
               <button
                 key={mode}
                 onClick={() => setFilterMode(mode)}
@@ -163,7 +163,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                     : 'bg-black/30 text-zinc-500 border border-white/5 hover:text-zinc-300'
                 }`}
               >
-                {mode}
+                {mode === AppMode.NARRATIVE ? 'Novel' : mode}
               </button>
             ))}
           </div>
@@ -247,6 +247,7 @@ export function ScenarioLibrary({ scenarios, onSelect, onEdit, onDuplicate, onDe
                     <div className="px-2 py-1 rounded-lg bg-black/40 backdrop-blur border border-white/10 flex items-center gap-1.5 shrink-0 ml-4">
                       {scenario.profile.mode === AppMode.SCENARIO ? <Globe className="w-3 h-3 text-blue-400" /> :
                        scenario.profile.mode === AppMode.GAME ? <Swords className="w-3 h-3 text-purple-400" /> :
+                       scenario.profile.mode === AppMode.NARRATIVE ? <BookOpen className="w-3 h-3 text-amber-400" /> :
                        <Heart className="w-3 h-3 text-pink-400" />}
                       <span className="text-[8px] font-bold text-white uppercase tracking-tighter">{scenario.profile.mode}</span>
                     </div>

@@ -1,7 +1,8 @@
 export enum AppMode {
   SCENARIO = 'Scenario',
   ROLEPLAY = 'Roleplay',
-  GAME = 'Game'
+  GAME = 'Game',
+  NARRATIVE = 'Novel'
 }
 
 export interface InventoryItem {

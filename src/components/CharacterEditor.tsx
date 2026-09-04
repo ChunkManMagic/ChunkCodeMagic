@@ -215,6 +215,12 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           { id: 'generosity', label: 'Generosity' },
           { id: 'lethality', label: 'Lethality' }
         ];
+      case AppMode.NARRATIVE:
+        return [
+          { id: 'pacing', label: 'Prose Pacing' },
+          { id: 'complexity', label: 'Literary Depth' },
+          { id: 'poeticism', label: 'Poetic Lyricism' }
+        ];
       default:
         return [
           { id: 'friendliness', label: 'Friendliness' },
@@ -241,6 +247,14 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           { label: 'Atmosphere', field: 'hairStyle', placeholder: 'e.g., Dark fantasy, High magic' },
           { label: 'Color Theme', field: 'hairColor', placeholder: 'e.g., Crimson and gold' },
           { label: 'Art Style', field: 'eyeColor', placeholder: 'e.g., Oil painting, Sketch' }
+        ];
+      case AppMode.NARRATIVE:
+        return [
+          { label: 'Literary Setting & Genre', field: 'clothing', placeholder: 'e.g., Gothic Victorian, Hard Sci-Fi' },
+          { label: 'Key Themes & Motifs', field: 'accessories', placeholder: 'e.g., Isolation, Memory, Ancient clocks' },
+          { label: 'Prose Rhythm & Mood', field: 'hairStyle', placeholder: 'e.g., Melancholic cadence' },
+          { label: 'Dominant Visual Motif', field: 'hairColor', placeholder: 'e.g., Autumnal gold and decaying grey' },
+          { label: 'Core Metaphor', field: 'eyeColor', placeholder: 'e.g., The ticking river of time' }
         ];
       default:
         return [
@@ -269,6 +283,13 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
           { label: 'World Description', field: 'appearance', rows: 4 },
           { label: 'Party\'s Reputation', field: 'relationship', rows: 4 }
         ];
+      case AppMode.NARRATIVE:
+        return [
+          { label: 'Narrator Style', field: 'personality', rows: 4 },
+          { label: 'Novel Premise', field: 'backstory', rows: 4 },
+          { label: 'Scene Aesthetic', field: 'appearance', rows: 4 },
+          { label: 'Protagonist Role', field: 'relationship', rows: 4 }
+        ];
       default:
         return [
           { label: 'Personality', field: 'personality', rows: 4 },
@@ -283,6 +304,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     switch (mode) {
       case AppMode.SCENARIO: return 'Scenario Title';
       case AppMode.GAME: return 'Campaign Name';
+      case AppMode.NARRATIVE: return 'Novel Title';
       default: return 'Name';
     }
   };
@@ -291,6 +313,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     switch (mode) {
       case AppMode.SCENARIO: return 'Scenario Overview';
       case AppMode.GAME: return 'Campaign Overview';
+      case AppMode.NARRATIVE: return 'Novel Overview';
       default: return 'Core Identity';
     }
   };
@@ -299,6 +322,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     switch (mode) {
       case AppMode.SCENARIO: return 'Protagonist Profile (You)';
       case AppMode.GAME: return 'Player Character (You)';
+      case AppMode.NARRATIVE: return 'Protagonist Character Sheet (You)';
       default: return 'Player Persona (You)';
     }
   };
@@ -307,6 +331,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     switch (mode) {
       case AppMode.SCENARIO: return isReview ? 'Review Scenario' : 'Customize Scenario';
       case AppMode.GAME: return isReview ? 'Review Campaign' : 'Customize Campaign';
+      case AppMode.NARRATIVE: return isReview ? 'Review Novel' : 'Customize Novel';
       default: return isReview ? 'Review Character' : 'Customize Character';
     }
   };
@@ -315,6 +340,7 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
     switch (mode) {
       case AppMode.SCENARIO: return 'Refine the details of your world and narrative.';
       case AppMode.GAME: return 'Refine the details of your tabletop adventure.';
+      case AppMode.NARRATIVE: return 'Refine the prose, literary setting, and chapter directives.';
       default: return 'Refine the details of your narrative persona.';
     }
   };
@@ -787,6 +813,37 @@ export function CharacterEditor({ profile: initialProfile, avatarBase64: initial
                       { label: 'Party Composition', field: 'partyComposition' },
                       { label: 'Starting Equipment', field: 'startingEquipment' },
                       { label: 'Current Campaign Arc', field: 'currentCampaignArc' }
+                    ].map(item => (
+                      <div key={item.field}>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-[10px] font-bold text-zinc-500 uppercase tracking-widest">{item.label}</label>
+                          <RefineButton 
+                            onRefine={(guidance) => handleRefineField(item.field as any, guidance)}
+                            isRefining={isRefiningField === item.field}
+                            label="REFINE"
+                          />
+                        </div>
+                        <textarea 
+                          rows={3}
+                          className="w-full px-4 py-3 glass-input rounded-xl text-white text-sm resize-none"
+                          value={(profile as any)[item.field]}
+                          onChange={e => setProfile({...profile, [item.field]: e.target.value})}
+                        />
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {profile.mode === AppMode.NARRATIVE && (
+                  <>
+                    {[
+                      { label: 'World Atmosphere & Prose Tone', field: 'worldAtmosphere' },
+                      { label: 'Key Narrative Locations', field: 'keyLocations' },
+                      { label: 'Story Stakes & Dilemmas', field: 'scenarioStakes' },
+                      { label: 'Central Plot Conflict', field: 'scenarioConflict' },
+                      { label: 'Time Period & Era', field: 'timePeriod' },
+                      { label: 'Societies & Factions', field: 'factions' },
+                      { label: 'Inciting Incident / Chapter Hook', field: 'incitingIncident' }
                     ].map(item => (
                       <div key={item.field}>
                         <div className="flex justify-between items-center mb-2">

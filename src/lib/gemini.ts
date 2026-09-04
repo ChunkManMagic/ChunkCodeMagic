@@ -408,7 +408,7 @@ function isFallbackable(err: any): boolean {
 }
 
 function buildPlayerBlock(profile: CharacterProfile): string {
-  const inventoryBlock = profile.inventory?.length
+  const inventoryBlock = (profile.mode === AppMode.GAME && profile.inventory?.length)
     ? `\nPLAYER INVENTORY:\n${profile.inventory.map(i => `- ${i.name} (${i.type}${i.rarity ? `, ${i.rarity}` : ''}): ${i.description} [Qty: ${i.quantity}]`).join('\n')}\n`
     : '';
 
@@ -489,7 +489,11 @@ export function buildScenarioDirective(profile: CharacterProfile): string {
     lines.push("Mode: Interactive Campaign Scenario & World Simulator");
     lines.push("Perspective: Second-person Game Master (GM) addressing the player.");
     lines.push("Role: Act as the Game Master (GM), describing the dynamic living world, environmental physics, hazards, NPCs, and unfolding consequences.");
-    lines.push("Narrative Standard: Deliver vivid descriptions with cinematic pacing. Maintain tension, respect cause and effect, present escalating stakes, and allow the player freedom to innovate.");
+  } else if (profile.mode === AppMode.NARRATIVE) {
+    lines.push("Mode: Novel & Writing Generator Mode");
+    lines.push("Perspective: Third-person or cinematic second-person narrative prose.");
+    lines.push("Role: Act as a master novelist and storyteller focusing purely on literary depth, prose elegance, worldbuilding, and character development without any RPG mechanics, stat checks, or inventory.");
+    lines.push("Narrative Standard: High-quality literary prose, exquisite dialogue tags, evocative pacing, and emotional depth.");
   } else {
     // AppMode.GAME
     lines.push("Mode: Tabletop RPG Dungeon Master & Rules Adjudicator");
@@ -1141,6 +1145,18 @@ export async function generateCharacterProfile(idea: string, mode: AppMode): Pro
        - "eyeColor" is the Key Landmark (e.g., "Giant glowing tree").
        - Populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, and incitingIncident with vivid, specific details. 
        - The narrator's "personality" is the world's narrative voice.`
+    : mode === AppMode.NARRATIVE
+    ? `This is a NOVEL / WRITING GENERATOR mode.
+       - "name" is the Novel or Story Title.
+       - "personality" is the literary narrator voice (e.g., "Atmospheric prose stylist", "Cinematic third-person narrator").
+       - "backstory" is the novel's core premise and narrative world.
+       - "appearance" is the visual scene description and aesthetic.
+       - "clothing" is the Literary Setting & Genre (e.g., "Gothic Victorian", "Hard Sci-Fi").
+       - "accessories" are Key Motifs and Themes.
+       - "hairStyle" is the Prose Rhythm & Mood.
+       - "hairColor" is the Dominant Visual Motif.
+       - "eyeColor" is the Core Metaphor.
+       - Populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, and incitingIncident with rich narrative depth. Do NOT include tabletop RPG rules, stats, or inventory mechanics.`
     : `This is a ROLEPLAY mode. Create a compelling single character for deep one-on-one interaction. 
        - Populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values.
        - "name", "personality", "backstory", "appearance", "clothing", "accessories", "hairStyle", "hairColor", "eyeColor" are all for the character.
@@ -1405,68 +1421,42 @@ function hashSeed(text: string): number {
   return Math.abs(hash);
 }
 
-async function generateImageFromPrompt(prompt: string, style: 'avatar' | 'art' = 'art'): Promise<string> {
-  if (style === 'avatar') {
-    const seed = encodeURIComponent(prompt.trim().slice(0, 64) || 'personaforge');
-    return `https://api.dicebear.com/9.x/adventurer/svg?seed=${seed}`;
-  }
-  const seed = hashSeed(prompt) || 1;
-  return `https://picsum.photos/seed/${seed}/512/512`;
+export function getPollinationsUrl(prompt: string, width = 512, height = 512): string {
+  const cleanPrompt = prompt
+    .replace(/[\n\r]+/g, ' ')
+    .replace(/[^\w\s,.-]/g, '')
+    .trim()
+    .slice(0, 300);
+  const encoded = encodeURIComponent(cleanPrompt || 'cinematic portrait character illustration');
+  return `https://image.pollinations.ai/prompt/${encoded}?width=${width}&height=${height}&nologo=true`;
 }
 
 export async function generateAvatar(profile: CharacterProfile): Promise<string> {
-  const prompt = `A highly detailed character avatar or setting illustration for a ${profile.mode} story.
-Name/Title: ${profile.name || 'Unknown'}
-Appearance: ${profile.appearance || ''}
-Clothing/Setting: ${profile.clothing || ''}
-Accessories/Props: ${profile.accessories || ''}
-Hair: ${profile.hairStyle || ''} ${profile.hairColor || ''}
-Eyes: ${profile.eyeColor || ''}
-Atmosphere: ${profile.worldAtmosphere || ''}
-Tone: ${profile.storyTone || ''}
-Art Style: Cinematic high-quality illustration.`;
+  const prompt = `portrait of ${profile.name || 'character'}, ${profile.appearance || ''}, ${profile.clothing || ''}, ${profile.hairStyle || ''} ${profile.hairColor || ''} hair, ${profile.eyeColor || ''} eyes, ${profile.worldAtmosphere || ''}, cinematic lighting, 8k portrait`;
 
   try {
-    return await generateImageFromPrompt(prompt, 'avatar');
+    return getPollinationsUrl(prompt, 512, 512);
   } catch (error) {
     console.error("generateAvatar Error:", error);
-    const seed = Math.floor(Math.random() * 1000);
-    return `https://picsum.photos/seed/${seed}/512/512`;
+    const seed = encodeURIComponent(profile.name || 'personaforge');
+    return `https://api.dicebear.com/9.x/adventurer/svg?seed=${seed}`;
   }
+}
+
+export async function generateSceneBackground(profile: CharacterProfile): Promise<string> {
+  const atmosphere = profile.worldAtmosphere || profile.appearance || 'ambient atmosphere';
+  const seed = hashSeed(atmosphere) || 1;
+  return `https://picsum.photos/seed/${seed}/1080/1920`;
 }
 
 export async function generateCodexImage(entry: CodexEntry, profile: CharacterProfile): Promise<string> {
-  const prompt = `An illustration of a codex entry for the world of ${profile.name}.
-Entry Title: ${entry.title}
-Category: ${entry.category}
-Description: ${entry.content}
-World Atmosphere: ${profile.worldAtmosphere || profile.appearance || ''}
-Art Style: Detailed lore book illustration, atmospheric and immersive.`;
-
-  try {
-    return await generateImageFromPrompt(prompt);
-  } catch (error) {
-    console.error("generateCodexImage Error:", error);
-    const seed = Math.floor(Math.random() * 1000);
-    return `https://picsum.photos/seed/${seed}/512/512`;
-  }
+  const prompt = `illustration of ${entry.title}, ${entry.category}, ${entry.content.slice(0, 150)}, ${profile.worldAtmosphere || ''}, high detail fantasy concept art`;
+  return getPollinationsUrl(prompt, 512, 512);
 }
 
 export async function generateItemImage(item: InventoryItem, profile: CharacterProfile): Promise<string> {
-  const prompt = `An illustration of an inventory item in ${profile.name}.
-Item Name: ${item.name}
-Type: ${item.type}
-Rarity: ${item.rarity || 'Common'}
-Description: ${item.description}
-Art Style: High-quality game item icon on a dark background.`;
-
-  try {
-    return await generateImageFromPrompt(prompt);
-  } catch (error) {
-    console.error("generateItemImage Error:", error);
-    const seed = Math.floor(Math.random() * 1000);
-    return `https://picsum.photos/seed/${seed}/512/512`;
-  }
+  const prompt = `game item icon of ${item.name}, ${item.type}, ${item.rarity || 'rare'}, ${item.description.slice(0, 120)}, ${profile.worldAtmosphere || ''}, dark background, detailed item art`;
+  return getPollinationsUrl(prompt, 512, 512);
 }
 
 export async function extractInventoryUpdates(history: any[], currentInventory: InventoryItem[]): Promise<{
@@ -1632,6 +1622,18 @@ export async function refineProfile(profile: CharacterProfile): Promise<Characte
        - "hairColor" is the Secondary Color Palette.
        - "eyeColor" is the Key Landmark.
        - You MUST populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, magicOrTechnologyLevel, and incitingIncident with vivid, specific details.`
+    : profile.mode === AppMode.NARRATIVE
+    ? `This is a NOVEL / WRITING GENERATOR mode.
+       - "name" is the Novel Title.
+       - "personality" is the literary narrator voice.
+       - "backstory" is the novel's core premise and world history.
+       - "appearance" is the visual scene description and aesthetic.
+       - "clothing" is the Literary Setting & Genre.
+       - "accessories" are Key Motifs and Themes.
+       - "hairStyle" is the Prose Rhythm & Mood.
+       - "hairColor" is the Dominant Visual Motif.
+       - "eyeColor" is the Core Metaphor.
+       - You MUST populate worldAtmosphere, keyLocations, scenarioStakes, scenarioConflict, timePeriod, factions, and incitingIncident with rich narrative depth. Do NOT populate tabletop RPG mechanics.`
     : `This is a ROLEPLAY mode. 
        - You MUST populate characterFlaws, secretMotive, speechPattern, likesAndDislikes, coreBeliefs, and quirks with specific, interesting values.`;
 
@@ -2423,20 +2425,14 @@ export async function detectMood(history: any[]): Promise<string> {
 
 export async function generateContextualAvatar(profile: CharacterProfile, history: any[]): Promise<string> {
   const recentEvents = history.slice(-5).map(m => m.parts?.[0]?.text || m.text || '').filter(Boolean).join(' ');
-  const prompt = `A contextual scene or character portrait reflecting the current story state.
-Character/Setting: ${profile.name}
-Appearance: ${profile.appearance || ''}
-Clothing: ${profile.clothing || ''}
-Current Mood: ${profile.currentMood || 'Neutral'}
-Recent Story Context: ${recentEvents.slice(0, 300)}
-Art Style: High-quality narrative scene artwork.`;
+  const prompt = `portrait of ${profile.name}, mood: ${profile.currentMood || 'Neutral'}, ${profile.appearance || ''}, context: ${recentEvents.slice(0, 150)}, dramatic cinematic lighting`;
 
   try {
-    return await generateImageFromPrompt(prompt, 'avatar');
+    return getPollinationsUrl(prompt, 512, 512);
   } catch (error) {
     console.error("generateContextualAvatar Error:", error);
-    const seed = Math.floor(Math.random() * 1000);
-    return `https://picsum.photos/seed/${seed}/512/512`;
+    const seed = encodeURIComponent(profile.name || 'personaforge');
+    return `https://api.dicebear.com/9.x/adventurer/svg?seed=${seed}`;
   }
 }
 

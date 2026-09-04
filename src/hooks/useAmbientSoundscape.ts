@@ -16,7 +16,7 @@ import { getSettings, CharacterProfile } from '../lib/types';
 // (via the personaforge:settings event) so toggles take effect without the
 // component re-rendering, and ducks the ambience while a Live Voice call is
 // active so the open mic never feeds it back to the model.
-export function useAmbientSoundscape(profile: CharacterProfile, isLiveVoiceActive: boolean): void {
+export function useAmbientSoundscape(profile: CharacterProfile, isLiveVoiceActive: boolean, recentContext?: string): void {
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
@@ -31,8 +31,8 @@ export function useAmbientSoundscape(profile: CharacterProfile, isLiveVoiceActiv
   const volume = settings.ambientVolume ?? 0.15;
 
   const preset = useMemo<AmbientPresetId>(
-    () => manualPreset || mapToAmbientPreset(profile.worldAtmosphere || '', profile.storyTone || ''),
-    [manualPreset, profile.worldAtmosphere, profile.storyTone]
+    () => manualPreset || mapToAmbientPreset(profile.worldAtmosphere || '', profile.storyTone || '', recentContext),
+    [manualPreset, profile.worldAtmosphere, profile.storyTone, recentContext]
   );
 
   useEffect(() => {
