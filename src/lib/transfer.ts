@@ -106,7 +106,15 @@ function toExportCharacterProfile(profile: CharacterProfile): ExportCharacterPro
     premise: profile.premise,
     themes: profile.themes,
     suggestedPlayerName: profile.suggestedPlayerName,
-    suggestedPlayerDescription: profile.suggestedPlayerDescription
+    suggestedPlayerDescription: profile.suggestedPlayerDescription,
+    voiceArchetype: profile.voiceArchetype,
+    voiceStyle: profile.voiceStyle,
+    voicePacing: profile.voicePacing,
+    voiceAccent: profile.voiceAccent,
+    scenarioInstructions: profile.scenarioInstructions || profile.customInstructions,
+    customInstructions: profile.customInstructions || profile.scenarioInstructions,
+    greetingMessage: profile.greetingMessage,
+    lorePieces: profile.lorePieces
   };
 }
 
@@ -192,7 +200,11 @@ function toExportScenario(scenario: Scenario): ExportScenario {
     createdAt: scenario.lastUpdated,
     lastUpdated: scenario.lastUpdated,
     avatarBase64: scenario.avatarBase64,
-    avatarImageBase64: scenario.avatarBase64
+    avatarImageBase64: scenario.avatarBase64,
+    scenarioInstructions: scenario.scenarioInstructions || scenario.profile.scenarioInstructions || scenario.profile.customInstructions,
+    greetingMessage: scenario.greetingMessage || scenario.profile.greetingMessage,
+    backstory: scenario.backstory || scenario.profile.backstory,
+    lorePieces: scenario.lorePieces || scenario.profile.lorePieces
   };
 }
 
@@ -275,7 +287,15 @@ function fromExportCharacterProfile(exported: ExportCharacterProfile): Character
     premise: exported.premise,
     themes: exported.themes,
     suggestedPlayerName: exported.suggestedPlayerName,
-    suggestedPlayerDescription: exported.suggestedPlayerDescription
+    suggestedPlayerDescription: exported.suggestedPlayerDescription,
+    voiceArchetype: exported.voiceArchetype,
+    voiceStyle: exported.voiceStyle,
+    voicePacing: exported.voicePacing,
+    voiceAccent: exported.voiceAccent,
+    scenarioInstructions: exported.scenarioInstructions || exported.customInstructions,
+    customInstructions: exported.customInstructions || exported.scenarioInstructions,
+    greetingMessage: exported.greetingMessage,
+    lorePieces: exported.lorePieces
   };
 }
 
@@ -348,11 +368,16 @@ function fromExportCodexEntry(exported: ExportCodexEntry): CodexEntry {
 }
 
 function fromExportScenario(exported: ExportScenario): Scenario {
+  const profile = fromExportCharacterProfile(exported.characterProfile);
   return {
     id: exported.id,
-    profile: fromExportCharacterProfile(exported.characterProfile),
+    profile,
     avatarBase64: exported.avatarBase64 || exported.avatarImageBase64 || '',
-    lastUpdated: exported.lastUpdated || exported.createdAt || Date.now()
+    lastUpdated: exported.lastUpdated || exported.createdAt || Date.now(),
+    scenarioInstructions: exported.scenarioInstructions || profile.scenarioInstructions,
+    greetingMessage: exported.greetingMessage || profile.greetingMessage,
+    backstory: exported.backstory || profile.backstory,
+    lorePieces: exported.lorePieces || profile.lorePieces
   };
 }
 

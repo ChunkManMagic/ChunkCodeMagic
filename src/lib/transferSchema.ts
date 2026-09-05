@@ -108,6 +108,21 @@ export interface ExportCharacterProfile {
   themes?: string[];
   suggestedPlayerName?: string;
   suggestedPlayerDescription?: string;
+  voiceArchetype?: string;
+  voiceStyle?: string;
+  voicePacing?: string;
+  voiceAccent?: string;
+  scenarioInstructions?: string;
+  customInstructions?: string;
+  greetingMessage?: string;
+  lorePieces?: Array<{
+    id: string;
+    name: string;
+    type: 'CHARACTER' | 'LOCATION' | 'FACTION' | 'ITEM' | 'EVENT';
+    summary: string;
+    detailedLore: string;
+    tags?: string[];
+  }>;
 }
 
 export interface ExportMessage {
@@ -153,6 +168,17 @@ export interface ExportScenario {
   lastUpdated?: number;
   avatarBase64?: string;
   avatarImageBase64?: string;
+  scenarioInstructions?: string;
+  greetingMessage?: string;
+  backstory?: string;
+  lorePieces?: Array<{
+    id: string;
+    name: string;
+    type: 'CHARACTER' | 'LOCATION' | 'FACTION' | 'ITEM' | 'EVENT';
+    summary: string;
+    detailedLore: string;
+    tags?: string[];
+  }>;
 }
 
 export interface PersonaForgeStoryExport {
