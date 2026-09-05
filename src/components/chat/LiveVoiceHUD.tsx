@@ -382,6 +382,37 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
             <div ref={transcriptEndRef} />
           </div>
 
+          {/* Collapsed Interruption Recovery Banner */}
+          {liveVoice.state.canRecoverInterruption && (
+            <div className="px-3 py-1.5 bg-amber-500/15 border-t border-amber-500/30 flex items-center justify-between gap-2 text-[11px]">
+              <div className="flex items-center gap-1.5 text-amber-300 truncate">
+                <Radio className="w-3 h-3 text-amber-400 animate-pulse shrink-0" />
+                <span className="font-medium shrink-0">Interrupted:</span>
+                {liveVoice.state.lastInterruptedStatement && (
+                  <span className="text-amber-200/70 truncate">
+                    "{liveVoice.state.lastInterruptedStatement}"
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  onClick={() => liveVoice.recoverInterruption?.(false)}
+                  className="px-2 py-0.5 bg-amber-500 text-black text-[10px] font-bold rounded hover:bg-amber-400 transition-colors shadow"
+                  title="Ask AI to finish what it was saying"
+                >
+                  Finish
+                </button>
+                <button
+                  onClick={() => liveVoice.recoverInterruption?.(true)}
+                  className="px-2 py-0.5 bg-white/10 hover:bg-white/20 text-zinc-300 text-[10px] font-bold rounded transition-colors border border-white/10"
+                  title="Restart response from beginning"
+                >
+                  Restart
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Bottom Interactive Controls */}
           <div className="flex items-center justify-between px-3 py-2 bg-white/[0.01] border-t border-white/5 gap-2">
             <div className="flex items-center gap-1">
@@ -411,6 +442,17 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
               >
                 <Zap className="w-2.5 h-2.5 fill-emerald-400" /> Reply Now
               </button>
+
+              {/* Repeat — re-speak last AI statement */}
+              {liveVoice.state.canReplay && (
+                <button
+                  onClick={() => liveVoice.replay?.()}
+                  className="px-2.5 py-1.5 rounded-xl bg-sky-500/15 text-sky-300 hover:bg-sky-500/25 border border-sky-500/25 text-[10px] font-bold flex items-center gap-1 transition-all"
+                  title="Repeat last AI response"
+                >
+                  <RotateCw className="w-2.5 h-2.5" /> Repeat
+                </button>
+              )}
 
               {/* Rewind — undo last live turn */}
               {onRewind && (

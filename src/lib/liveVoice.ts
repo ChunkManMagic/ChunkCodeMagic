@@ -1660,6 +1660,11 @@ export async function playOutputTest(deviceId?: string): Promise<void> {
 export function interruptAiSpeech(): void {
   if (!active) return;
   active.turnCancelled = true;
+  const rawMt = active.modelTranscript.trim();
+  if (rawMt) {
+    active.isInterrupted = true;
+    active.lastInterruptedStatement = rawMt;
+  }
   stopPlayback(active);
   active.modelTranscript = "";
   // Reset for next turn so stale flag doesn't bleed (see Fix D)
