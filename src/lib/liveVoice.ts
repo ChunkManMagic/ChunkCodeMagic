@@ -109,6 +109,11 @@ export interface LiveVoiceState {
   outputVolume: number;
   bargeInEnabled: boolean;
   isReconnecting: boolean;
+  isInterrupted?: boolean;
+  canReplay?: boolean;
+  canRecoverInterruption?: boolean;
+  lastInterruptedStatement?: string;
+  lastCompletedModelText?: string;
 }
 
 export interface LiveVoiceOptions {
@@ -170,6 +175,11 @@ interface SessionHandle {
   // call so that text messages sent mid-session don't blow away the context
   // that the model needs to stay in turn.
   turnHistory: { user: string; model: string }[];
+  currentTurnAudioChunks: string[];
+  lastCompletedAudioChunks: string[];
+  lastCompletedModelText: string;
+  isInterrupted: boolean;
+  lastInterruptedStatement: string;
   playbackQueue: AudioBufferSourceNode[];
   pendingAudioChunks: string[];
   nextPlaybackTime: number;
@@ -539,6 +549,7 @@ function resampleAudio(input: Float32Array, fromRate: number, toRate: number): F
 const TARGET_PLAYBACK_LATENCY = 0.22;
 
 function enqueuePcmAudio(handle: SessionHandle, base64: string) {
+  handle.currentTurnAudioChunks.push(base64);
   const ctx = setupAudioPlayback(handle);
 
   if (ctx.state !== "running") {
@@ -666,6 +677,11 @@ function emitState(handle: SessionHandle) {
     outputVolume: handle.outputVolume,
     bargeInEnabled: handle.bargeInEnabled,
     isReconnecting,
+    isInterrupted: handle.isInterrupted ?? false,
+    canReplay: (handle.lastCompletedAudioChunks?.length ?? 0) > 0 || !!handle.lastCompletedModelText,
+    canRecoverInterruption: !!handle.isInterrupted && !!handle.lastInterruptedStatement,
+    lastInterruptedStatement: handle.lastInterruptedStatement || "",
+    lastCompletedModelText: handle.lastCompletedModelText || "",
   });
 }
 
@@ -993,6 +1009,13 @@ function finalizeTurn(handle: SessionHandle) {
     if (handle.turnHistory.length > 50) {
       handle.turnHistory = handle.turnHistory.slice(-50);
     }
+    if (modelText) {
+      handle.lastCompletedModelText = modelText;
+      handle.lastCompletedAudioChunks = [...handle.currentTurnAudioChunks];
+      handle.currentTurnAudioChunks = [];
+      handle.isInterrupted = false;
+      handle.lastInterruptedStatement = "";
+    }
     handle.options?.onTurnEnd?.(userText, modelText);
     // #13: Turn latency log (user stopped speaking → model finished responding).
     const turnStartMs = (handle as any)._turnStartMs as number | undefined;
@@ -1091,6 +1114,11 @@ async function connectSession(
     modelTranscript: "",
     audioSentInCurrentTurn: false,
     turnHistory: [],
+    currentTurnAudioChunks: [],
+    lastCompletedAudioChunks: [],
+    lastCompletedModelText: "",
+    isInterrupted: false,
+    lastInterruptedStatement: "",
     playbackQueue: [],
     pendingAudioChunks: [],
     nextPlaybackTime: 0,
@@ -1123,6 +1151,11 @@ async function connectSession(
           const userText = sanitizeUserInput(rawUserText).trim();
           const rawModelText = handle.modelTranscript.trim();
           const modelText = rawModelText ? `${rawModelText} … [interrupted]` : "";
+          if (rawModelText) {
+            handle.isInterrupted = true;
+            handle.lastInterruptedStatement = rawModelText;
+          }
+          handle.currentTurnAudioChunks = [];
           if (userText || modelText) {
             handle.turnHistory.push({ user: userText, model: modelText });
             if (handle.turnHistory.length > 50) {
@@ -1645,6 +1678,10 @@ export function rewindLiveVoice(onRewind?: () => void): void {
   active.modelTranscript = "";
   active.audioSentInCurrentTurn = false;
   active.turnCancelled = false;
+  active.lastCompletedAudioChunks = [];
+  active.lastCompletedModelText = "";
+  active.isInterrupted = false;
+  active.lastInterruptedStatement = "";
   if (active.turnHistory.length > 0) {
     active.turnHistory.pop();
   }
@@ -1652,6 +1689,48 @@ export function rewindLiveVoice(onRewind?: () => void): void {
   active.options?.onModelTranscript?.("", false);
   emitState(active);
   onRewind?.();
+}
+
+/**
+ * Repeat / Replay: Replays the AI's last completed response.
+ * Plays cached audio chunks if available, or requests the model to repeat itself.
+ */
+export function replayLastStatement(): boolean {
+  if (!active) return false;
+  if (active.lastCompletedAudioChunks && active.lastCompletedAudioChunks.length > 0) {
+    stopPlayback(active);
+    active.isSpeaking = true;
+    emitState(active);
+    const ctx = setupAudioPlayback(active);
+    for (const chunk of active.lastCompletedAudioChunks) {
+      _scheduleAudioChunk(active, ctx, chunk);
+    }
+    return true;
+  } else if (active.lastCompletedModelText) {
+    sendTextMessage(`Please repeat what you just said: "${active.lastCompletedModelText}"`);
+    forceSendTurn();
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Interrupted Speech Recovery: Resumes or restarts speech after talkover or barge-in interruption.
+ * @param restart If true, restarts from the beginning; otherwise continues the thought.
+ */
+export function recoverInterruptedStatement(restart = false): boolean {
+  if (!active) return false;
+  const text = active.lastInterruptedStatement;
+  if (!text) return false;
+  const prompt = restart
+    ? `You were interrupted while saying: "${text}". Please restart and say your complete response again from the beginning.`
+    : `You were interrupted while saying: "${text}". Please continue your thought and finish what you were saying from that point.`;
+  active.isInterrupted = false;
+  active.lastInterruptedStatement = "";
+  emitState(active);
+  sendTextMessage(prompt);
+  forceSendTurn();
+  return true;
 }
 
 export function sendTextMessage(text: string): void {

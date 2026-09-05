@@ -12,6 +12,8 @@ import {
   toggleLiveVoiceAiMute,
   interruptAiSpeech,
   rewindLiveVoice,
+  replayLastStatement,
+  recoverInterruptedStatement,
   getLiveVoiceState,
   getLiveVoiceTurnHistory,
   sendTextMessage,
@@ -246,6 +248,14 @@ export function useLiveVoice() {
     forceSendTurn();
   }, []);
 
+  const replay = useCallback(() => {
+    return replayLastStatement();
+  }, []);
+
+  const recoverInterruption = useCallback((restart = false) => {
+    return recoverInterruptedStatement(restart);
+  }, []);
+
   useEffect(() => {
     return () => {
       stopLiveVoice();
@@ -272,6 +282,8 @@ export function useLiveVoice() {
     toggleAiMute,
     interrupt,
     rewind,
+    replay,
+    recoverInterruption,
     sendText,
     forceReply,
     setOnTurnEnd,

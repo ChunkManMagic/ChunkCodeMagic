@@ -15,6 +15,7 @@ import {
   ChevronUp,
   Zap,
   RotateCcw,
+  RotateCw,
 } from 'lucide-react';
 import { CharacterProfile, getSettings, saveSettings } from '../../lib/types';
 import {
@@ -50,6 +51,8 @@ interface LiveVoiceHUDProps {
     toggleAiMute: () => void;
     interrupt: () => void;
     rewind: (onRewind?: () => void) => void;
+    replay?: () => boolean;
+    recoverInterruption?: (restart?: boolean) => boolean;
     sendText: (text: string) => void;
     forceReply: () => void;
     isActive: boolean;
@@ -963,6 +966,37 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                   )}
                 <div ref={transcriptEndRef} />
               </div>
+
+              {/* Interruption Recovery Banner */}
+              {liveVoice.state.canRecoverInterruption && (
+                <div className="w-full max-w-xl mx-auto px-4 py-2.5 my-2 bg-amber-500/15 border border-amber-500/30 rounded-2xl flex flex-col sm:flex-row items-center justify-between gap-2 shadow-lg">
+                  <div className="flex items-center gap-2 text-amber-300 text-xs font-medium">
+                    <Radio className="w-4 h-4 animate-pulse text-amber-400" />
+                    <span>Speech was interrupted</span>
+                    {liveVoice.state.lastInterruptedStatement && (
+                      <span className="text-amber-200/70 truncate max-w-[200px]">
+                        "{liveVoice.state.lastInterruptedStatement}"
+                      </span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => liveVoice.recoverInterruption?.(false)}
+                      className="px-3 py-1 bg-amber-500 text-black text-xs font-bold rounded-lg hover:bg-amber-400 transition-colors shadow"
+                      title="Ask AI to finish what it was saying"
+                    >
+                      Finish Thought
+                    </button>
+                    <button
+                      onClick={() => liveVoice.recoverInterruption?.(true)}
+                      className="px-3 py-1 bg-white/10 hover:bg-white/20 text-zinc-300 text-xs font-bold rounded-lg transition-colors border border-white/10"
+                      title="Ask AI to restart its response from the beginning"
+                    >
+                      Restart
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Mode Switcher Tabs */}
@@ -1220,13 +1254,24 @@ export const LiveVoiceHUD: React.FC<LiveVoiceHUDProps> = ({
                     <Square className="w-3.5 h-3.5 fill-amber-400" /> Interrupt AI
                   </button>
                 ) : (
-                  <button
-                    onClick={() => liveVoice.rewind(onRewind)}
-                    className="px-4 py-2 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all"
-                    title="Rewind last live turn"
-                  >
-                    <RotateCcw className="w-3.5 h-3.5" /> Rewind
-                  </button>
+                  <>
+                    {liveVoice.state.canReplay && (
+                      <button
+                        onClick={() => liveVoice.replay?.()}
+                        className="px-3.5 py-2 rounded-xl bg-zinc-800/50 text-zinc-300 hover:bg-zinc-700 hover:text-white border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                        title="Repeat last AI response"
+                      >
+                        <RotateCw className="w-3.5 h-3.5" /> Repeat
+                      </button>
+                    )}
+                    <button
+                      onClick={() => liveVoice.rewind(onRewind)}
+                      className="px-3.5 py-2 rounded-xl bg-zinc-800/50 text-zinc-400 hover:bg-zinc-700 hover:text-white border border-zinc-700 text-xs font-bold flex items-center gap-1.5 transition-all"
+                      title="Rewind last live turn"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5" /> Rewind
+                    </button>
+                  </>
                 )}
               </div>
             </div>
